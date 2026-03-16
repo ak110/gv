@@ -198,13 +198,18 @@ impl AppWindow {
 
     /// タイトルバーを更新
     fn update_title(&self) {
-        let title = if let Some(path) = self.document.current_path() {
-            let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("???");
+        let title = if let Some(source) = self.document.current_source() {
+            let display = source.display_path();
+            // 表示名: ファイル名部分を抽出
+            let filename = display
+                .rsplit(['/', '\\', '>'])
+                .next()
+                .map(|s| s.trim())
+                .unwrap_or("???");
             let fl = self.document.file_list();
             // アーカイブ名をタイトルに付加
-            let archive_suffix = self
-                .document
-                .current_archive()
+            let archive_suffix = source
+                .archive_path()
                 .and_then(|p| p.file_name())
                 .and_then(|n| n.to_str())
                 .map(|name| format!(" [{name}]"))
@@ -524,45 +529,347 @@ impl AppWindow {
                 self.cursor_hider.toggle_enabled(self.hwnd);
             }
 
-            // --- Phase 8 スタブ ---
-            Action::NavigatePrevFolder
-            | Action::NavigateNextFolder
-            | Action::NavigatePrevMark
-            | Action::NavigateNextMark
-            | Action::NavigateToPage
-            | Action::SortNavigateBack
+            // --- マーク操作 ---
+            Action::MarkSet => {
+                self.document.mark_current();
+                self.process_document_events();
+            }
+            Action::MarkUnset => {
+                self.document.unmark_current();
+            }
+            Action::MarkInvertAll => {
+                self.document.invert_all_marks();
+            }
+            Action::MarkInvertToHere => {
+                self.document.invert_marks_to_here();
+            }
+            Action::NavigatePrevMark => {
+                self.document.navigate_prev_mark();
+                self.process_document_events();
+            }
+            Action::NavigateNextMark => {
+                self.document.navigate_next_mark();
+                self.process_document_events();
+            }
+            Action::RemoveFromList => {
+                self.document.remove_current_from_list();
+                self.process_document_events();
+            }
+            Action::MarkedRemoveFromList => {
+                self.document.remove_marked_from_list();
+                self.process_document_events();
+            }
+
+            // --- フォルダナビゲーション ---
+            Action::NavigatePrevFolder => {
+                self.document.navigate_prev_folder();
+                self.process_document_events();
+            }
+            Action::NavigateNextFolder => {
+                self.document.navigate_next_folder();
+                self.process_document_events();
+            }
+
+            // --- ファイル操作 ---
+            Action::OpenFile => {
+                if let Ok(Some(path)) = crate::file_ops::open_file_dialog(self.hwnd) {
+                    if let Err(e) = self.document.open(&path) {
+                        eprintln!("ファイルを開けませんでした: {e}");
+                    }
+                    self.process_document_events();
+                }
+            }
+            Action::OpenFolder => {
+                if let Ok(Some(path)) = crate::file_ops::open_folder_dialog(self.hwnd) {
+                    if let Err(e) = self.document.open_folder(&path) {
+                        eprintln!("フォルダを開けませんでした: {e}");
+                    }
+                    self.process_document_events();
+                }
+            }
+            Action::DeleteFile => {
+                // アーカイブ内ファイルの削除は無効
+                if let Some(source) = self.document.current_source()
+                    && source.is_archive_entry()
+                {
+                    return;
+                }
+                if let Some(path) = self.document.current_path().map(|p| p.to_path_buf()) {
+                    if let Ok(true) = crate::file_ops::delete_to_recycle_bin(self.hwnd, &[&path]) {
+                        self.document.remove_current_from_list();
+                        self.process_document_events();
+                    }
+                }
+            }
+            Action::MoveFile => {
+                if let Some(source) = self.document.current_source()
+                    && source.is_archive_entry()
+                {
+                    return;
+                }
+                if let Some(path) = self.document.current_path().map(|p| p.to_path_buf()) {
+                    if let Ok(Some(dest)) =
+                        crate::file_ops::select_folder_dialog(self.hwnd, "移動先フォルダ")
+                    {
+                        if let Ok(true) = crate::file_ops::move_files(self.hwnd, &[&path], &dest) {
+                            self.document.remove_current_from_list();
+                            self.process_document_events();
+                        }
+                    }
+                }
+            }
+            Action::CopyFile => {
+                if let Some(path) = self.document.current_path().map(|p| p.to_path_buf()) {
+                    let default_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("image");
+                    if let Ok(Some(dest)) = crate::file_ops::save_file_dialog(
+                        self.hwnd,
+                        default_name,
+                        "すべてのファイル",
+                        "*.*",
+                    ) {
+                        if let Err(e) = std::fs::copy(&path, &dest) {
+                            eprintln!("ファイルコピー失敗: {e}");
+                        }
+                    }
+                }
+            }
+            Action::MarkedDelete => {
+                // アーカイブ内は無効
+                if self.document.current_archive().is_some() {
+                    return;
+                }
+                let paths: Vec<std::path::PathBuf> = self
+                    .document
+                    .file_list()
+                    .marked_indices()
+                    .iter()
+                    .map(|&i| self.document.file_list().files()[i].path.clone())
+                    .collect();
+                let path_refs: Vec<&Path> = paths.iter().map(|p| p.as_path()).collect();
+                if let Ok(true) = crate::file_ops::delete_to_recycle_bin(self.hwnd, &path_refs) {
+                    self.document.remove_marked_from_list();
+                    self.process_document_events();
+                }
+            }
+            Action::MarkedMove => {
+                if self.document.current_archive().is_some() {
+                    return;
+                }
+                let paths: Vec<std::path::PathBuf> = self
+                    .document
+                    .file_list()
+                    .marked_indices()
+                    .iter()
+                    .map(|&i| self.document.file_list().files()[i].path.clone())
+                    .collect();
+                if paths.is_empty() {
+                    return;
+                }
+                if let Ok(Some(dest)) =
+                    crate::file_ops::select_folder_dialog(self.hwnd, "移動先フォルダ")
+                {
+                    let path_refs: Vec<&Path> = paths.iter().map(|p| p.as_path()).collect();
+                    if let Ok(true) = crate::file_ops::move_files(self.hwnd, &path_refs, &dest) {
+                        self.document.remove_marked_from_list();
+                        self.process_document_events();
+                    }
+                }
+            }
+            Action::MarkedCopy => {
+                let paths: Vec<std::path::PathBuf> = self
+                    .document
+                    .file_list()
+                    .marked_indices()
+                    .iter()
+                    .map(|&i| self.document.file_list().files()[i].path.clone())
+                    .collect();
+                if paths.is_empty() {
+                    return;
+                }
+                if let Ok(Some(dest)) =
+                    crate::file_ops::select_folder_dialog(self.hwnd, "コピー先フォルダ")
+                {
+                    let path_refs: Vec<&Path> = paths.iter().map(|p| p.as_path()).collect();
+                    if let Err(e) = crate::file_ops::copy_files(self.hwnd, &path_refs, &dest) {
+                        eprintln!("ファイルコピー失敗: {e}");
+                    }
+                }
+            }
+            Action::Reload => {
+                self.document.reload();
+                self.process_document_events();
+            }
+
+            // --- クリップボード ---
+            Action::CopyImage => {
+                if let Some(image) = self.document.current_image() {
+                    if let Err(e) = crate::clipboard::copy_image_to_clipboard(self.hwnd, image) {
+                        eprintln!("画像コピー失敗: {e}");
+                    }
+                }
+            }
+            Action::CopyFileName => {
+                if let Some(source) = self.document.current_source() {
+                    if let Err(e) =
+                        crate::clipboard::copy_text_to_clipboard(self.hwnd, &source.display_path())
+                    {
+                        eprintln!("ファイル名コピー失敗: {e}");
+                    }
+                }
+            }
+            Action::MarkedCopyNames => {
+                let names: Vec<String> = self
+                    .document
+                    .file_list()
+                    .marked_indices()
+                    .iter()
+                    .map(|&i| self.document.file_list().files()[i].source.display_path())
+                    .collect();
+                if !names.is_empty() {
+                    let text = names.join("\r\n");
+                    if let Err(e) = crate::clipboard::copy_text_to_clipboard(self.hwnd, &text) {
+                        eprintln!("マークファイル名コピー失敗: {e}");
+                    }
+                }
+            }
+            Action::PasteImage => {
+                match crate::clipboard::paste_image_from_clipboard(self.hwnd) {
+                    Ok(Some(image)) => {
+                        // 一時ファイルに保存してから開く
+                        let temp_path = std::env::temp_dir().join("gv3_clipboard.png");
+                        if let Some(img_buf) = image::RgbaImage::from_raw(
+                            image.width,
+                            image.height,
+                            image.data.clone(),
+                        ) {
+                            if img_buf.save(&temp_path).is_ok() {
+                                if let Err(e) = self.document.open(&temp_path) {
+                                    eprintln!("貼り付け失敗: {e}");
+                                }
+                                self.process_document_events();
+                            }
+                        }
+                    }
+                    Ok(None) => {} // クリップボードに画像なし
+                    Err(e) => eprintln!("貼り付け失敗: {e}"),
+                }
+            }
+
+            // --- 画像書き出し ---
+            Action::ExportJpg => {
+                self.export_image("jpg", "JPEG画像", "*.jpg");
+            }
+            Action::ExportBmp => {
+                self.export_image("bmp", "BMP画像", "*.bmp");
+            }
+            Action::ExportPng => {
+                self.export_image("png", "PNG画像", "*.png");
+            }
+
+            // --- ユーティリティ ---
+            Action::NewWindow => {
+                // 現在のexeを新規プロセスで起動
+                if let Ok(exe) = std::env::current_exe() {
+                    let mut cmd = std::process::Command::new(&exe);
+                    // アーカイブ内の場合はアーカイブパスを渡す
+                    if let Some(source) = self.document.current_source() {
+                        match source {
+                            crate::file_info::FileSource::ArchiveEntry { archive, .. } => {
+                                cmd.arg(archive);
+                            }
+                            crate::file_info::FileSource::File(path) => {
+                                cmd.arg(path);
+                            }
+                        }
+                    }
+                    let _ = cmd.spawn();
+                }
+            }
+            Action::CloseAll => {
+                self.document.close_all();
+                self.process_document_events();
+            }
+            Action::OpenContainingFolder => {
+                if let Some(source) = self.document.current_source() {
+                    let target = match source {
+                        crate::file_info::FileSource::ArchiveEntry { archive, .. } => {
+                            archive.clone()
+                        }
+                        crate::file_info::FileSource::File(path) => path.clone(),
+                    };
+                    // /select,path でエクスプローラを開く
+                    let arg = format!("/select,{}", target.display());
+                    let _ = std::process::Command::new("explorer.exe").arg(&arg).spawn();
+                }
+            }
+            Action::OpenExeFolder => {
+                if let Ok(exe) = std::env::current_exe() {
+                    if let Some(dir) = exe.parent() {
+                        let _ = std::process::Command::new("explorer.exe").arg(dir).spawn();
+                    }
+                }
+            }
+            Action::OpenBookmarkFolder => {
+                let dir = crate::bookmark::bookmark_dir();
+                let _ = std::fs::create_dir_all(&dir);
+                let _ = std::process::Command::new("explorer.exe").arg(&dir).spawn();
+            }
+            Action::OpenSpiFolder => {
+                if let Ok(exe) = std::env::current_exe() {
+                    if let Some(dir) = exe.parent() {
+                        let spi_dir = dir.join("spi");
+                        let _ = std::fs::create_dir_all(&spi_dir);
+                        let _ = std::process::Command::new("explorer.exe")
+                            .arg(&spi_dir)
+                            .spawn();
+                    }
+                }
+            }
+            Action::OpenTempFolder => {
+                let dir = std::env::temp_dir();
+                let _ = std::process::Command::new("explorer.exe").arg(&dir).spawn();
+            }
+            Action::ShowImageInfo => {
+                self.show_image_info();
+            }
+
+            // --- ブックマーク ---
+            Action::BookmarkSave => {
+                let idx = self.document.file_list().current_index();
+                if let Err(e) =
+                    crate::bookmark::save_bookmark(self.hwnd, self.document.file_list(), idx)
+                {
+                    eprintln!("ブックマーク保存失敗: {e}");
+                }
+            }
+            Action::BookmarkLoad => {
+                match crate::bookmark::load_bookmark(self.hwnd) {
+                    Ok(Some(data)) => {
+                        if let Err(e) = self.document.load_bookmark_data(data) {
+                            eprintln!("ブックマーク読み込み失敗: {e}");
+                        }
+                        self.process_document_events();
+                    }
+                    Ok(None) => {} // キャンセル
+                    Err(e) => eprintln!("ブックマーク読み込み失敗: {e}"),
+                }
+            }
+            Action::BookmarkOpenEditor => {
+                let dir = crate::bookmark::bookmark_dir();
+                let _ = std::fs::create_dir_all(&dir);
+                let _ = std::process::Command::new("explorer.exe").arg(&dir).spawn();
+            }
+
+            // --- ページ指定ナビゲーション ---
+            Action::NavigateToPage => {
+                self.navigate_to_page_dialog();
+            }
+
+            // --- Phase 8 スタブ（未実装） ---
+            Action::SortNavigateBack
             | Action::SortNavigateForward
             | Action::ToggleMenuBar
-            | Action::NewWindow
-            | Action::OpenFile
-            | Action::OpenFolder
             | Action::OpenHistory
-            | Action::CloseAll
-            | Action::Reload
-            | Action::RemoveFromList
-            | Action::DeleteFile
-            | Action::MoveFile
-            | Action::CopyFile
-            | Action::OpenContainingFolder
-            | Action::CopyFileName
-            | Action::CopyImage
-            | Action::PasteImage
-            | Action::ExportJpg
-            | Action::ExportBmp
-            | Action::ExportPng
-            | Action::ShowImageInfo
-            | Action::MarkSet
-            | Action::MarkUnset
-            | Action::MarkInvertAll
-            | Action::MarkInvertToHere
-            | Action::MarkedRemoveFromList
-            | Action::MarkedDelete
-            | Action::MarkedMove
-            | Action::MarkedCopy
-            | Action::MarkedCopyNames
-            | Action::BookmarkSave
-            | Action::BookmarkLoad
-            | Action::BookmarkOpenEditor
             | Action::ToggleFileList
             | Action::DialogDisplay
             | Action::DialogImage
@@ -572,13 +879,111 @@ impl AppWindow {
             | Action::DialogPlugin
             | Action::DialogEnvironment
             | Action::DialogKeys
-            | Action::OpenExeFolder
-            | Action::OpenBookmarkFolder
-            | Action::OpenSpiFolder
-            | Action::OpenTempFolder
             | Action::ShowHelp => {
                 eprintln!("未実装: {action:?}");
             }
+        }
+    }
+
+    /// ページ指定ナビゲーション
+    /// 総ページ数の桁数に応じて、数字キー入力でページ移動する簡易方式
+    fn navigate_to_page_dialog(&mut self) {
+        let total = self.document.file_list().len();
+        if total == 0 {
+            return;
+        }
+        let current = self.document.file_list().current_index().unwrap_or(0) + 1;
+
+        // MessageBoxで現在位置と総数を表示して入力を促す
+        // （本格的な入力ダイアログは設定ダイアログフェーズで実装予定）
+        let prompt = format!(
+            "現在: {current} / {total}\n\nページ番号をタイトルバーに入力してEnterで移動\n（この機能は設定ダイアログフェーズで改善予定）\0"
+        );
+        let title = "ページ指定移動\0";
+        let wide_prompt: Vec<u16> = prompt.encode_utf16().collect();
+        let wide_title: Vec<u16> = title.encode_utf16().collect();
+        unsafe {
+            MessageBoxW(
+                Some(self.hwnd),
+                windows::core::PCWSTR(wide_prompt.as_ptr()),
+                windows::core::PCWSTR(wide_title.as_ptr()),
+                MB_OK | MB_ICONINFORMATION,
+            );
+        }
+        // TODO: 設定ダイアログフェーズで入力ダイアログに置き換え
+    }
+
+    /// 画像を指定フォーマットで書き出す
+    fn export_image(&mut self, ext: &str, filter_name: &str, filter_spec: &str) {
+        let Some(img) = self.document.current_image() else {
+            return;
+        };
+        let default_name = self
+            .document
+            .current_path()
+            .and_then(|p| p.file_stem())
+            .and_then(|s| s.to_str())
+            .map(|s| format!("{s}.{ext}"))
+            .unwrap_or_else(|| format!("image.{ext}"));
+
+        let Some(save_path) =
+            crate::file_ops::save_file_dialog(self.hwnd, &default_name, filter_name, filter_spec)
+                .ok()
+                .flatten()
+        else {
+            return;
+        };
+
+        // DecodedImage (RGBA) → image::RgbaImage → encode
+        let Some(img_buf) = image::RgbaImage::from_raw(img.width, img.height, img.data.clone())
+        else {
+            eprintln!("画像バッファ作成失敗");
+            return;
+        };
+
+        if let Err(e) = img_buf.save(&save_path) {
+            eprintln!("画像書き出し失敗: {e}");
+        }
+    }
+
+    /// 画像情報を表示する
+    fn show_image_info(&self) {
+        let Some(source) = self.document.current_source() else {
+            return;
+        };
+        let Some(file_info) = self.document.file_list().current() else {
+            return;
+        };
+
+        let mut info_lines = Vec::new();
+        info_lines.push(format!("パス: {}", source.display_path()));
+        info_lines.push(format!("ファイルサイズ: {} bytes", file_info.file_size));
+
+        if let Some(img) = self.document.current_image() {
+            info_lines.push(format!("画像サイズ: {} x {}", img.width, img.height));
+        }
+
+        // メタデータ取得（デコーダ経由）
+        if let Ok(metadata) = self.document.current_metadata() {
+            info_lines.push(format!("フォーマット: {}", metadata.format));
+            for comment in &metadata.comments {
+                info_lines.push(format!("コメント: {comment}"));
+            }
+        }
+
+        let text = info_lines.join("\n");
+        let title = "画像情報\0";
+        let text_nul = format!("{text}\0");
+        let wide_title: Vec<u16> = title.encode_utf16().collect();
+        let wide_text: Vec<u16> = text_nul.encode_utf16().collect();
+
+        unsafe {
+            MessageBoxW(
+                Some(self.hwnd),
+                windows::core::PCWSTR(wide_text.as_ptr()),
+                windows::core::PCWSTR(wide_title.as_ptr()),
+                MB_OK | MB_ICONINFORMATION,
+            );
         }
     }
 

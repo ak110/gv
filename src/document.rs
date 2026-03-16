@@ -6,6 +6,7 @@ use crossbeam_channel::Sender;
 
 use crate::archive::ArchiveManager;
 use crate::extension_registry::ExtensionRegistry;
+use crate::file_info::FileSource;
 use crate::file_list::FileList;
 use crate::image::{DecodedImage, DecoderChain};
 use crate::prefetch::{LoadResponse, PageCache, PrefetchEngine};
@@ -214,11 +215,11 @@ impl Document {
         ));
         std::fs::create_dir_all(&temp_dir)?;
 
-        // 画像を一括展開
-        let count = self
+        // 画像を一括展開（tempパスと元エントリ名のマッピング付き）
+        let entries = self
             .archive_manager
             .extract_images(archive_path, &temp_dir)?;
-        if count == 0 {
+        if entries.is_empty() {
             let _ = std::fs::remove_dir_all(&temp_dir);
             anyhow::bail!(
                 "アーカイブ内に画像ファイルがありません: {}",
@@ -226,11 +227,24 @@ impl Document {
             );
         }
 
-        self.archive_temp_dir = Some(temp_dir.clone());
+        self.archive_temp_dir = Some(temp_dir);
         self.current_archive = Some(archive_path.to_path_buf());
 
-        // tempフォルダから画像列挙（既存メソッド再利用）
-        self.file_list.populate_from_folder(&temp_dir)?;
+        // マッピング結果から直接FileListを構築（sourceにアーカイブ情報を設定）
+        self.file_list.clear();
+        for (temp_path, entry_name) in &entries {
+            if let Ok(mut info) = crate::file_info::FileInfo::from_path(temp_path) {
+                info.source = FileSource::ArchiveEntry {
+                    archive: archive_path.to_path_buf(),
+                    entry: entry_name.clone(),
+                };
+                // ソート用のfile_nameはエントリパスのファイル名部分を使う
+                info.file_name = crate::archive::extract_filename(entry_name).to_string();
+                self.file_list.push(info);
+            }
+        }
+        self.file_list.sort_current();
+
         if self.file_list.len() > 0 {
             self.file_list.navigate_first();
         }
@@ -272,6 +286,13 @@ impl Document {
     /// 最初へ移動
     pub fn navigate_first(&mut self) {
         if self.file_list.navigate_first() {
+            let _ = self.load_current();
+        }
+    }
+
+    /// 指定インデックスへ移動
+    pub fn navigate_to(&mut self, index: usize) {
+        if self.file_list.navigate_to(index) {
             let _ = self.load_current();
         }
     }
@@ -358,6 +379,173 @@ impl Document {
     /// 現在開いているアーカイブのパス（タイトル表示用）
     pub fn current_archive(&self) -> Option<&Path> {
         self.current_archive.as_deref()
+    }
+
+    /// 現在のファイルの論理ソース
+    pub fn current_source(&self) -> Option<&FileSource> {
+        self.file_list.current().map(|f| &f.source)
+    }
+
+    // --- マーク操作 ---
+
+    /// 現在のファイルをマークして次へ移動する
+    pub fn mark_current(&mut self) {
+        if let Some(index) = self.file_list.current_index() {
+            self.file_list.mark_at(index);
+            // マーク後に次へ移動
+            self.navigate_relative(1);
+        }
+    }
+
+    /// 現在のファイルのマークを解除する
+    pub fn unmark_current(&mut self) {
+        if let Some(index) = self.file_list.current_index() {
+            self.file_list.unmark_at(index);
+        }
+    }
+
+    /// 全マーク反転
+    pub fn invert_all_marks(&mut self) {
+        self.file_list.invert_all_marks();
+    }
+
+    /// 最初から現在位置までのマーク反転
+    pub fn invert_marks_to_here(&mut self) {
+        self.file_list.invert_marks_to_here();
+    }
+
+    /// 前のマーク画像へ移動
+    pub fn navigate_prev_mark(&mut self) {
+        if self.file_list.navigate_prev_mark() {
+            let _ = self.load_current();
+        }
+    }
+
+    /// 次のマーク画像へ移動
+    pub fn navigate_next_mark(&mut self) {
+        if self.file_list.navigate_next_mark() {
+            let _ = self.load_current();
+        }
+    }
+
+    // --- フォルダナビゲーション ---
+
+    /// 前のフォルダへ移動
+    pub fn navigate_prev_folder(&mut self) {
+        if self.file_list.navigate_prev_folder() {
+            let _ = self.load_current();
+        }
+    }
+
+    /// 次のフォルダへ移動
+    pub fn navigate_next_folder(&mut self) {
+        if self.file_list.navigate_next_folder() {
+            let _ = self.load_current();
+        }
+    }
+
+    /// 現在のファイルをリストから削除する（ファイル自体は残る）
+    pub fn remove_current_from_list(&mut self) {
+        if let Some(index) = self.file_list.current_index() {
+            self.file_list.remove_at(index);
+            self.after_list_change();
+        }
+    }
+
+    /// マーク済みファイルをリストから削除する
+    pub fn remove_marked_from_list(&mut self) {
+        if self.file_list.marked_count() == 0 {
+            return;
+        }
+        self.file_list.remove_marked();
+        self.after_list_change();
+    }
+
+    /// リスト変更後の共通処理（キャッシュ無効化+再読込+イベント送信）
+    pub fn after_list_change(&mut self) {
+        self.invalidate_cache();
+        let _ = self.event_sender.send(DocumentEvent::FileListChanged);
+        if self.file_list.len() > 0 {
+            let _ = self.load_current();
+        } else {
+            self.current_image = None;
+            let _ = self.event_sender.send(DocumentEvent::ImageReady);
+        }
+    }
+
+    /// 現在のファイルを再読み込みする
+    pub fn reload(&mut self) {
+        self.invalidate_cache();
+        let _ = self.load_current();
+    }
+
+    /// ファイルリストをクリアする
+    pub fn close_all(&mut self) {
+        self.cleanup_archive_temp();
+        self.invalidate_cache();
+        self.file_list.clear();
+        self.current_image = None;
+        let _ = self.event_sender.send(DocumentEvent::FileListChanged);
+        let _ = self.event_sender.send(DocumentEvent::ImageReady);
+    }
+
+    /// ブックマークデータからファイルリストを復元する
+    pub fn load_bookmark_data(&mut self, data: crate::bookmark::BookmarkData) -> Result<()> {
+        self.cleanup_archive_temp();
+        self.invalidate_cache();
+        self.file_list.clear();
+
+        // 通常ファイルのみをリストに追加（存在するもののみ）
+        // アーカイブエントリは現状未対応（アーカイブを開き直す必要がある）
+        for source in &data.entries {
+            match source {
+                FileSource::File(path) => {
+                    if path.exists() {
+                        if let Ok(info) = crate::file_info::FileInfo::from_path(path) {
+                            self.file_list.push(info);
+                        }
+                    }
+                }
+                FileSource::ArchiveEntry { archive, .. } => {
+                    // アーカイブを見つけたら、そのアーカイブを開く
+                    // （ブックマーク内の最初のアーカイブのみ対応）
+                    if archive.exists() && self.archive_manager.is_archive(archive) {
+                        if let Err(e) = self.open_archive(archive) {
+                            eprintln!("アーカイブ復元失敗: {e}");
+                        }
+                        // アーカイブを開いた場合、ブックマークの残りは無視
+                        break;
+                    }
+                }
+            }
+        }
+
+        // 指定インデックスへ移動
+        if self.file_list.len() > 0 {
+            let idx = data.index.min(self.file_list.len() - 1);
+            self.file_list.navigate_to(idx);
+        }
+
+        let _ = self.event_sender.send(DocumentEvent::FileListChanged);
+        self.load_current()
+    }
+
+    /// 現在のファイルのメタデータを取得する
+    pub fn current_metadata(&self) -> Result<crate::image::ImageMetadata> {
+        let path = self
+            .file_list
+            .current()
+            .map(|f| f.path.clone())
+            .ok_or_else(|| anyhow::anyhow!("ファイルが選択されていません"))?;
+
+        let data = std::fs::read(&path)?;
+        let filename_hint = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        self.decoder.metadata(&data, filename_hint)
+    }
+
+    /// ファイルリストへの可変参照（app.rsのファイル操作用）
+    pub fn file_list_mut(&mut self) -> &mut FileList {
+        &mut self.file_list
     }
 }
 

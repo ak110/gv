@@ -2,11 +2,14 @@
 
 mod app;
 mod archive;
+mod bookmark;
+mod clipboard;
 mod config;
 mod document;
 mod extension_registry;
 mod file_info;
 mod file_list;
+mod file_ops;
 mod image;
 mod prefetch;
 mod render;

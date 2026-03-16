@@ -1,9 +1,9 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Result;
 
-use super::{ArchiveHandler, extract_filename, resolve_filename};
+use super::{ArchiveHandler, ExtractedEntry, extract_filename, resolve_filename};
 use crate::extension_registry::ExtensionRegistry;
 
 /// RAR/cbrアーカイブハンドラ
@@ -23,12 +23,16 @@ impl ArchiveHandler for RarHandler {
         vec![".rar".to_string(), ".cbr".to_string()]
     }
 
-    fn extract_images(&self, archive_path: &Path, target_dir: &Path) -> Result<usize> {
+    fn extract_images(
+        &self,
+        archive_path: &Path,
+        target_dir: &Path,
+    ) -> Result<Vec<ExtractedEntry>> {
         let mut archive = unrar::Archive::new(archive_path)
             .open_for_processing()
             .map_err(|e| anyhow::anyhow!("RARアーカイブを開けません: {e}"))?;
 
-        let mut count = 0;
+        let mut results = Vec::new();
 
         // ストリーム型: read_header → read/skip のステートマシンで1パス展開
         loop {
@@ -57,7 +61,7 @@ impl ArchiveHandler for RarHandler {
                     Ok((data, next)) => {
                         let out_path = resolve_filename(target_dir, filename);
                         if std::fs::write(&out_path, &data).is_ok() {
-                            count += 1;
+                            results.push((out_path, entry_path));
                         }
                         archive = next;
                     }
@@ -80,7 +84,7 @@ impl ArchiveHandler for RarHandler {
             }
         }
 
-        Ok(count)
+        Ok(results)
     }
 }
 
@@ -103,7 +107,8 @@ mod tests {
         let handler = RarHandler::new(reg);
         let dir = std::env::temp_dir().join("gv3_test_rar_noexist");
         let _ = std::fs::create_dir_all(&dir);
-        let result = handler.extract_images(Path::new("nonexistent.rar"), &dir);
+        let result: Result<Vec<super::ExtractedEntry>> =
+            handler.extract_images(Path::new("nonexistent.rar"), &dir);
         assert!(result.is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }

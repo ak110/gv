@@ -179,6 +179,219 @@ impl FileList {
         }
     }
 
+    /// ファイルをリストに追加する
+    pub fn push(&mut self, info: FileInfo) {
+        self.files.push(info);
+    }
+
+    /// リストをクリアする
+    pub fn clear(&mut self) {
+        self.files.clear();
+        self.current_index = None;
+    }
+
+    /// 現在のソート順で再ソートする
+    pub fn sort_current(&mut self) {
+        self.sort(self.sort_order);
+    }
+
+    // --- マーク操作 ---
+
+    /// 指定インデックスのファイルをマークする
+    pub fn mark_at(&mut self, index: usize) {
+        if let Some(info) = self.files.get_mut(index) {
+            info.marked = true;
+        }
+    }
+
+    /// 指定インデックスのファイルのマークを解除する
+    pub fn unmark_at(&mut self, index: usize) {
+        if let Some(info) = self.files.get_mut(index) {
+            info.marked = false;
+        }
+    }
+
+    /// 全ファイルのマーク状態を反転する
+    pub fn invert_all_marks(&mut self) {
+        for info in &mut self.files {
+            info.marked = !info.marked;
+        }
+    }
+
+    /// 最初から現在位置（含む）までのマーク状態を反転する
+    pub fn invert_marks_to_here(&mut self) {
+        let end = self.current_index.map(|i| i + 1).unwrap_or(0);
+        for info in self.files[..end].iter_mut() {
+            info.marked = !info.marked;
+        }
+    }
+
+    /// マーク済みファイルのインデックス一覧を返す
+    pub fn marked_indices(&self) -> Vec<usize> {
+        self.files
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| f.marked)
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    /// マーク済みファイルの数
+    pub fn marked_count(&self) -> usize {
+        self.files.iter().filter(|f| f.marked).count()
+    }
+
+    /// 指定インデックスのファイルをリストから削除する
+    /// current_indexを適切に調整する
+    pub fn remove_at(&mut self, index: usize) -> Option<FileInfo> {
+        if index >= self.files.len() {
+            return None;
+        }
+        let removed = self.files.remove(index);
+
+        // current_indexの調整
+        if self.files.is_empty() {
+            self.current_index = None;
+        } else if let Some(current) = self.current_index {
+            if index < current {
+                // 現在位置より前が削除されたのでデクリメント
+                self.current_index = Some(current - 1);
+            } else if index == current {
+                // 現在位置が削除された→同じ位置（末尾超過ならクランプ）
+                self.current_index = Some(current.min(self.files.len() - 1));
+            }
+        }
+
+        Some(removed)
+    }
+
+    /// マーク済みファイルをリストから削除する
+    /// 削除されたファイル一覧を返す
+    pub fn remove_marked(&mut self) -> Vec<FileInfo> {
+        // 現在のパスを記憶（位置復元用）
+        let current_path = self.current().map(|f| f.path.clone());
+
+        let mut removed = Vec::new();
+        let mut kept = Vec::new();
+        for info in self.files.drain(..) {
+            if info.marked {
+                removed.push(info);
+            } else {
+                kept.push(info);
+            }
+        }
+        self.files = kept;
+
+        // current_indexの復元
+        if self.files.is_empty() {
+            self.current_index = None;
+        } else if let Some(path) = current_path {
+            // 元の位置のファイルがまだ残っていればそれを選択
+            if !self.set_current_by_path(&path) {
+                // 削除されていたら先頭にフォールバック
+                self.current_index = Some(0);
+            }
+        } else {
+            self.current_index = Some(0);
+        }
+
+        removed
+    }
+
+    /// 前のマーク済み画像へ移動する
+    pub fn navigate_prev_mark(&mut self) -> bool {
+        let current = self.current_index.unwrap_or(0);
+        let len = self.files.len();
+        if len == 0 {
+            return false;
+        }
+        // 現在位置から逆方向に検索（ラップアラウンド）
+        for offset in 1..len {
+            let idx = (current + len - offset) % len;
+            if self.files[idx].marked {
+                self.current_index = Some(idx);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// 次のマーク済み画像へ移動する
+    pub fn navigate_next_mark(&mut self) -> bool {
+        let current = self.current_index.unwrap_or(0);
+        let len = self.files.len();
+        if len == 0 {
+            return false;
+        }
+        // 現在位置から順方向に検索（ラップアラウンド）
+        for offset in 1..len {
+            let idx = (current + offset) % len;
+            if self.files[idx].marked {
+                self.current_index = Some(idx);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// 前のフォルダの最初のファイルへ移動する
+    /// フォルダ=親ディレクトリが異なるファイル群
+    pub fn navigate_prev_folder(&mut self) -> bool {
+        let current = self.current_index.unwrap_or(0);
+        if self.files.is_empty() {
+            return false;
+        }
+
+        let current_parent = self.files[current].path.parent();
+
+        // 現在のフォルダの先頭を探す
+        let mut folder_start = current;
+        while folder_start > 0 && self.files[folder_start - 1].path.parent() == current_parent {
+            folder_start -= 1;
+        }
+
+        if folder_start == 0 {
+            // 既に最初のフォルダ
+            return false;
+        }
+
+        // 前のフォルダのいずれかのファイルを見つけて、そのフォルダの先頭へ
+        let prev_parent = self.files[folder_start - 1].path.parent();
+        let mut target = folder_start - 1;
+        while target > 0 && self.files[target - 1].path.parent() == prev_parent {
+            target -= 1;
+        }
+
+        self.current_index = Some(target);
+        true
+    }
+
+    /// 次のフォルダの最初のファイルへ移動する
+    pub fn navigate_next_folder(&mut self) -> bool {
+        let current = self.current_index.unwrap_or(0);
+        if self.files.is_empty() {
+            return false;
+        }
+
+        let current_parent = self.files[current].path.parent();
+
+        // 現在のフォルダの末尾+1を探す
+        let mut next_start = current + 1;
+        while next_start < self.files.len()
+            && self.files[next_start].path.parent() == current_parent
+        {
+            next_start += 1;
+        }
+
+        if next_start >= self.files.len() {
+            // 既に最後のフォルダ
+            return false;
+        }
+
+        self.current_index = Some(next_start);
+        true
+    }
+
     /// ファイル一覧への参照
     pub fn files(&self) -> &[FileInfo] {
         &self.files
@@ -328,5 +541,152 @@ mod tests {
         assert!(!fl.navigate_first());
         assert!(!fl.navigate_last());
         assert!(fl.current().is_none());
+    }
+
+    // --- マーク機能テスト ---
+
+    #[test]
+    fn mark_and_unmark() {
+        let dir = std::env::temp_dir().join("gv3_test_fl_mark");
+        create_test_files(&dir, &["a.png", "b.png", "c.png"]);
+
+        let mut fl = FileList::new(test_registry());
+        fl.populate_from_folder(&dir).unwrap();
+        fl.navigate_to(0);
+
+        // マーク設定
+        fl.mark_at(1);
+        assert!(fl.files[1].marked);
+        assert_eq!(fl.marked_count(), 1);
+
+        // マーク解除
+        fl.unmark_at(1);
+        assert!(!fl.files[1].marked);
+        assert_eq!(fl.marked_count(), 0);
+
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn invert_all_marks() {
+        let dir = std::env::temp_dir().join("gv3_test_fl_invert");
+        create_test_files(&dir, &["a.png", "b.png", "c.png"]);
+
+        let mut fl = FileList::new(test_registry());
+        fl.populate_from_folder(&dir).unwrap();
+        fl.mark_at(0);
+
+        fl.invert_all_marks();
+        assert!(!fl.files[0].marked);
+        assert!(fl.files[1].marked);
+        assert!(fl.files[2].marked);
+        assert_eq!(fl.marked_count(), 2);
+
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn invert_marks_to_here() {
+        let dir = std::env::temp_dir().join("gv3_test_fl_invert_here");
+        create_test_files(&dir, &["a.png", "b.png", "c.png"]);
+
+        let mut fl = FileList::new(test_registry());
+        fl.populate_from_folder(&dir).unwrap();
+        fl.navigate_to(1);
+
+        fl.invert_marks_to_here();
+        // index 0, 1 が反転（false→true）、index 2 は変化なし
+        assert!(fl.files[0].marked);
+        assert!(fl.files[1].marked);
+        assert!(!fl.files[2].marked);
+
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn remove_at_adjusts_current_index() {
+        let dir = std::env::temp_dir().join("gv3_test_fl_removeat");
+        create_test_files(&dir, &["a.png", "b.png", "c.png"]);
+
+        let mut fl = FileList::new(test_registry());
+        fl.populate_from_folder(&dir).unwrap();
+        fl.navigate_to(2); // 最後
+
+        // 現在位置より前を削除 → indexデクリメント
+        fl.remove_at(0);
+        assert_eq!(fl.current_index(), Some(1));
+        assert_eq!(fl.len(), 2);
+
+        // 現在位置を削除 → クランプ
+        fl.remove_at(1);
+        assert_eq!(fl.current_index(), Some(0));
+        assert_eq!(fl.len(), 1);
+
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn remove_marked() {
+        let dir = std::env::temp_dir().join("gv3_test_fl_removemarked");
+        create_test_files(&dir, &["a.png", "b.png", "c.png"]);
+
+        let mut fl = FileList::new(test_registry());
+        fl.populate_from_folder(&dir).unwrap();
+        fl.navigate_to(1);
+        fl.mark_at(0);
+        fl.mark_at(2);
+
+        let removed = fl.remove_marked();
+        assert_eq!(removed.len(), 2);
+        assert_eq!(fl.len(), 1);
+        // b.pngが残っている
+        assert_eq!(fl.current().unwrap().file_name, "b.png");
+
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn navigate_marks() {
+        let dir = std::env::temp_dir().join("gv3_test_fl_navmark");
+        create_test_files(&dir, &["a.png", "b.png", "c.png", "d.png"]);
+
+        let mut fl = FileList::new(test_registry());
+        fl.populate_from_folder(&dir).unwrap();
+        fl.navigate_to(0);
+        fl.mark_at(1);
+        fl.mark_at(3);
+
+        // 次のマーク
+        assert!(fl.navigate_next_mark());
+        assert_eq!(fl.current_index(), Some(1));
+
+        assert!(fl.navigate_next_mark());
+        assert_eq!(fl.current_index(), Some(3));
+
+        // ラップアラウンド
+        assert!(fl.navigate_next_mark());
+        assert_eq!(fl.current_index(), Some(1));
+
+        // 前のマーク
+        assert!(fl.navigate_prev_mark());
+        assert_eq!(fl.current_index(), Some(3));
+
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn navigate_marks_none_marked() {
+        let dir = std::env::temp_dir().join("gv3_test_fl_navmark_none");
+        create_test_files(&dir, &["a.png", "b.png"]);
+
+        let mut fl = FileList::new(test_registry());
+        fl.populate_from_folder(&dir).unwrap();
+        fl.navigate_to(0);
+
+        // マークなし → 移動しない
+        assert!(!fl.navigate_next_mark());
+        assert!(!fl.navigate_prev_mark());
+
+        cleanup(&dir);
     }
 }

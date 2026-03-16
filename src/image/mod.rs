@@ -54,6 +54,21 @@ impl DecoderChain {
         Self { decoders }
     }
 
+    /// メタデータを取得する（各デコーダを順に試行）
+    pub fn metadata(&self, data: &[u8], filename_hint: &str) -> anyhow::Result<ImageMetadata> {
+        let mut last_error = None;
+        for decoder in &self.decoders {
+            if decoder.can_decode(data, filename_hint) {
+                match decoder.metadata(data, filename_hint) {
+                    Ok(meta) => return Ok(meta),
+                    Err(e) => last_error = Some(e),
+                }
+            }
+        }
+        Err(last_error
+            .unwrap_or_else(|| anyhow::anyhow!("対応するデコーダがありません: {filename_hint}")))
+    }
+
     /// 各デコーダを順に試行し、最初の成功を返す
     pub fn decode(&self, data: &[u8], filename_hint: &str) -> anyhow::Result<DecodedImage> {
         let mut last_error = None;

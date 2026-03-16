@@ -1,21 +1,63 @@
+use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use anyhow::{Context as _, Result};
 
+/// ファイルの論理的なソース情報
+/// 通常ファイルとアーカイブ内エントリを区別する
+#[derive(Debug, Clone)]
+pub enum FileSource {
+    /// 通常のファイルシステム上のファイル
+    File(PathBuf),
+    /// アーカイブ内のエントリ
+    ArchiveEntry { archive: PathBuf, entry: String },
+}
+
+impl FileSource {
+    /// 表示用パスを生成する
+    pub fn display_path(&self) -> String {
+        match self {
+            FileSource::File(path) => path.display().to_string(),
+            FileSource::ArchiveEntry { archive, entry } => {
+                format!("{} > {}", archive.display(), entry)
+            }
+        }
+    }
+
+    /// アーカイブパスを返す（アーカイブエントリの場合のみ）
+    pub fn archive_path(&self) -> Option<&Path> {
+        match self {
+            FileSource::ArchiveEntry { archive, .. } => Some(archive),
+            FileSource::File(_) => None,
+        }
+    }
+
+    /// アーカイブエントリかどうか
+    pub fn is_archive_entry(&self) -> bool {
+        matches!(self, FileSource::ArchiveEntry { .. })
+    }
+}
+
+impl fmt::Display for FileSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.display_path())
+    }
+}
+
 /// 個々のファイル情報
-#[allow(dead_code)]
 pub struct FileInfo {
-    pub path: PathBuf,
-    pub file_name: String, // ソート用キャッシュ
+    pub path: PathBuf,      // 実ファイルパス（デコード/描画用。アーカイブ時はtempパス）
+    pub source: FileSource, // 論理ソース（表示・保存・ブックマーク用）
+    pub file_name: String,  // ソート用キャッシュ
     pub file_size: u64,
     pub modified: SystemTime,
-    pub marked: bool,      // Phase 8で使用
+    pub marked: bool,
     pub load_failed: bool, // デコード失敗フラグ（ナビゲーション時にスキップ）
 }
 
 impl FileInfo {
-    /// パスからFileInfoを構築する
+    /// パスからFileInfoを構築する（通常ファイル用）
     pub fn from_path(path: &Path) -> Result<Self> {
         let metadata = std::fs::metadata(path)
             .with_context(|| format!("メタデータ取得失敗: {}", path.display()))?;
@@ -29,6 +71,7 @@ impl FileInfo {
         let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
 
         Ok(Self {
+            source: FileSource::File(path.to_path_buf()),
             path: path.to_path_buf(),
             file_name,
             file_size: metadata.len(),
@@ -58,8 +101,25 @@ mod tests {
         assert_eq!(info.file_size, 13);
         assert!(!info.marked);
         assert!(!info.load_failed);
+        assert!(!info.source.is_archive_entry());
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn file_source_display_path() {
+        let source = FileSource::File(PathBuf::from(r"C:\images\test.jpg"));
+        assert_eq!(source.display_path(), r"C:\images\test.jpg");
+        assert!(!source.is_archive_entry());
+        assert!(source.archive_path().is_none());
+
+        let source = FileSource::ArchiveEntry {
+            archive: PathBuf::from(r"C:\archive.zip"),
+            entry: "folder/image.png".to_string(),
+        };
+        assert_eq!(source.display_path(), r"C:\archive.zip > folder/image.png");
+        assert!(source.is_archive_entry());
+        assert_eq!(source.archive_path().unwrap(), Path::new(r"C:\archive.zip"));
     }
 
     #[test]

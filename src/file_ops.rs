@@ -1,0 +1,254 @@
+//! Win32 Shell APIによるファイル操作 + ダイアログ
+
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context as _, Result};
+use windows::Win32::Foundation::HWND;
+use windows::Win32::UI::Shell::{
+    FILEOPENDIALOGOPTIONS, FOS_ALLOWMULTISELECT, FOS_FILEMUSTEXIST, FOS_FORCEFILESYSTEM,
+    FOS_OVERWRITEPROMPT, FOS_PATHMUSTEXIST, FOS_PICKFOLDERS, IFileDialog, IFileOpenDialog,
+    IFileSaveDialog, SHFILEOPSTRUCTW, SHFileOperationW,
+};
+use windows::Win32::UI::Shell::{FO_COPY, FO_DELETE, FO_MOVE, FOF_ALLOWUNDO, FOF_NOCONFIRMATION};
+use windows::core::Interface;
+
+/// ごみ箱経由でファイルを削除する
+pub fn delete_to_recycle_bin(hwnd: HWND, paths: &[&Path]) -> Result<bool> {
+    if paths.is_empty() {
+        return Ok(false);
+    }
+
+    let from = build_multi_path_string(paths);
+
+    let mut op = SHFILEOPSTRUCTW {
+        hwnd,
+        wFunc: FO_DELETE,
+        pFrom: windows::core::PCWSTR(from.as_ptr()),
+        pTo: windows::core::PCWSTR::null(),
+        fFlags: FOF_ALLOWUNDO.0 as u16,
+        ..Default::default()
+    };
+
+    let result = unsafe { SHFileOperationW(&mut op) };
+    if result != 0 {
+        // ユーザーキャンセルの場合
+        if op.fAnyOperationsAborted.as_bool() {
+            return Ok(false);
+        }
+        anyhow::bail!("ファイル削除に失敗しました (code: {result})");
+    }
+    Ok(!op.fAnyOperationsAborted.as_bool())
+}
+
+/// ファイルを移動する（SHFileOperationW）
+pub fn move_files(hwnd: HWND, paths: &[&Path], dest: &Path) -> Result<bool> {
+    if paths.is_empty() {
+        return Ok(false);
+    }
+
+    let from = build_multi_path_string(paths);
+    let to = build_single_path_string(dest);
+
+    let mut op = SHFILEOPSTRUCTW {
+        hwnd,
+        wFunc: FO_MOVE,
+        pFrom: windows::core::PCWSTR(from.as_ptr()),
+        pTo: windows::core::PCWSTR(to.as_ptr()),
+        fFlags: FOF_ALLOWUNDO.0 as u16,
+        ..Default::default()
+    };
+
+    let result = unsafe { SHFileOperationW(&mut op) };
+    if result != 0 {
+        if op.fAnyOperationsAborted.as_bool() {
+            return Ok(false);
+        }
+        anyhow::bail!("ファイル移動に失敗しました (code: {result})");
+    }
+    Ok(!op.fAnyOperationsAborted.as_bool())
+}
+
+/// ファイルをコピーする（SHFileOperationW）
+pub fn copy_files(hwnd: HWND, paths: &[&Path], dest: &Path) -> Result<bool> {
+    if paths.is_empty() {
+        return Ok(false);
+    }
+
+    let from = build_multi_path_string(paths);
+    let to = build_single_path_string(dest);
+
+    let mut op = SHFILEOPSTRUCTW {
+        hwnd,
+        wFunc: FO_COPY,
+        pFrom: windows::core::PCWSTR(from.as_ptr()),
+        pTo: windows::core::PCWSTR(to.as_ptr()),
+        fFlags: FOF_ALLOWUNDO.0 as u16,
+        ..Default::default()
+    };
+
+    let result = unsafe { SHFileOperationW(&mut op) };
+    if result != 0 {
+        if op.fAnyOperationsAborted.as_bool() {
+            return Ok(false);
+        }
+        anyhow::bail!("ファイルコピーに失敗しました (code: {result})");
+    }
+    Ok(!op.fAnyOperationsAborted.as_bool())
+}
+
+/// ファイル選択ダイアログ（IFileOpenDialog）
+pub fn open_file_dialog(hwnd: HWND) -> Result<Option<PathBuf>> {
+    unsafe {
+        let dialog: IFileOpenDialog = windows::Win32::System::Com::CoCreateInstance(
+            &windows::Win32::UI::Shell::FileOpenDialog,
+            None,
+            windows::Win32::System::Com::CLSCTX_INPROC_SERVER,
+        )
+        .context("FileOpenDialog作成失敗")?;
+
+        let options = dialog.GetOptions()?;
+        dialog.SetOptions(options | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST | FOS_PATHMUSTEXIST)?;
+
+        // 画像ファイルフィルタ
+        let filter_name: Vec<u16> = "画像ファイル\0".encode_utf16().collect();
+        let filter_spec: Vec<u16> = "*.jpg;*.jpeg;*.png;*.gif;*.bmp;*.webp;*.tga;*.tiff;*.ico\0"
+            .encode_utf16()
+            .collect();
+        let all_name: Vec<u16> = "すべてのファイル\0".encode_utf16().collect();
+        let all_spec: Vec<u16> = "*.*\0".encode_utf16().collect();
+
+        let filters = [
+            windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC {
+                pszName: windows::core::PCWSTR(filter_name.as_ptr()),
+                pszSpec: windows::core::PCWSTR(filter_spec.as_ptr()),
+            },
+            windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC {
+                pszName: windows::core::PCWSTR(all_name.as_ptr()),
+                pszSpec: windows::core::PCWSTR(all_spec.as_ptr()),
+            },
+        ];
+        dialog.SetFileTypes(&filters)?;
+
+        match dialog.Show(Some(hwnd)) {
+            Ok(()) => {}
+            Err(e) if e.code().0 as u32 == 0x800704C7 => return Ok(None), // ユーザーキャンセル
+            Err(e) => return Err(e.into()),
+        }
+
+        let result = dialog.GetResult()?;
+        let path_raw = result.GetDisplayName(windows::Win32::UI::Shell::SIGDN_FILESYSPATH)?;
+        let path = PathBuf::from(path_raw.to_string()?);
+        windows::Win32::System::Com::CoTaskMemFree(Some(path_raw.0 as *const _));
+        Ok(Some(path))
+    }
+}
+
+/// フォルダ選択ダイアログ（IFileOpenDialog + FOS_PICKFOLDERS）
+pub fn open_folder_dialog(hwnd: HWND) -> Result<Option<PathBuf>> {
+    select_folder_dialog(hwnd, "フォルダを開く")
+}
+
+/// フォルダ選択ダイアログ（移動/コピー先選択用）
+pub fn select_folder_dialog(hwnd: HWND, title: &str) -> Result<Option<PathBuf>> {
+    unsafe {
+        let dialog: IFileOpenDialog = windows::Win32::System::Com::CoCreateInstance(
+            &windows::Win32::UI::Shell::FileOpenDialog,
+            None,
+            windows::Win32::System::Com::CLSCTX_INPROC_SERVER,
+        )
+        .context("FileOpenDialog作成失敗")?;
+
+        let options = dialog.GetOptions()?;
+        dialog.SetOptions(options | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST | FOS_PICKFOLDERS)?;
+
+        let title_wide: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
+        dialog.SetTitle(windows::core::PCWSTR(title_wide.as_ptr()))?;
+
+        match dialog.Show(Some(hwnd)) {
+            Ok(()) => {}
+            Err(e) if e.code().0 as u32 == 0x800704C7 => return Ok(None),
+            Err(e) => return Err(e.into()),
+        }
+
+        let result = dialog.GetResult()?;
+        let path_raw = result.GetDisplayName(windows::Win32::UI::Shell::SIGDN_FILESYSPATH)?;
+        let path = PathBuf::from(path_raw.to_string()?);
+        windows::Win32::System::Com::CoTaskMemFree(Some(path_raw.0 as *const _));
+        Ok(Some(path))
+    }
+}
+
+/// 保存先ダイアログ（IFileSaveDialog）
+pub fn save_file_dialog(
+    hwnd: HWND,
+    default_name: &str,
+    filter_name: &str,
+    filter_ext: &str,
+) -> Result<Option<PathBuf>> {
+    unsafe {
+        let dialog: IFileSaveDialog = windows::Win32::System::Com::CoCreateInstance(
+            &windows::Win32::UI::Shell::FileSaveDialog,
+            None,
+            windows::Win32::System::Com::CLSCTX_INPROC_SERVER,
+        )
+        .context("FileSaveDialog作成失敗")?;
+
+        let options = dialog.GetOptions()?;
+        dialog.SetOptions(options | FOS_FORCEFILESYSTEM | FOS_OVERWRITEPROMPT)?;
+
+        // フィルタ設定
+        let fname: Vec<u16> = filter_name
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+        let fspec: Vec<u16> = filter_ext
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+        let filters = [windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC {
+            pszName: windows::core::PCWSTR(fname.as_ptr()),
+            pszSpec: windows::core::PCWSTR(fspec.as_ptr()),
+        }];
+        dialog.SetFileTypes(&filters)?;
+
+        // デフォルトファイル名
+        let name_wide: Vec<u16> = default_name
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+        dialog.SetFileName(windows::core::PCWSTR(name_wide.as_ptr()))?;
+
+        match dialog.Show(Some(hwnd)) {
+            Ok(()) => {}
+            Err(e) if e.code().0 as u32 == 0x800704C7 => return Ok(None),
+            Err(e) => return Err(e.into()),
+        }
+
+        let result = dialog.GetResult()?;
+        let path_raw = result.GetDisplayName(windows::Win32::UI::Shell::SIGDN_FILESYSPATH)?;
+        let path = PathBuf::from(path_raw.to_string()?);
+        windows::Win32::System::Com::CoTaskMemFree(Some(path_raw.0 as *const _));
+        Ok(Some(path))
+    }
+}
+
+/// SHFileOperationW用のダブルNUL終端パス文字列を構築する（複数パス対応）
+fn build_multi_path_string(paths: &[&Path]) -> Vec<u16> {
+    let mut result = Vec::new();
+    for path in paths {
+        result.extend(path.as_os_str().encode_wide());
+        result.push(0); // 各パスの後にNUL
+    }
+    result.push(0); // 終端の追加NUL
+    result
+}
+
+/// SHFileOperationW用のダブルNUL終端パス文字列を構築する（単一パス）
+fn build_single_path_string(path: &Path) -> Vec<u16> {
+    let mut result: Vec<u16> = path.as_os_str().encode_wide().collect();
+    result.push(0);
+    result.push(0);
+    result
+}
+
+use std::os::windows::ffi::OsStrExt;

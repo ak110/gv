@@ -1,10 +1,10 @@
 /// Susieアーカイブプラグインの ArchiveHandler アダプタ
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Result;
 
-use super::{ArchiveHandler, extract_filename, resolve_filename};
+use super::{ArchiveHandler, ExtractedEntry, extract_filename, resolve_filename};
 use crate::extension_registry::ExtensionRegistry;
 use crate::susie::plugin::SharedPlugin;
 use crate::susie::util::from_ansi;
@@ -33,7 +33,11 @@ impl ArchiveHandler for SusieArchiveHandler {
         self.extensions.clone()
     }
 
-    fn extract_images(&self, archive_path: &Path, target_dir: &Path) -> Result<usize> {
+    fn extract_images(
+        &self,
+        archive_path: &Path,
+        target_dir: &Path,
+    ) -> Result<Vec<ExtractedEntry>> {
         let path_str = archive_path.to_string_lossy().to_string();
         let locked = self
             .plugin
@@ -43,7 +47,7 @@ impl ArchiveHandler for SusieArchiveHandler {
         // アーカイブ内のエントリ一覧を取得
         let entries = locked.get_archive_info(&path_str)?;
 
-        let mut count = 0;
+        let mut results = Vec::new();
 
         for entry in &entries {
             // ファイル名を取得（ANSI → UTF-8）
@@ -66,7 +70,7 @@ impl ArchiveHandler for SusieArchiveHandler {
                 Ok(data) => {
                     let out_path = resolve_filename(target_dir, filename);
                     if std::fs::write(&out_path, &data).is_ok() {
-                        count += 1;
+                        results.push((out_path, raw_filename));
                     }
                 }
                 Err(e) => {
@@ -75,6 +79,6 @@ impl ArchiveHandler for SusieArchiveHandler {
             }
         }
 
-        Ok(count)
+        Ok(results)
     }
 }

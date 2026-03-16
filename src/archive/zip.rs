@@ -1,11 +1,11 @@
 use std::fs::File;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 
-use super::{ArchiveHandler, extract_filename, resolve_filename};
+use super::{ArchiveHandler, ExtractedEntry, extract_filename, resolve_filename};
 use crate::extension_registry::ExtensionRegistry;
 
 /// ZIP/cbzアーカイブハンドラ
@@ -24,13 +24,17 @@ impl ArchiveHandler for ZipHandler {
         vec![".zip".to_string(), ".cbz".to_string()]
     }
 
-    fn extract_images(&self, archive_path: &Path, target_dir: &Path) -> Result<usize> {
+    fn extract_images(
+        &self,
+        archive_path: &Path,
+        target_dir: &Path,
+    ) -> Result<Vec<ExtractedEntry>> {
         let file = File::open(archive_path)
             .with_context(|| format!("アーカイブを開けません: {}", archive_path.display()))?;
         let mut archive = zip::ZipArchive::new(file)
             .with_context(|| format!("ZIP読み取り失敗: {}", archive_path.display()))?;
 
-        let mut count = 0;
+        let mut results = Vec::new();
 
         for i in 0..archive.len() {
             let mut entry = match archive.by_index(i) {
@@ -65,11 +69,11 @@ impl ArchiveHandler for ZipHandler {
             // target_dirに書き出し（重複時はリネーム）
             let out_path = resolve_filename(target_dir, filename);
             if std::fs::write(&out_path, &data).is_ok() {
-                count += 1;
+                results.push((out_path, entry_name));
             }
         }
 
-        Ok(count)
+        Ok(results)
     }
 }
 
@@ -114,13 +118,19 @@ mod tests {
 
         let reg = Arc::new(ExtensionRegistry::new());
         let handler = ZipHandler::new(reg);
-        let count = handler.extract_images(&zip_path, &out_dir).unwrap();
+        let entries = handler.extract_images(&zip_path, &out_dir).unwrap();
 
-        assert_eq!(count, 3);
+        assert_eq!(entries.len(), 3);
         assert!(out_dir.join("image1.jpg").exists());
         assert!(out_dir.join("image2.png").exists()); // サブフォルダはフラット化
         assert!(out_dir.join("image3.bmp").exists());
         assert!(!out_dir.join("readme.txt").exists());
+
+        // エントリパスが元のアーカイブ内パスを保持していることを確認
+        let entry_paths: Vec<&str> = entries.iter().map(|(_, e)| e.as_str()).collect();
+        assert!(entry_paths.contains(&"image1.jpg"));
+        assert!(entry_paths.contains(&"subfolder/image2.png"));
+        assert!(entry_paths.contains(&"image3.bmp"));
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -142,11 +152,15 @@ mod tests {
 
         let reg = Arc::new(ExtensionRegistry::new());
         let handler = ZipHandler::new(reg);
-        let count = handler.extract_images(&zip_path, &out_dir).unwrap();
+        let entries = handler.extract_images(&zip_path, &out_dir).unwrap();
 
-        assert_eq!(count, 2);
+        assert_eq!(entries.len(), 2);
         assert!(out_dir.join("image.jpg").exists());
         assert!(out_dir.join("image_2.jpg").exists());
+
+        // 元エントリパスはそれぞれ異なる
+        assert_eq!(entries[0].1, "a/image.jpg");
+        assert_eq!(entries[1].1, "b/image.jpg");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

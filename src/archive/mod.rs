@@ -3,12 +3,15 @@ mod sevenz;
 pub mod susie;
 mod zip;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Result, bail};
 
 use crate::extension_registry::ExtensionRegistry;
+
+/// アーカイブ展開結果: (展開先tempパス, アーカイブ内エントリパス)
+pub type ExtractedEntry = (PathBuf, String);
 
 /// アーカイブハンドラのトレイト
 /// 各フォーマットのハンドラが実装する
@@ -16,8 +19,9 @@ pub trait ArchiveHandler: Send + Sync {
     fn supported_extensions(&self) -> Vec<String>;
 
     /// アーカイブ内の画像ファイルをtarget_dirに展開する
-    /// 戻り値: 展開されたファイル数
-    fn extract_images(&self, archive_path: &Path, target_dir: &Path) -> Result<usize>;
+    /// 戻り値: (展開先tempパス, アーカイブ内エントリパス) のペア一覧
+    fn extract_images(&self, archive_path: &Path, target_dir: &Path)
+    -> Result<Vec<ExtractedEntry>>;
 }
 
 /// アーカイブハンドラのディスパッチャ
@@ -52,7 +56,11 @@ impl ArchiveManager {
     }
 
     /// 対応ハンドラでアーカイブ内の画像を一括展開する
-    pub fn extract_images(&self, archive_path: &Path, target_dir: &Path) -> Result<usize> {
+    pub fn extract_images(
+        &self,
+        archive_path: &Path,
+        target_dir: &Path,
+    ) -> Result<Vec<ExtractedEntry>> {
         let ext = archive_path
             .extension()
             .and_then(|e| e.to_str())
