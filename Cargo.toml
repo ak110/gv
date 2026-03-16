@@ -23,3 +23,4 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 anyhow = "1"
 thiserror = "2"
 crossbeam-channel = "0.5"
+natord = "1.0"

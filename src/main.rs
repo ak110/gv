@@ -2,6 +2,8 @@
 
 mod app;
 mod document;
+mod file_info;
+mod file_list;
 mod image;
 mod render;
 mod ui;
