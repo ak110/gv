@@ -215,7 +215,7 @@ impl AppWindow {
                 app.document.open(&initial_files[0])
             };
             if let Err(e) = result {
-                eprintln!("画像を開けませんでした: {e}");
+                app.show_error_title(&format!("画像を開けませんでした: {e}"));
             }
             app.process_document_events();
         }
@@ -269,7 +269,7 @@ impl AppWindow {
                         .update(doc.file_list(), |i| doc.is_cached(i));
                 }
                 DocumentEvent::Error(msg) => {
-                    eprintln!("エラー: {msg}");
+                    self.show_error_title(&msg);
                 }
             }
         }
@@ -317,6 +317,15 @@ impl AppWindow {
             "ぐらびゅ3\0".to_string()
         };
 
+        let wide: Vec<u16> = title.encode_utf16().collect();
+        unsafe {
+            let _ = SetWindowTextW(self.hwnd, windows::core::PCWSTR(wide.as_ptr()));
+        }
+    }
+
+    /// タイトルバーにエラーメッセージを表示する
+    fn show_error_title(&self, msg: &str) {
+        let title = format!("ぐらびゅ3 - エラー: {msg}\0");
         let wide: Vec<u16> = title.encode_utf16().collect();
         unsafe {
             let _ = SetWindowTextW(self.hwnd, windows::core::PCWSTR(wide.as_ptr()));
@@ -735,7 +744,7 @@ impl AppWindow {
             Action::OpenFile => {
                 if let Ok(Some(path)) = crate::file_ops::open_file_dialog(self.hwnd) {
                     if let Err(e) = self.document.open(&path) {
-                        eprintln!("ファイルを開けませんでした: {e}");
+                        self.show_error_title(&format!("ファイルを開けませんでした: {e}"));
                     }
                     self.process_document_events();
                 }
@@ -743,7 +752,7 @@ impl AppWindow {
             Action::OpenFolder => {
                 if let Ok(Some(path)) = crate::file_ops::open_folder_dialog(self.hwnd) {
                     if let Err(e) = self.document.open_folder(&path) {
-                        eprintln!("フォルダを開けませんでした: {e}");
+                        self.show_error_title(&format!("フォルダを開けませんでした: {e}"));
                     }
                     self.process_document_events();
                 }
@@ -905,13 +914,13 @@ impl AppWindow {
                         ) && img_buf.save(&temp_path).is_ok()
                         {
                             if let Err(e) = self.document.open_single(&temp_path) {
-                                eprintln!("貼り付け失敗: {e}");
+                                self.show_error_title(&format!("貼り付け失敗: {e}"));
                             }
                             self.process_document_events();
                         }
                     }
                     Ok(None) => {} // クリップボードに画像なし
-                    Err(e) => eprintln!("貼り付け失敗: {e}"),
+                    Err(e) => self.show_error_title(&format!("貼り付け失敗: {e}")),
                 }
             }
 
@@ -1010,12 +1019,12 @@ impl AppWindow {
                 match crate::bookmark::load_bookmark(self.hwnd) {
                     Ok(Some(data)) => {
                         if let Err(e) = self.document.load_bookmark_data(data) {
-                            eprintln!("ブックマーク読み込み失敗: {e}");
+                            self.show_error_title(&format!("ブックマーク読み込み失敗: {e}"));
                         }
                         self.process_document_events();
                     }
                     Ok(None) => {} // キャンセル
-                    Err(e) => eprintln!("ブックマーク読み込み失敗: {e}"),
+                    Err(e) => self.show_error_title(&format!("ブックマーク読み込み失敗: {e}")),
                 }
             }
             Action::BookmarkOpenEditor => {
@@ -1356,7 +1365,7 @@ Susieプラグイン (.sph/.spi) で拡張可能";
         };
 
         if let Err(e) = result {
-            eprintln!("ドロップされたファイルを開けませんでした: {e}");
+            self.show_error_title(&format!("ドロップされたファイルを開けませんでした: {e}"));
         }
 
         self.process_document_events();

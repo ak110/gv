@@ -43,7 +43,7 @@ pub fn create_window(class_name: PCWSTR, title: PCWSTR, width: i32, height: i32)
             WINDOW_EX_STYLE::default(),
             class_name,
             title,
-            WS_OVERLAPPEDWINDOW,
+            WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
             width,

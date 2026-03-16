@@ -292,7 +292,7 @@ impl Document {
         self.invalidate_cache();
         self.file_list.clear();
 
-        let page_count = crate::pdf_renderer::get_pdf_page_count(pdf_path)?;
+        let page_count = crate::pdf_renderer::get_pdf_page_count_safe(pdf_path)?;
         if page_count == 0 {
             anyhow::bail!("PDFにページがありません");
         }
@@ -405,8 +405,8 @@ impl Document {
             page_index,
         } = &source
         {
-            // PDFページ: 直接レンダリング
-            crate::pdf_renderer::render_pdf_page(pdf_path, *page_index)
+            // PDFページ: STAデッドロック回避のためMTAスレッドで実行
+            crate::pdf_renderer::render_pdf_page_safe(pdf_path, *page_index)
         } else {
             // 通常ファイル: fs::read → decode
             let data = std::fs::read(&path)

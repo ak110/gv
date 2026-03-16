@@ -9,17 +9,25 @@ use anyhow::{Context as _, Result, bail};
 use windows::Data::Pdf::PdfDocument;
 use windows::Storage::StorageFile;
 use windows::Storage::Streams::{DataReader, InMemoryRandomAccessStream};
+use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx, CoUninitialize};
 
 use crate::image::DecodedImage;
 
 /// レンダリング解像度スケール（150 DPI / 96 DPI ≈ 1.5625）
 const DPI_SCALE: f64 = 1.5625;
 
+/// `\\?\` プレフィックスを除去する（WinRT APIが受け付けないため）
+fn strip_extended_prefix(path: &Path) -> &str {
+    let s = path.to_str().unwrap_or("");
+    s.strip_prefix(r"\\?\").unwrap_or(s)
+}
+
 /// PDFのページ数を取得する（高速: ページデータはロードしない）
 pub fn get_pdf_page_count(pdf_path: &Path) -> Result<u32> {
-    let path_str = pdf_path
-        .to_str()
-        .ok_or_else(|| anyhow::anyhow!("無効なパス: {}", pdf_path.display()))?;
+    let path_str = strip_extended_prefix(pdf_path);
+    if path_str.is_empty() {
+        anyhow::bail!("無効なパス: {}", pdf_path.display());
+    }
 
     let hstring = windows::core::HSTRING::from(path_str);
     let file = StorageFile::GetFileFromPathAsync(&hstring)
@@ -37,9 +45,10 @@ pub fn get_pdf_page_count(pdf_path: &Path) -> Result<u32> {
 
 /// 単一PDFページをDecodedImageにレンダリングする（150 DPI）
 pub fn render_pdf_page(pdf_path: &Path, page_index: u32) -> Result<DecodedImage> {
-    let path_str = pdf_path
-        .to_str()
-        .ok_or_else(|| anyhow::anyhow!("無効なパス: {}", pdf_path.display()))?;
+    let path_str = strip_extended_prefix(pdf_path);
+    if path_str.is_empty() {
+        anyhow::bail!("無効なパス: {}", pdf_path.display());
+    }
 
     let hstring = windows::core::HSTRING::from(path_str);
     let file = StorageFile::GetFileFromPathAsync(&hstring)
@@ -110,4 +119,40 @@ pub fn render_pdf_page(pdf_path: &Path, page_index: u32) -> Result<DecodedImage>
         height: rgba.height(),
         data: rgba.into_raw(),
     })
+}
+
+/// STAメインスレッドから安全にPDFページ数を取得する
+/// WinRT非同期APIはSTAでブロッキング待ちするとデッドロックするため、
+/// MTAスレッドに委譲して実行する。
+pub fn get_pdf_page_count_safe(pdf_path: &Path) -> Result<u32> {
+    let path = pdf_path.to_path_buf();
+    std::thread::spawn(move || {
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        }
+        let result = get_pdf_page_count(&path);
+        unsafe {
+            CoUninitialize();
+        }
+        result
+    })
+    .join()
+    .map_err(|_| anyhow::anyhow!("PDFスレッドがパニック"))?
+}
+
+/// STAメインスレッドから安全にPDFページをレンダリングする
+pub fn render_pdf_page_safe(pdf_path: &Path, page_index: u32) -> Result<DecodedImage> {
+    let path = pdf_path.to_path_buf();
+    std::thread::spawn(move || {
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        }
+        let result = render_pdf_page(&path, page_index);
+        unsafe {
+            CoUninitialize();
+        }
+        result
+    })
+    .join()
+    .map_err(|_| anyhow::anyhow!("PDFスレッドがパニック"))?
 }

@@ -122,12 +122,10 @@ impl D2DRenderer {
         unsafe {
             self.render_target.BeginDraw();
 
-            // 全面クリア（クリップ前に実行し、パネル背後も含め未定義領域を残さない）
-            self.render_target.Clear(Some(&BG_COLOR));
+            let size = self.render_target.GetSize();
 
             // ファイルリストパネルの右側のみに描画を制限
-            // （D2DはGDIクリッピングをバイパスするため、パネル上に描画が被るのを防止）
-            let size = self.render_target.GetSize();
+            // Clear()前にクリップを設定し、パネル領域を塗りつぶさないようにする
             let has_clip = self.draw_offset_x > 0.0;
             if has_clip {
                 let clip = D2D_RECT_F {
@@ -139,6 +137,9 @@ impl D2DRenderer {
                 self.render_target
                     .PushAxisAlignedClip(&clip, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
             }
+
+            // クリップ設定後にクリア（パネル領域は保護される）
+            self.render_target.Clear(Some(&BG_COLOR));
 
             if let Some(img) = image {
                 // パネル幅を差し引いた描画領域でレイアウト計算
@@ -208,18 +209,30 @@ impl D2DRenderer {
             return unsafe { self.get_or_create_bitmap(image) };
         }
 
-        // CPU Lanczos3リサイズ
-        let src = image::RgbaImage::from_raw(image.width, image.height, image.data.clone())
-            .ok_or_else(|| anyhow::anyhow!("RgbaImage作成失敗"))?;
-        let resized = image::imageops::resize(
-            &src,
-            target_width,
-            target_height,
-            image::imageops::FilterType::Lanczos3,
-        );
+        // 縮小時は平均画素法（モアレ・リンギングが出にくい）、拡大時はLanczos3
+        let is_shrink = target_width <= image.width && target_height <= image.height;
+        let resized_data = if is_shrink {
+            area_average_resize(
+                &image.data,
+                image.width,
+                image.height,
+                target_width,
+                target_height,
+            )
+        } else {
+            let src = image::RgbaImage::from_raw(image.width, image.height, image.data.clone())
+                .ok_or_else(|| anyhow::anyhow!("RgbaImage作成失敗"))?;
+            image::imageops::resize(
+                &src,
+                target_width,
+                target_height,
+                image::imageops::FilterType::Lanczos3,
+            )
+            .into_raw()
+        };
 
         let prescaled = DecodedImage {
-            data: resized.into_raw(),
+            data: resized_data,
             width: target_width,
             height: target_height,
         };
@@ -427,5 +440,125 @@ impl D2DRenderer {
     /// 描画領域の左オフセットを設定（ファイルリストパネル幅）
     pub fn set_draw_offset(&mut self, offset_x: f32) {
         self.draw_offset_x = offset_x;
+    }
+}
+
+/// 平均画素法による画像縮小（縮小専用）
+/// 各出力ピクセルに対応するソース矩形内の全ピクセルの面積加重平均で計算する。
+/// Lanczos3と異なりリンギングやモアレが発生しにくい。
+fn area_average_resize(src: &[u8], src_w: u32, src_h: u32, dst_w: u32, dst_h: u32) -> Vec<u8> {
+    let mut dst = vec![0u8; (dst_w * dst_h * 4) as usize];
+
+    let sx = src_w as f64 / dst_w as f64;
+    let sy = src_h as f64 / dst_h as f64;
+
+    for dy in 0..dst_h {
+        let y0 = dy as f64 * sy;
+        let y1 = ((dy + 1) as f64 * sy).min(src_h as f64);
+
+        for dx in 0..dst_w {
+            let x0 = dx as f64 * sx;
+            let x1 = ((dx + 1) as f64 * sx).min(src_w as f64);
+
+            let mut r_sum = 0.0_f64;
+            let mut g_sum = 0.0_f64;
+            let mut b_sum = 0.0_f64;
+            let mut a_sum = 0.0_f64;
+            let mut weight_sum = 0.0_f64;
+
+            // ソース矩形にかかる全ピクセルを走査
+            let iy_start = y0.floor() as u32;
+            let iy_end = (y1.ceil() as u32).min(src_h);
+            let ix_start = x0.floor() as u32;
+            let ix_end = (x1.ceil() as u32).min(src_w);
+
+            for iy in iy_start..iy_end {
+                // このソース行がカバーする垂直方向の面積割合
+                let fy0 = (iy as f64).max(y0);
+                let fy1 = ((iy + 1) as f64).min(y1);
+                let wy = fy1 - fy0;
+
+                for ix in ix_start..ix_end {
+                    // このソースピクセルがカバーする水平方向の面積割合
+                    let fx0 = (ix as f64).max(x0);
+                    let fx1 = ((ix + 1) as f64).min(x1);
+                    let wx = fx1 - fx0;
+
+                    let w = wx * wy;
+                    let offset = ((iy * src_w + ix) * 4) as usize;
+                    r_sum += src[offset] as f64 * w;
+                    g_sum += src[offset + 1] as f64 * w;
+                    b_sum += src[offset + 2] as f64 * w;
+                    a_sum += src[offset + 3] as f64 * w;
+                    weight_sum += w;
+                }
+            }
+
+            let dst_offset = ((dy * dst_w + dx) * 4) as usize;
+            if weight_sum > 0.0 {
+                dst[dst_offset] = (r_sum / weight_sum).round() as u8;
+                dst[dst_offset + 1] = (g_sum / weight_sum).round() as u8;
+                dst[dst_offset + 2] = (b_sum / weight_sum).round() as u8;
+                dst[dst_offset + 3] = (a_sum / weight_sum).round() as u8;
+            }
+        }
+    }
+
+    dst
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn area_average_2x2_to_1x1() {
+        // 4色の平均: R=(255+0+0+0)/4=63.75, G=(0+255+0+0)/4=63.75, B=(0+0+255+0)/4=63.75, A=255
+        #[rustfmt::skip]
+        let src: Vec<u8> = vec![
+            255, 0,   0,   255,   0, 255,   0, 255,
+              0, 0, 255,   255,   0,   0,   0, 255,
+        ];
+        let result = area_average_resize(&src, 2, 2, 1, 1);
+        assert_eq!(result.len(), 4);
+        assert_eq!(result[0], 64); // R: round(63.75)
+        assert_eq!(result[1], 64); // G
+        assert_eq!(result[2], 64); // B
+        assert_eq!(result[3], 255); // A
+    }
+
+    #[test]
+    fn area_average_same_size() {
+        let src: Vec<u8> = vec![10, 20, 30, 255, 40, 50, 60, 128];
+        let result = area_average_resize(&src, 2, 1, 2, 1);
+        assert_eq!(result, src);
+    }
+
+    #[test]
+    fn area_average_4x4_to_2x2_uniform() {
+        // 全ピクセル同じ色 → 結果も同じ色
+        let src: Vec<u8> = vec![[100u8, 150, 200, 255]; 16]
+            .into_iter()
+            .flatten()
+            .collect();
+        let result = area_average_resize(&src, 4, 4, 2, 2);
+        assert_eq!(result.len(), 16);
+        for pixel in result.chunks_exact(4) {
+            assert_eq!(pixel, [100, 150, 200, 255]);
+        }
+    }
+
+    #[test]
+    fn area_average_3x3_to_2x2() {
+        // 3x3 白→2x2: 全ピクセル白なので結果も白
+        let src: Vec<u8> = vec![[255u8, 255, 255, 255]; 9]
+            .into_iter()
+            .flatten()
+            .collect();
+        let result = area_average_resize(&src, 3, 3, 2, 2);
+        assert_eq!(result.len(), 16);
+        for pixel in result.chunks_exact(4) {
+            assert_eq!(pixel, [255, 255, 255, 255]);
+        }
     }
 }
