@@ -141,6 +141,7 @@ impl DisplayConfig {
 
 impl ListConfig {
     /// 文字列からSortOrderに変換
+    #[allow(dead_code)]
     pub fn to_sort_order(&self) -> SortOrder {
         match self.default_sort.as_str() {
             "name" => SortOrder::Name,

@@ -37,3 +37,6 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 unrar = "0.5"
 sevenz-rust = { version = "0.6", features = ["bzip2", "zstd", "aes256"] }
 libloading = "0.8"
+
+[build-dependencies]
+winres = "0.1"

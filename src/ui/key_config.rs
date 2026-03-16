@@ -253,6 +253,7 @@ impl KeyConfig {
         bind(&mut m, "LeftDoubleClick", Action::ToggleMaximize);
         bind(&mut m, "Num -", Action::ToggleCursorHide);
         bind(&mut m, "Esc", Action::ToggleMenuBar);
+        bind(&mut m, "T", Action::ToggleAlwaysOnTop);
 
         // ファイル操作
         bind(&mut m, "Ctrl+N", Action::NewWindow);

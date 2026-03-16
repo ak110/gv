@@ -32,6 +32,7 @@ pub struct Layout {
 }
 
 impl Layout {
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self {
             mode: DisplayMode::AutoShrink,

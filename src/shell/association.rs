@@ -135,6 +135,10 @@ const ARCHIVE_EXTENSIONS: &[&str] = &[".zip", ".cbz", ".rar", ".cbr", ".7z"];
 
 const IMAGE_PROGID: &str = "gv3.ImageFile";
 const ARCHIVE_PROGID: &str = "gv3.ArchiveFile";
+const BOOKMARK_PROGID: &str = "gv3.Bookmark";
+
+/// ブックマーク拡張子
+const BOOKMARK_EXTENSION: &str = ".gv3bm";
 
 /// ファイル関連付けを登録する
 pub fn register() -> Result<()> {
@@ -162,6 +166,32 @@ pub fn register() -> Result<()> {
         &format!("\"{exe}\" \"%1\""),
     )?;
 
+    // DefaultIcon設定（リソースID: 0=icon1, 1=icon2, 2=icon3）
+    set_key_value(
+        HKEY_CURRENT_USER,
+        &format!(r"Software\Classes\{IMAGE_PROGID}\DefaultIcon"),
+        &format!("\"{exe}\",1"),
+    )?;
+    set_key_value(
+        HKEY_CURRENT_USER,
+        &format!(r"Software\Classes\{ARCHIVE_PROGID}\DefaultIcon"),
+        &format!("\"{exe}\",2"),
+    )?;
+
+    // ブックマーク用ProgID (.gv3bm)
+    let bm_key = format!(r"Software\Classes\{BOOKMARK_PROGID}");
+    set_key_value(HKEY_CURRENT_USER, &bm_key, "ぐらびゅ3 ブックマーク")?;
+    set_key_value(
+        HKEY_CURRENT_USER,
+        &format!(r"{bm_key}\shell\open\command"),
+        &format!("\"{exe}\" \"%1\""),
+    )?;
+    set_key_value(
+        HKEY_CURRENT_USER,
+        &format!(r"{bm_key}\DefaultIcon"),
+        &format!("\"{exe}\",2"),
+    )?;
+
     // 各拡張子にOpenWithProgidsを登録
     for ext in IMAGE_EXTENSIONS {
         add_open_with_progid(ext, IMAGE_PROGID)?;
@@ -169,6 +199,7 @@ pub fn register() -> Result<()> {
     for ext in ARCHIVE_EXTENSIONS {
         add_open_with_progid(ext, ARCHIVE_PROGID)?;
     }
+    add_open_with_progid(BOOKMARK_EXTENSION, BOOKMARK_PROGID)?;
 
     Ok(())
 }
@@ -184,6 +215,10 @@ pub fn unregister() -> Result<()> {
         HKEY_CURRENT_USER,
         &format!(r"Software\Classes\{ARCHIVE_PROGID}"),
     )?;
+    delete_key_tree(
+        HKEY_CURRENT_USER,
+        &format!(r"Software\Classes\{BOOKMARK_PROGID}"),
+    )?;
 
     // 各拡張子のOpenWithProgidsからProgIDを削除
     for ext in IMAGE_EXTENSIONS {
@@ -192,6 +227,7 @@ pub fn unregister() -> Result<()> {
     for ext in ARCHIVE_EXTENSIONS {
         remove_open_with_progid(ext, ARCHIVE_PROGID)?;
     }
+    remove_open_with_progid(BOOKMARK_EXTENSION, BOOKMARK_PROGID)?;
 
     Ok(())
 }

@@ -4,7 +4,14 @@ use std::sync::Arc;
 use anyhow::Result;
 
 use crate::extension_registry::ExtensionRegistry;
-use crate::file_info::FileInfo;
+use crate::file_info::{FileInfo, FileSource};
+
+/// フォルダ/アーカイブ単位ナビゲーション用のグループキー
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum GroupKey {
+    Folder(std::path::PathBuf),
+    Archive(std::path::PathBuf),
+}
 
 /// ソート順
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -334,31 +341,42 @@ impl FileList {
         false
     }
 
-    /// 前のフォルダの最初のファイルへ移動する
-    /// フォルダ=親ディレクトリが異なるファイル群
+    /// ファイルのグループキーを返す（フォルダ=親ディレクトリ or アーカイブパス）
+    fn group_key(info: &FileInfo) -> GroupKey {
+        match &info.source {
+            FileSource::ArchiveEntry { archive, .. } => GroupKey::Archive(archive.clone()),
+            FileSource::File(_) => GroupKey::Folder(
+                info.path
+                    .parent()
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_default(),
+            ),
+        }
+    }
+
+    /// 前のフォルダ/アーカイブの最初のファイルへ移動する
     pub fn navigate_prev_folder(&mut self) -> bool {
         let current = self.current_index.unwrap_or(0);
         if self.files.is_empty() {
             return false;
         }
 
-        let current_parent = self.files[current].path.parent();
+        let current_key = Self::group_key(&self.files[current]);
 
-        // 現在のフォルダの先頭を探す
-        let mut folder_start = current;
-        while folder_start > 0 && self.files[folder_start - 1].path.parent() == current_parent {
-            folder_start -= 1;
+        // 現在グループの先頭を探す
+        let mut group_start = current;
+        while group_start > 0 && Self::group_key(&self.files[group_start - 1]) == current_key {
+            group_start -= 1;
         }
 
-        if folder_start == 0 {
-            // 既に最初のフォルダ
+        if group_start == 0 {
             return false;
         }
 
-        // 前のフォルダのいずれかのファイルを見つけて、そのフォルダの先頭へ
-        let prev_parent = self.files[folder_start - 1].path.parent();
-        let mut target = folder_start - 1;
-        while target > 0 && self.files[target - 1].path.parent() == prev_parent {
+        // 前のグループの先頭へ
+        let prev_key = Self::group_key(&self.files[group_start - 1]);
+        let mut target = group_start - 1;
+        while target > 0 && Self::group_key(&self.files[target - 1]) == prev_key {
             target -= 1;
         }
 
@@ -366,30 +384,74 @@ impl FileList {
         true
     }
 
-    /// 次のフォルダの最初のファイルへ移動する
+    /// 次のフォルダ/アーカイブの最初のファイルへ移動する
     pub fn navigate_next_folder(&mut self) -> bool {
         let current = self.current_index.unwrap_or(0);
         if self.files.is_empty() {
             return false;
         }
 
-        let current_parent = self.files[current].path.parent();
+        let current_key = Self::group_key(&self.files[current]);
 
-        // 現在のフォルダの末尾+1を探す
+        // 現在グループの末尾+1を探す
         let mut next_start = current + 1;
         while next_start < self.files.len()
-            && self.files[next_start].path.parent() == current_parent
+            && Self::group_key(&self.files[next_start]) == current_key
         {
             next_start += 1;
         }
 
         if next_start >= self.files.len() {
-            // 既に最後のフォルダ
             return false;
         }
 
         self.current_index = Some(next_start);
         true
+    }
+
+    /// 一時的にソート順で前後移動する（リスト順序は変えない）
+    pub fn sorted_navigate(&mut self, direction: isize, sort_order: SortOrder) -> bool {
+        let current = match self.current_index {
+            Some(idx) => idx,
+            None => return false,
+        };
+        if self.files.is_empty() {
+            return false;
+        }
+
+        // ソート済みインデックスリストを生成
+        let mut sorted_indices: Vec<usize> = (0..self.files.len()).collect();
+        sorted_indices.sort_by(|&a, &b| {
+            Self::compare_by_sort_order(&self.files[a], &self.files[b], sort_order)
+        });
+
+        // 現在ファイルのソート済みリスト内位置を特定
+        let pos = sorted_indices.iter().position(|&i| i == current);
+        let Some(pos) = pos else {
+            return false;
+        };
+
+        // direction方向の次のインデックスを取得
+        let new_pos = (pos as isize + direction).rem_euclid(sorted_indices.len() as isize) as usize;
+        let target = sorted_indices[new_pos];
+
+        if target != current {
+            self.current_index = Some(target);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// ソート順による比較
+    fn compare_by_sort_order(a: &FileInfo, b: &FileInfo, order: SortOrder) -> std::cmp::Ordering {
+        match order {
+            SortOrder::Name => a.file_name.cmp(&b.file_name),
+            SortOrder::NameNoCase => a.file_name.to_lowercase().cmp(&b.file_name.to_lowercase()),
+            SortOrder::Size => a.file_size.cmp(&b.file_size),
+            SortOrder::Date => a.modified.cmp(&b.modified),
+            SortOrder::Natural => natord::compare(&a.file_name, &b.file_name),
+        }
     }
 
     /// ファイル一覧への参照
@@ -410,6 +472,11 @@ impl FileList {
     /// 現在のインデックス
     pub fn current_index(&self) -> Option<usize> {
         self.current_index
+    }
+
+    /// 現在のソート順
+    pub fn sort_order(&self) -> SortOrder {
+        self.sort_order
     }
 }
 
@@ -670,6 +737,37 @@ mod tests {
         // 前のマーク
         assert!(fl.navigate_prev_mark());
         assert_eq!(fl.current_index(), Some(3));
+
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn sorted_navigate_forward_backward() {
+        let dir = std::env::temp_dir().join("gv3_test_fl_sortnav");
+        // 自然順: a.png, b.png, c.png
+        // サイズ順は同じ（全てdummy 5バイト）なので名前順で確認
+        create_test_files(&dir, &["c.png", "a.png", "b.png"]);
+
+        let mut fl = FileList::new(test_registry());
+        fl.populate_from_folder(&dir).unwrap();
+        // Natural sort: a.png(0), b.png(1), c.png(2)
+        fl.navigate_to(0); // a.png
+
+        // 自然順で次→ b.png
+        assert!(fl.sorted_navigate(1, SortOrder::Natural));
+        assert_eq!(fl.current().unwrap().file_name, "b.png");
+
+        // 自然順で次→ c.png
+        assert!(fl.sorted_navigate(1, SortOrder::Natural));
+        assert_eq!(fl.current().unwrap().file_name, "c.png");
+
+        // 自然順で次→ ラップアラウンドで a.png
+        assert!(fl.sorted_navigate(1, SortOrder::Natural));
+        assert_eq!(fl.current().unwrap().file_name, "a.png");
+
+        // 自然順で前→ c.png
+        assert!(fl.sorted_navigate(-1, SortOrder::Natural));
+        assert_eq!(fl.current().unwrap().file_name, "c.png");
 
         cleanup(&dir);
     }

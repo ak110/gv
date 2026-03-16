@@ -4,13 +4,11 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result};
 use windows::Win32::Foundation::HWND;
+use windows::Win32::UI::Shell::{FO_COPY, FO_DELETE, FO_MOVE, FOF_ALLOWUNDO};
 use windows::Win32::UI::Shell::{
-    FILEOPENDIALOGOPTIONS, FOS_ALLOWMULTISELECT, FOS_FILEMUSTEXIST, FOS_FORCEFILESYSTEM,
-    FOS_OVERWRITEPROMPT, FOS_PATHMUSTEXIST, FOS_PICKFOLDERS, IFileDialog, IFileOpenDialog,
-    IFileSaveDialog, SHFILEOPSTRUCTW, SHFileOperationW,
+    FOS_FILEMUSTEXIST, FOS_FORCEFILESYSTEM, FOS_OVERWRITEPROMPT, FOS_PATHMUSTEXIST,
+    FOS_PICKFOLDERS, IFileOpenDialog, IFileSaveDialog, SHFILEOPSTRUCTW, SHFileOperationW,
 };
-use windows::Win32::UI::Shell::{FO_COPY, FO_DELETE, FO_MOVE, FOF_ALLOWUNDO, FOF_NOCONFIRMATION};
-use windows::core::Interface;
 
 /// ごみ箱経由でファイルを削除する
 pub fn delete_to_recycle_bin(hwnd: HWND, paths: &[&Path]) -> Result<bool> {

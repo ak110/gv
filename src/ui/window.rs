@@ -5,8 +5,12 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::PCWSTR;
 
-/// ウィンドウクラス登録
-pub fn register_window_class(class_name: PCWSTR, wnd_proc: WNDPROC) -> Result<()> {
+/// ウィンドウクラス登録（アイコン指定可能）
+pub fn register_window_class_with_icon(
+    class_name: PCWSTR,
+    wnd_proc: WNDPROC,
+    icon: Option<HICON>,
+) -> Result<()> {
     unsafe {
         let instance = GetModuleHandleW(None).context("GetModuleHandleW失敗")?;
 
@@ -17,6 +21,7 @@ pub fn register_window_class(class_name: PCWSTR, wnd_proc: WNDPROC) -> Result<()
             hInstance: instance.into(),
             hCursor: LoadCursorW(None, IDC_ARROW)?,
             hbrBackground: HBRUSH::default(),
+            hIcon: icon.unwrap_or_default(),
             lpszClassName: class_name,
             ..Default::default()
         };

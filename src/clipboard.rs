@@ -43,7 +43,7 @@ pub fn copy_text_to_clipboard(hwnd: HWND, text: &str) -> Result<()> {
 /// 画像をクリップボードにコピーする（CF_DIB形式）
 pub fn copy_image_to_clipboard(hwnd: HWND, image: &DecodedImage) -> Result<()> {
     let header_size: usize = 40;
-    let row_stride = ((image.width as usize * 3 + 3) / 4) * 4;
+    let row_stride = (image.width as usize * 3).div_ceil(4) * 4;
     let pixel_size = row_stride * image.height as usize;
     let total_size = header_size + pixel_size;
 
@@ -134,7 +134,7 @@ pub fn paste_image_from_clipboard(hwnd: HWND) -> Result<Option<DecodedImage>> {
         }
 
         let bytes_per_pixel = (bit_count / 8) as usize;
-        let src_row_stride = ((width as usize * bytes_per_pixel + 3) / 4) * 4;
+        let src_row_stride = (width as usize * bytes_per_pixel).div_ceil(4) * 4;
         let pixel_offset = 40usize;
 
         let mut rgba = vec![0u8; width as usize * abs_height as usize * 4];

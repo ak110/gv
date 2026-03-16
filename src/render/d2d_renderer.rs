@@ -37,6 +37,8 @@ pub struct D2DRenderer {
     alpha_bg: AlphaBackground,
     /// チェッカーパターンブラシ（遅延初期化）
     checker_brush: Option<ID2D1BitmapBrush>,
+    /// 描画領域の左オフセット（ファイルリストパネル分）
+    draw_offset_x: f32,
 }
 
 // 背景色: ダークグレー (#333333)
@@ -65,6 +67,7 @@ impl D2DRenderer {
                 cached_bitmap: None,
                 alpha_bg,
                 checker_brush: None,
+                draw_offset_x: 0.0,
             })
         }
     }
@@ -113,9 +116,13 @@ impl D2DRenderer {
                 && let Ok(bitmap) = self.get_or_create_bitmap(img)
             {
                 let size = self.render_target.GetSize();
-                let draw_rect =
+                // パネル幅を差し引いた描画領域でレイアウト計算
+                let avail_width = size.width - self.draw_offset_x;
+                let mut draw_rect =
                     self.layout
-                        .calculate(img.width, img.height, size.width, size.height);
+                        .calculate(img.width, img.height, avail_width, size.height);
+                // オフセットを加算して実際の描画位置に変換
+                draw_rect.x += self.draw_offset_x;
 
                 // αチャネル背景を画像領域に描画
                 self.draw_alpha_background(&draw_rect);
@@ -330,5 +337,10 @@ impl D2DRenderer {
     #[allow(dead_code)]
     pub fn set_alpha_background(&mut self, bg: AlphaBackground) {
         self.alpha_bg = bg;
+    }
+
+    /// 描画領域の左オフセットを設定（ファイルリストパネル幅）
+    pub fn set_draw_offset(&mut self, offset_x: f32) {
+        self.draw_offset_x = offset_x;
     }
 }

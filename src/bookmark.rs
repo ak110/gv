@@ -1,8 +1,8 @@
 //! ブックマーク機能（ファイルリストの保存/復元）
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use anyhow::{Context as _, Result, bail};
+use anyhow::{Context as _, Result};
 use windows::Win32::Foundation::HWND;
 
 use crate::file_info::FileSource;
@@ -92,10 +92,10 @@ fn parse_bookmark(content: &str) -> Result<BookmarkData> {
         // コメント行
         if line.starts_with('#') {
             // index指定を読み取る
-            if let Some(idx_str) = line.strip_prefix("# index:") {
-                if let Ok(idx) = idx_str.trim().parse::<usize>() {
-                    index = idx;
-                }
+            if let Some(idx_str) = line.strip_prefix("# index:")
+                && let Ok(idx) = idx_str.trim().parse::<usize>()
+            {
+                index = idx;
             }
             continue;
         }
@@ -130,6 +130,7 @@ fn parse_bookmark(content: &str) -> Result<BookmarkData> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     #[test]
     fn parse_bookmark_normal() {

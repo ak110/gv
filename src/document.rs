@@ -444,6 +444,22 @@ impl Document {
         }
     }
 
+    /// ソート順で前の画像へ移動
+    pub fn sort_navigate_back(&mut self) {
+        let order = self.file_list.sort_order();
+        if self.file_list.sorted_navigate(-1, order) {
+            let _ = self.load_current();
+        }
+    }
+
+    /// ソート順で次の画像へ移動
+    pub fn sort_navigate_forward(&mut self) {
+        let order = self.file_list.sort_order();
+        if self.file_list.sorted_navigate(1, order) {
+            let _ = self.load_current();
+        }
+    }
+
     /// 現在のファイルをリストから削除する（ファイル自体は残る）
     pub fn remove_current_from_list(&mut self) {
         if let Some(index) = self.file_list.current_index() {
@@ -500,10 +516,10 @@ impl Document {
         for source in &data.entries {
             match source {
                 FileSource::File(path) => {
-                    if path.exists() {
-                        if let Ok(info) = crate::file_info::FileInfo::from_path(path) {
-                            self.file_list.push(info);
-                        }
+                    if path.exists()
+                        && let Ok(info) = crate::file_info::FileInfo::from_path(path)
+                    {
+                        self.file_list.push(info);
                     }
                 }
                 FileSource::ArchiveEntry { archive, .. } => {
@@ -544,6 +560,7 @@ impl Document {
     }
 
     /// ファイルリストへの可変参照（app.rsのファイル操作用）
+    #[allow(dead_code)]
     pub fn file_list_mut(&mut self) -> &mut FileList {
         &mut self.file_list
     }

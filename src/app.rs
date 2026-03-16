@@ -19,10 +19,12 @@ use crate::render::D2DRenderer;
 use crate::render::layout::DisplayMode;
 use crate::susie::SusieManager;
 use crate::ui::cursor_hider::{CursorHider, TIMER_ID_CURSOR_HIDE};
+use crate::ui::file_list_panel::FileListPanel;
 use crate::ui::fullscreen::FullscreenState;
 use crate::ui::key_config::{
     Action, InputChord, KeyConfig, Modifiers, MouseButton, WheelDirection,
 };
+use crate::ui::menu;
 use crate::ui::window;
 
 /// DocumentEventをUIスレッドに通知するためのカスタムメッセージ
@@ -43,15 +45,47 @@ pub struct AppWindow {
     cursor_hider: CursorHider,
     always_on_top: bool,
     key_config: KeyConfig,
+    // メニューバー
+    menu: HMENU,
+    menu_visible: bool,
+    // ファイルリストパネル
+    file_list_panel: FileListPanel,
 }
 
 impl AppWindow {
     /// AppWindowを作成しウィンドウを表示する
     pub fn create(config: Config, initial_file: Option<&Path>) -> Result<Box<Self>> {
         let class_name = windows::core::w!("gv3_main");
-        window::register_window_class(class_name, Some(Self::wnd_proc))?;
+
+        // アイコンをリソースからロード（リソースID 1）
+        let icon = unsafe {
+            let hmodule = windows::Win32::System::LibraryLoader::GetModuleHandleW(None).ok();
+            let hinstance = hmodule.map(|m| windows::Win32::Foundation::HINSTANCE(m.0));
+            // MAKEINTRESOURCE(1) — リソースID 1 をポインタとして渡す
+            #[allow(clippy::manual_dangling_ptr)]
+            LoadIconW(hinstance, windows::core::PCWSTR(1 as *const u16)).ok()
+        };
+        window::register_window_class_with_icon(class_name, Some(Self::wnd_proc), icon)?;
 
         let hwnd = window::create_window(class_name, windows::core::w!("ぐらびゅ3"), 1024, 768)?;
+
+        // ウィンドウにアイコンを設定（タスクバー表示用）
+        if let Some(ref icon) = icon {
+            unsafe {
+                let _ = SendMessageW(
+                    hwnd,
+                    WM_SETICON,
+                    Some(WPARAM(0)), // ICON_SMALL
+                    Some(LPARAM(icon.0 as isize)),
+                );
+                let _ = SendMessageW(
+                    hwnd,
+                    WM_SETICON,
+                    Some(WPARAM(1)), // ICON_BIG
+                    Some(LPARAM(icon.0 as isize)),
+                );
+            }
+        }
 
         // D&Dを受け付ける
         unsafe {
@@ -99,6 +133,12 @@ impl AppWindow {
             .and_then(|p| p.parent().map(|d| d.join("gv3.keys.toml")));
         let key_config = KeyConfig::load(key_config_path.as_deref());
 
+        // メニューバー構築（初期状態は非表示）
+        let menu_handle = menu::build_menu_bar();
+
+        // ファイルリストパネル作成（初期状態は非表示）
+        let file_list_panel = FileListPanel::create(hwnd);
+
         let mut app = Box::new(Self {
             hwnd,
             document,
@@ -108,6 +148,9 @@ impl AppWindow {
             cursor_hider: CursorHider::new(),
             always_on_top,
             key_config,
+            menu: menu_handle,
+            menu_visible: false,
+            file_list_panel,
         });
 
         // GWLP_USERDATAにポインタを格納（WndProcからアクセスするため）
@@ -185,10 +228,13 @@ impl AppWindow {
                 DocumentEvent::ImageReady => unsafe {
                     let _ = InvalidateRect(Some(self.hwnd), None, false);
                 },
-                DocumentEvent::NavigationChanged { .. } => {
+                DocumentEvent::NavigationChanged { index, .. } => {
                     self.update_title();
+                    self.file_list_panel.set_selection(index);
                 }
-                DocumentEvent::FileListChanged => {}
+                DocumentEvent::FileListChanged => {
+                    self.file_list_panel.update(self.document.file_list());
+                }
                 DocumentEvent::Error(msg) => {
                     eprintln!("エラー: {msg}");
                 }
@@ -290,10 +336,32 @@ impl AppWindow {
 
     /// フルスクリーンをトグル
     fn toggle_fullscreen(&mut self) {
+        let entering = !self.fullscreen.is_fullscreen();
+
+        // フルスクリーン開始前にパネル表示状態を保存
+        let panel_was_visible = self.file_list_panel.is_visible();
+
         self.fullscreen.toggle(self.hwnd, self.always_on_top);
-        if !self.fullscreen.is_fullscreen() {
-            // フルスクリーン解除時にカーソルを確実に復帰
+
+        if entering {
+            // フルスクリーン開始: メニュー・パネルを非表示（フラグは保持）
+            unsafe {
+                let _ = SetMenu(self.hwnd, None);
+            }
+            if panel_was_visible {
+                self.file_list_panel.hide_preserve_state();
+            }
+        } else {
+            // フルスクリーン解除: カーソル復帰、メニュー・パネルを復元
             self.cursor_hider.force_show(self.hwnd);
+            if self.menu_visible {
+                unsafe {
+                    let _ = SetMenu(self.hwnd, Some(self.menu));
+                }
+            }
+            if self.file_list_panel.is_visible() {
+                self.file_list_panel.show();
+            }
         }
     }
 
@@ -323,8 +391,14 @@ impl AppWindow {
                     return LRESULT(0);
                 }
                 WM_SIZE => {
-                    let width = (lparam.0 & 0xFFFF) as u32;
-                    let height = ((lparam.0 >> 16) & 0xFFFF) as u32;
+                    let mut width = (lparam.0 & 0xFFFF) as u32;
+                    let mut height = ((lparam.0 >> 16) & 0xFFFF) as u32;
+                    // パネルのtoggleからSendMessageW(WM_SIZE, 0, 0)で呼ばれる場合
+                    if width == 0 && height == 0 {
+                        let (w, h) = window::get_client_size(hwnd);
+                        width = w;
+                        height = h;
+                    }
                     app.on_size(width, height);
                     return LRESULT(0);
                 }
@@ -390,6 +464,40 @@ impl AppWindow {
                         return LRESULT(0);
                     }
                 }
+                WM_COMMAND => {
+                    let notify_code = ((wparam.0 as u32) >> 16) & 0xFFFF;
+                    let control_id = (wparam.0 as u32) & 0xFFFF;
+                    let control_hwnd = HWND(lparam.0 as *mut _);
+
+                    // ListBox の LBN_SELCHANGE
+                    if notify_code == 1 // LBN_SELCHANGE
+                        && control_hwnd == app.file_list_panel.listbox_hwnd()
+                    {
+                        let sel = unsafe {
+                            SendMessageW(
+                                app.file_list_panel.listbox_hwnd(),
+                                LB_GETCURSEL,
+                                None,
+                                None,
+                            )
+                        };
+                        if sel.0 >= 0 {
+                            app.document.navigate_to(sel.0 as usize);
+                            app.process_document_events();
+                        }
+                        return LRESULT(0);
+                    }
+
+                    // メニュー項目（notify_code == 0 かつコントロールなし）
+                    if notify_code == 0 && control_hwnd.0.is_null() {
+                        if let Some(action) = menu::menu_id_to_action(control_id as u16) {
+                            app.execute_action(action);
+                        }
+                        return LRESULT(0);
+                    }
+
+                    return LRESULT(0);
+                }
                 WM_DROPFILES => {
                     app.on_drop_files(HDROP(wparam.0 as *mut _));
                     return LRESULT(0);
@@ -424,7 +532,16 @@ impl AppWindow {
 
     fn on_size(&mut self, width: u32, height: u32) {
         if width > 0 && height > 0 {
+            // ファイルリストパネルのリサイズ
+            let panel_width = self.file_list_panel.panel_width() as u32;
+            self.file_list_panel.resize(height as i32);
+
+            // D2Dレンダーターゲットは全体サイズでリサイズ
             self.renderer.resize(width, height);
+
+            // 描画オフセットを設定（パネル幅分だけ右にずらす）
+            self.renderer.set_draw_offset(panel_width as f32);
+
             self.invalidate();
         }
     }
@@ -594,11 +711,11 @@ impl AppWindow {
                 {
                     return;
                 }
-                if let Some(path) = self.document.current_path().map(|p| p.to_path_buf()) {
-                    if let Ok(true) = crate::file_ops::delete_to_recycle_bin(self.hwnd, &[&path]) {
-                        self.document.remove_current_from_list();
-                        self.process_document_events();
-                    }
+                if let Some(path) = self.document.current_path().map(|p| p.to_path_buf())
+                    && let Ok(true) = crate::file_ops::delete_to_recycle_bin(self.hwnd, &[&path])
+                {
+                    self.document.remove_current_from_list();
+                    self.process_document_events();
                 }
             }
             Action::MoveFile => {
@@ -607,15 +724,13 @@ impl AppWindow {
                 {
                     return;
                 }
-                if let Some(path) = self.document.current_path().map(|p| p.to_path_buf()) {
-                    if let Ok(Some(dest)) =
+                if let Some(path) = self.document.current_path().map(|p| p.to_path_buf())
+                    && let Ok(Some(dest)) =
                         crate::file_ops::select_folder_dialog(self.hwnd, "移動先フォルダ")
-                    {
-                        if let Ok(true) = crate::file_ops::move_files(self.hwnd, &[&path], &dest) {
-                            self.document.remove_current_from_list();
-                            self.process_document_events();
-                        }
-                    }
+                    && let Ok(true) = crate::file_ops::move_files(self.hwnd, &[&path], &dest)
+                {
+                    self.document.remove_current_from_list();
+                    self.process_document_events();
                 }
             }
             Action::CopyFile => {
@@ -626,10 +741,9 @@ impl AppWindow {
                         default_name,
                         "すべてのファイル",
                         "*.*",
-                    ) {
-                        if let Err(e) = std::fs::copy(&path, &dest) {
-                            eprintln!("ファイルコピー失敗: {e}");
-                        }
+                    ) && let Err(e) = std::fs::copy(&path, &dest)
+                    {
+                        eprintln!("ファイルコピー失敗: {e}");
                     }
                 }
             }
@@ -702,19 +816,18 @@ impl AppWindow {
 
             // --- クリップボード ---
             Action::CopyImage => {
-                if let Some(image) = self.document.current_image() {
-                    if let Err(e) = crate::clipboard::copy_image_to_clipboard(self.hwnd, image) {
-                        eprintln!("画像コピー失敗: {e}");
-                    }
+                if let Some(image) = self.document.current_image()
+                    && let Err(e) = crate::clipboard::copy_image_to_clipboard(self.hwnd, image)
+                {
+                    eprintln!("画像コピー失敗: {e}");
                 }
             }
             Action::CopyFileName => {
-                if let Some(source) = self.document.current_source() {
-                    if let Err(e) =
+                if let Some(source) = self.document.current_source()
+                    && let Err(e) =
                         crate::clipboard::copy_text_to_clipboard(self.hwnd, &source.display_path())
-                    {
-                        eprintln!("ファイル名コピー失敗: {e}");
-                    }
+                {
+                    eprintln!("ファイル名コピー失敗: {e}");
                 }
             }
             Action::MarkedCopyNames => {
@@ -741,13 +854,12 @@ impl AppWindow {
                             image.width,
                             image.height,
                             image.data.clone(),
-                        ) {
-                            if img_buf.save(&temp_path).is_ok() {
-                                if let Err(e) = self.document.open(&temp_path) {
-                                    eprintln!("貼り付け失敗: {e}");
-                                }
-                                self.process_document_events();
+                        ) && img_buf.save(&temp_path).is_ok()
+                        {
+                            if let Err(e) = self.document.open(&temp_path) {
+                                eprintln!("貼り付け失敗: {e}");
                             }
+                            self.process_document_events();
                         }
                     }
                     Ok(None) => {} // クリップボードに画像なし
@@ -803,10 +915,10 @@ impl AppWindow {
                 }
             }
             Action::OpenExeFolder => {
-                if let Ok(exe) = std::env::current_exe() {
-                    if let Some(dir) = exe.parent() {
-                        let _ = std::process::Command::new("explorer.exe").arg(dir).spawn();
-                    }
+                if let Ok(exe) = std::env::current_exe()
+                    && let Some(dir) = exe.parent()
+                {
+                    let _ = std::process::Command::new("explorer.exe").arg(dir).spawn();
                 }
             }
             Action::OpenBookmarkFolder => {
@@ -815,14 +927,14 @@ impl AppWindow {
                 let _ = std::process::Command::new("explorer.exe").arg(&dir).spawn();
             }
             Action::OpenSpiFolder => {
-                if let Ok(exe) = std::env::current_exe() {
-                    if let Some(dir) = exe.parent() {
-                        let spi_dir = dir.join("spi");
-                        let _ = std::fs::create_dir_all(&spi_dir);
-                        let _ = std::process::Command::new("explorer.exe")
-                            .arg(&spi_dir)
-                            .spawn();
-                    }
+                if let Ok(exe) = std::env::current_exe()
+                    && let Some(dir) = exe.parent()
+                {
+                    let spi_dir = dir.join("spi");
+                    let _ = std::fs::create_dir_all(&spi_dir);
+                    let _ = std::process::Command::new("explorer.exe")
+                        .arg(&spi_dir)
+                        .spawn();
                 }
             }
             Action::OpenTempFolder => {
@@ -865,12 +977,41 @@ impl AppWindow {
                 self.navigate_to_page_dialog();
             }
 
-            // --- Phase 8 スタブ（未実装） ---
-            Action::SortNavigateBack
-            | Action::SortNavigateForward
-            | Action::ToggleMenuBar
-            | Action::OpenHistory
-            | Action::ToggleFileList
+            // --- ソートナビゲーション ---
+            Action::SortNavigateBack => {
+                self.document.sort_navigate_back();
+                self.process_document_events();
+            }
+            Action::SortNavigateForward => {
+                self.document.sort_navigate_forward();
+                self.process_document_events();
+            }
+
+            // --- メニューバー ---
+            Action::ToggleMenuBar => {
+                self.menu_visible = !self.menu_visible;
+                unsafe {
+                    if self.menu_visible {
+                        let _ = SetMenu(self.hwnd, Some(self.menu));
+                    } else {
+                        let _ = SetMenu(self.hwnd, None);
+                    }
+                }
+            }
+
+            // --- ファイルリスト ---
+            Action::ToggleFileList => {
+                self.file_list_panel.toggle();
+                // toggle内でWM_SIZEが送られてon_sizeが呼ばれる
+            }
+
+            // --- ヘルプ ---
+            Action::ShowHelp => {
+                self.show_help();
+            }
+
+            // --- 未実装スタブ ---
+            Action::OpenHistory
             | Action::DialogDisplay
             | Action::DialogImage
             | Action::DialogDraw
@@ -878,8 +1019,7 @@ impl AppWindow {
             | Action::DialogGeneral
             | Action::DialogPlugin
             | Action::DialogEnvironment
-            | Action::DialogKeys
-            | Action::ShowHelp => {
+            | Action::DialogKeys => {
                 eprintln!("未実装: {action:?}");
             }
         }
@@ -976,6 +1116,47 @@ impl AppWindow {
         let text_nul = format!("{text}\0");
         let wide_title: Vec<u16> = title.encode_utf16().collect();
         let wide_text: Vec<u16> = text_nul.encode_utf16().collect();
+
+        unsafe {
+            MessageBoxW(
+                Some(self.hwnd),
+                windows::core::PCWSTR(wide_text.as_ptr()),
+                windows::core::PCWSTR(wide_title.as_ptr()),
+                MB_OK | MB_ICONINFORMATION,
+            );
+        }
+    }
+
+    /// ヘルプを表示する
+    fn show_help(&self) {
+        let text = "\
+ぐらびゅ3 - Windows用画像ビューア
+
+【主要キーバインド】
+← / →              前後の画像に移動
+ホイール上/下       前後の画像に移動
+PageUp / PageDown   5ページ移動
+Ctrl+PageUp/Down    50ページ移動
+Ctrl+Home / End     最初 / 最後へ
+Ctrl+ホイール       拡大 / 縮小
+Num /               自動縮小表示
+Num *               自動縮小・拡大表示
+A                   α背景切替
+Alt+Enter           全画面表示
+Esc                 メニューバー表示/非表示
+F4                  ファイルリスト表示/非表示
+Tab / Shift+Tab     ソート順で前後移動
+Delete              マーク設定
+F1                  このヘルプ
+
+【対応フォーマット】
+画像: JPEG, PNG, GIF, BMP, WebP
+アーカイブ: ZIP/cbz, RAR/cbr, 7z
+Susieプラグイン (.sph/.spi) で拡張可能\0";
+
+        let title = "ぐらびゅ3 ヘルプ\0";
+        let wide_text: Vec<u16> = text.encode_utf16().collect();
+        let wide_title: Vec<u16> = title.encode_utf16().collect();
 
         unsafe {
             MessageBoxW(
