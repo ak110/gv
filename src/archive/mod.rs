@@ -1,18 +1,19 @@
 mod rar;
 mod sevenz;
+pub mod susie;
 mod zip;
 
 use std::path::Path;
+use std::sync::Arc;
 
 use anyhow::{Result, bail};
 
-/// アーカイブ対応拡張子（小文字、ドット付き）
-const ARCHIVE_EXTENSIONS: &[&str] = &[".zip", ".cbz", ".rar", ".cbr", ".7z"];
+use crate::extension_registry::ExtensionRegistry;
 
 /// アーカイブハンドラのトレイト
 /// 各フォーマットのハンドラが実装する
 pub trait ArchiveHandler: Send + Sync {
-    fn supported_extensions(&self) -> &[&str];
+    fn supported_extensions(&self) -> Vec<String>;
 
     /// アーカイブ内の画像ファイルをtarget_dirに展開する
     /// 戻り値: 展開されたファイル数
@@ -22,27 +23,31 @@ pub trait ArchiveHandler: Send + Sync {
 /// アーカイブハンドラのディスパッチャ
 pub struct ArchiveManager {
     handlers: Vec<Box<dyn ArchiveHandler>>,
+    registry: Arc<ExtensionRegistry>,
 }
 
 impl ArchiveManager {
-    pub fn new() -> Self {
+    pub fn new(registry: Arc<ExtensionRegistry>) -> Self {
         Self {
             handlers: vec![
-                Box::new(zip::ZipHandler),
-                Box::new(rar::RarHandler),
-                Box::new(sevenz::SevenZHandler),
+                Box::new(zip::ZipHandler::new(Arc::clone(&registry))),
+                Box::new(rar::RarHandler::new(Arc::clone(&registry))),
+                Box::new(sevenz::SevenZHandler::new(Arc::clone(&registry))),
             ],
+            registry,
         }
     }
 
+    /// ハンドラを追加する（Susieプラグイン等の動的追加用）
+    pub fn add_handler(&mut self, handler: Box<dyn ArchiveHandler>) {
+        self.handlers.push(handler);
+    }
+
     /// パスがアーカイブファイルか拡張子で判定する
-    pub fn is_archive(path: &Path) -> bool {
-        path.extension()
-            .and_then(|e| e.to_str())
-            .map(|e| {
-                let ext = format!(".{}", e.to_lowercase());
-                ARCHIVE_EXTENSIONS.contains(&ext.as_str())
-            })
+    pub fn is_archive(&self, path: &Path) -> bool {
+        path.file_name()
+            .and_then(|n| n.to_str())
+            .map(|name| self.registry.is_archive_extension(name))
             .unwrap_or(false)
     }
 
@@ -55,7 +60,7 @@ impl ArchiveManager {
             .unwrap_or_default();
 
         for handler in &self.handlers {
-            if handler.supported_extensions().contains(&ext.as_str()) {
+            if handler.supported_extensions().contains(&ext) {
                 return handler.extract_images(archive_path, target_dir);
             }
         }
@@ -110,15 +115,17 @@ mod tests {
 
     #[test]
     fn is_archive_recognizes_extensions() {
-        assert!(ArchiveManager::is_archive(Path::new("test.zip")));
-        assert!(ArchiveManager::is_archive(Path::new("test.ZIP")));
-        assert!(ArchiveManager::is_archive(Path::new("test.cbz")));
-        assert!(ArchiveManager::is_archive(Path::new("test.rar")));
-        assert!(ArchiveManager::is_archive(Path::new("test.cbr")));
-        assert!(ArchiveManager::is_archive(Path::new("test.7z")));
-        assert!(!ArchiveManager::is_archive(Path::new("test.jpg")));
-        assert!(!ArchiveManager::is_archive(Path::new("test.txt")));
-        assert!(!ArchiveManager::is_archive(Path::new("test")));
+        let reg = Arc::new(ExtensionRegistry::new());
+        let mgr = ArchiveManager::new(reg);
+        assert!(mgr.is_archive(Path::new("test.zip")));
+        assert!(mgr.is_archive(Path::new("test.ZIP")));
+        assert!(mgr.is_archive(Path::new("test.cbz")));
+        assert!(mgr.is_archive(Path::new("test.rar")));
+        assert!(mgr.is_archive(Path::new("test.cbr")));
+        assert!(mgr.is_archive(Path::new("test.7z")));
+        assert!(!mgr.is_archive(Path::new("test.jpg")));
+        assert!(!mgr.is_archive(Path::new("test.txt")));
+        assert!(!mgr.is_archive(Path::new("test")));
     }
 
     #[test]

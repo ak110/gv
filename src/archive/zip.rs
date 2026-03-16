@@ -1,18 +1,27 @@
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
+use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 
 use super::{ArchiveHandler, extract_filename, resolve_filename};
-use crate::file_list::is_image_extension;
+use crate::extension_registry::ExtensionRegistry;
 
 /// ZIP/cbzアーカイブハンドラ
-pub struct ZipHandler;
+pub struct ZipHandler {
+    registry: Arc<ExtensionRegistry>,
+}
+
+impl ZipHandler {
+    pub fn new(registry: Arc<ExtensionRegistry>) -> Self {
+        Self { registry }
+    }
+}
 
 impl ArchiveHandler for ZipHandler {
-    fn supported_extensions(&self) -> &[&str] {
-        &[".zip", ".cbz"]
+    fn supported_extensions(&self) -> Vec<String> {
+        vec![".zip".to_string(), ".cbz".to_string()]
     }
 
     fn extract_images(&self, archive_path: &Path, target_dir: &Path) -> Result<usize> {
@@ -43,7 +52,7 @@ impl ArchiveHandler for ZipHandler {
             }
 
             // 画像ファイルのみ展開
-            if !is_image_extension(filename) {
+            if !self.registry.is_image_extension(filename) {
                 continue;
             }
 
@@ -103,7 +112,8 @@ mod tests {
         let out_dir = dir.join("out");
         std::fs::create_dir_all(&out_dir).unwrap();
 
-        let handler = ZipHandler;
+        let reg = Arc::new(ExtensionRegistry::new());
+        let handler = ZipHandler::new(reg);
         let count = handler.extract_images(&zip_path, &out_dir).unwrap();
 
         assert_eq!(count, 3);
@@ -130,7 +140,8 @@ mod tests {
         let out_dir = dir.join("out");
         std::fs::create_dir_all(&out_dir).unwrap();
 
-        let handler = ZipHandler;
+        let reg = Arc::new(ExtensionRegistry::new());
+        let handler = ZipHandler::new(reg);
         let count = handler.extract_images(&zip_path, &out_dir).unwrap();
 
         assert_eq!(count, 2);

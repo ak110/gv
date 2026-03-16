@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::Arc;
 
 use anyhow::Result;
 use crossbeam_channel::Receiver;
@@ -9,9 +10,13 @@ use windows::Win32::UI::Input::KeyboardAndMouse::GetKeyState;
 use windows::Win32::UI::Shell::{DragAcceptFiles, DragFinish, DragQueryFileW, HDROP};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
+use crate::archive::ArchiveManager;
 use crate::document::{Document, DocumentEvent};
+use crate::extension_registry::ExtensionRegistry;
+use crate::image::{DecoderChain, StandardDecoder};
 use crate::render::D2DRenderer;
 use crate::render::layout::DisplayMode;
+use crate::susie::SusieManager;
 use crate::ui::cursor_hider::{CursorHider, TIMER_ID_CURSOR_HIDE};
 use crate::ui::fullscreen::FullscreenState;
 use crate::ui::window;
@@ -63,7 +68,35 @@ impl AppWindow {
 
         let (sender, receiver) = crossbeam_channel::unbounded();
         let renderer = D2DRenderer::new(hwnd)?;
-        let document = Document::new(sender);
+
+        // 拡張子レジストリ + Susieプラグイン + デコーダチェーン + アーカイブマネージャの初期化
+        let mut registry = ExtensionRegistry::new();
+        let spi_dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.join("spi")));
+        let susie_manager = spi_dir
+            .as_deref()
+            .map(SusieManager::discover)
+            .unwrap_or_default();
+        susie_manager.register_extensions(&mut registry);
+
+        let registry = Arc::new(registry);
+
+        // デコーダチェーン: Standard → Susie画像プラグイン（フォールバック順）
+        let mut decoders: Vec<Box<dyn crate::image::ImageDecoder>> =
+            vec![Box::new(StandardDecoder::new())];
+        for decoder in susie_manager.create_image_decoders() {
+            decoders.push(decoder);
+        }
+        let decoder = Arc::new(DecoderChain::new(decoders));
+
+        // アーカイブマネージャ + Susieアーカイブプラグイン
+        let mut archive_manager = ArchiveManager::new(Arc::clone(&registry));
+        for handler in susie_manager.create_archive_handlers(Arc::clone(&registry)) {
+            archive_manager.add_handler(handler);
+        }
+
+        let document = Document::new(sender, decoder, Arc::clone(&registry), archive_manager);
 
         let mut app = Box::new(Self {
             hwnd,
@@ -299,8 +332,16 @@ impl AppWindow {
                             }
                             app.invalidate();
                         }
-                        return LRESULT(0);
+                    } else {
+                        // ホイール → ナビゲーション（上=前へ、下=次へ）
+                        if delta > 0 {
+                            app.document.navigate_relative(-1);
+                        } else {
+                            app.document.navigate_relative(1);
+                        }
+                        app.process_document_events();
                     }
+                    return LRESULT(0);
                 }
                 WM_LBUTTONDBLCLK => {
                     if !app.fullscreen.is_fullscreen() {

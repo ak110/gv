@@ -1,20 +1,10 @@
 use std::path::Path;
+use std::sync::Arc;
 
 use anyhow::Result;
 
+use crate::extension_registry::ExtensionRegistry;
 use crate::file_info::FileInfo;
-
-/// 対応する画像拡張子（小文字、ドット付き）
-const IMAGE_EXTENSIONS: &[&str] = &[
-    ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tiff", ".tif", ".tga", ".ico", ".cur",
-];
-
-/// ファイル名が画像拡張子を持つか判定する
-/// アーカイブハンドラ等からも利用される
-pub fn is_image_extension(filename: &str) -> bool {
-    let lower = filename.to_lowercase();
-    IMAGE_EXTENSIONS.iter().any(|ext| lower.ends_with(ext))
-}
 
 /// ソート順
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,14 +27,16 @@ pub struct FileList {
     files: Vec<FileInfo>,
     current_index: Option<usize>,
     sort_order: SortOrder,
+    registry: Arc<ExtensionRegistry>,
 }
 
 impl FileList {
-    pub fn new() -> Self {
+    pub fn new(registry: Arc<ExtensionRegistry>) -> Self {
         Self {
             files: Vec::new(),
             current_index: None,
             sort_order: SortOrder::Natural,
+            registry,
         }
     }
 
@@ -59,9 +51,9 @@ impl FileList {
             if !path.is_file() {
                 continue;
             }
-            // 拡張子フィルタ
+            // 拡張子フィルタ（ExtensionRegistry経由）
             if let Some(name) = path.file_name().and_then(|n| n.to_str())
-                && is_image_extension(name)
+                && self.registry.is_image_extension(name)
                 && let Ok(info) = FileInfo::from_path(&path)
             {
                 self.files.push(info);
@@ -82,28 +74,31 @@ impl FileList {
         }
     }
 
-    /// 相対移動（クランプ、循環しない）
+    /// 相対移動（ラップアラウンド）
+    /// 先頭で後退 → 末尾へ、末尾で前進 → 先頭へ
     /// load_failedのファイルは同方向にスキップする
     pub fn navigate_relative(&mut self, offset: isize) -> bool {
-        if self.files.is_empty() {
+        let len = self.files.len();
+        if len == 0 {
             return false;
         }
         let current = self.current_index.unwrap_or(0);
-        let mut target = (current as isize + offset)
-            .max(0)
-            .min(self.files.len() as isize - 1) as usize;
+
+        // ラップアラウンド付きでtarget計算
+        let mut target = ((current as isize + offset) % len as isize + len as isize) as usize % len;
 
         // スキップ方向（offsetの符号に合わせる）
         let step: isize = if offset >= 0 { 1 } else { -1 };
 
-        // load_failedのファイルを同方向にスキップ
-        while target < self.files.len() && self.files[target].load_failed {
-            let next = target as isize + step;
-            if next < 0 || next >= self.files.len() as isize {
-                // 全てfailedで移動先がない → 移動しない
-                return false;
-            }
-            target = next as usize;
+        // load_failedのファイルを同方向にスキップ（最大len回で打ち切り）
+        let mut attempts = 0;
+        while self.files[target].load_failed && attempts < len {
+            target = ((target as isize + step) % len as isize + len as isize) as usize % len;
+            attempts += 1;
+        }
+        if attempts >= len {
+            // 全てfailedで移動先がない
+            return false;
         }
 
         if target != current {
@@ -210,6 +205,10 @@ mod tests {
     use super::*;
     use std::io::Write;
 
+    fn test_registry() -> Arc<ExtensionRegistry> {
+        Arc::new(ExtensionRegistry::new())
+    }
+
     /// テスト用のダミー画像ファイルを作成するヘルパー
     fn create_test_files(dir: &Path, names: &[&str]) {
         let _ = std::fs::create_dir_all(dir);
@@ -228,7 +227,7 @@ mod tests {
         let dir = std::env::temp_dir().join("gv3_test_fl_populate");
         create_test_files(&dir, &["a.jpg", "b.png", "c.txt", "d.bmp", "readme.md"]);
 
-        let mut fl = FileList::new();
+        let mut fl = FileList::new(test_registry());
         fl.populate_from_folder(&dir).unwrap();
 
         assert_eq!(fl.len(), 3); // jpg, png, bmp
@@ -240,7 +239,7 @@ mod tests {
         let dir = std::env::temp_dir().join("gv3_test_fl_natural");
         create_test_files(&dir, &["img2.png", "img10.png", "img1.png"]);
 
-        let mut fl = FileList::new();
+        let mut fl = FileList::new(test_registry());
         fl.populate_from_folder(&dir).unwrap();
         fl.sort(SortOrder::Natural);
 
@@ -250,26 +249,25 @@ mod tests {
     }
 
     #[test]
-    fn navigate_relative_clamps() {
+    fn navigate_relative_wraps_around() {
         let dir = std::env::temp_dir().join("gv3_test_fl_nav");
         create_test_files(&dir, &["a.png", "b.png", "c.png"]);
 
-        let mut fl = FileList::new();
+        let mut fl = FileList::new(test_registry());
         fl.populate_from_folder(&dir).unwrap();
         fl.navigate_to(0);
 
-        // 先頭で後退しても0のまま
-        assert!(!fl.navigate_relative(-1));
-        assert_eq!(fl.current_index(), Some(0));
-
-        // 末尾で前進しても末尾のまま
-        fl.navigate_to(2);
-        assert!(!fl.navigate_relative(1));
+        // 先頭で後退 → 末尾へラップ
+        assert!(fl.navigate_relative(-1));
         assert_eq!(fl.current_index(), Some(2));
 
-        // 大きなオフセットはクランプ
+        // 末尾で前進 → 先頭へラップ
+        assert!(fl.navigate_relative(1));
+        assert_eq!(fl.current_index(), Some(0));
+
+        // 通常の相対移動
         fl.navigate_to(1);
-        fl.navigate_relative(100);
+        assert!(fl.navigate_relative(1));
         assert_eq!(fl.current_index(), Some(2));
 
         cleanup(&dir);
@@ -280,7 +278,7 @@ mod tests {
         let dir = std::env::temp_dir().join("gv3_test_fl_firstlast");
         create_test_files(&dir, &["a.png", "b.png", "c.png"]);
 
-        let mut fl = FileList::new();
+        let mut fl = FileList::new(test_registry());
         fl.populate_from_folder(&dir).unwrap();
         fl.navigate_to(1);
 
@@ -298,7 +296,7 @@ mod tests {
         let dir = std::env::temp_dir().join("gv3_test_fl_setpath");
         create_test_files(&dir, &["a.png", "b.png"]);
 
-        let mut fl = FileList::new();
+        let mut fl = FileList::new(test_registry());
         fl.populate_from_folder(&dir).unwrap();
 
         assert!(fl.set_current_by_path(&dir.join("b.png")));
@@ -312,7 +310,7 @@ mod tests {
         let dir = std::env::temp_dir().join("gv3_test_fl_sortpreserve");
         create_test_files(&dir, &["c.png", "a.png", "b.png"]);
 
-        let mut fl = FileList::new();
+        let mut fl = FileList::new(test_registry());
         fl.populate_from_folder(&dir).unwrap();
         fl.set_current_by_path(&dir.join("b.png"));
 
@@ -325,7 +323,7 @@ mod tests {
 
     #[test]
     fn empty_list_navigation() {
-        let mut fl = FileList::new();
+        let mut fl = FileList::new(test_registry());
         assert!(!fl.navigate_relative(1));
         assert!(!fl.navigate_first());
         assert!(!fl.navigate_last());

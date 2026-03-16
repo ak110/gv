@@ -3,11 +3,13 @@
 mod app;
 mod archive;
 mod document;
+mod extension_registry;
 mod file_info;
 mod file_list;
 mod image;
 mod prefetch;
 mod render;
+mod susie;
 mod ui;
 
 use std::path::PathBuf;

@@ -1,9 +1,9 @@
 mod standard;
+pub mod susie;
 
 pub use standard::StandardDecoder;
 
 /// デコード済み画像データ（RGBAピクセル）
-#[allow(dead_code)]
 pub struct DecodedImage {
     pub data: Vec<u8>,
     pub width: u32,
@@ -31,14 +31,45 @@ pub struct ImageMetadata {
 #[allow(dead_code)]
 pub trait ImageDecoder: Send + Sync {
     /// 対応する拡張子のリスト（ドット付き小文字、例: ".jpg"）
-    fn supported_extensions(&self) -> &[&str];
+    fn supported_extensions(&self) -> Vec<String>;
 
     /// バイト列からデコード可能か判定
-    fn can_decode(&self, data: &[u8]) -> bool;
+    /// `filename_hint`はSusieプラグインの`IsSupported`で使用
+    fn can_decode(&self, data: &[u8], filename_hint: &str) -> bool;
 
     /// デコード実行
-    fn decode(&self, data: &[u8]) -> anyhow::Result<DecodedImage>;
+    fn decode(&self, data: &[u8], filename_hint: &str) -> anyhow::Result<DecodedImage>;
 
     /// メタデータ取得
-    fn metadata(&self, data: &[u8]) -> anyhow::Result<ImageMetadata>;
+    fn metadata(&self, data: &[u8], filename_hint: &str) -> anyhow::Result<ImageMetadata>;
 }
+
+/// 複数デコーダを順に試行するチェーン
+pub struct DecoderChain {
+    decoders: Vec<Box<dyn ImageDecoder>>,
+}
+
+impl DecoderChain {
+    pub fn new(decoders: Vec<Box<dyn ImageDecoder>>) -> Self {
+        Self { decoders }
+    }
+
+    /// 各デコーダを順に試行し、最初の成功を返す
+    pub fn decode(&self, data: &[u8], filename_hint: &str) -> anyhow::Result<DecodedImage> {
+        let mut last_error = None;
+        for decoder in &self.decoders {
+            if decoder.can_decode(data, filename_hint) {
+                match decoder.decode(data, filename_hint) {
+                    Ok(image) => return Ok(image),
+                    Err(e) => last_error = Some(e),
+                }
+            }
+        }
+        Err(last_error
+            .unwrap_or_else(|| anyhow::anyhow!("対応するデコーダがありません: {filename_hint}")))
+    }
+}
+
+// DecoderChainはSend + Sync（内部のdecoderが全てSend + Syncのため）
+unsafe impl Send for DecoderChain {}
+unsafe impl Sync for DecoderChain {}

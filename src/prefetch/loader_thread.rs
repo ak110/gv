@@ -5,7 +5,7 @@ use std::thread::JoinHandle;
 
 use crossbeam_channel::{Receiver, Sender};
 
-use crate::image::{DecodedImage, ImageDecoder, StandardDecoder};
+use crate::image::{DecodedImage, DecoderChain};
 
 /// ワーカースレッドへのリクエスト
 enum LoadRequest {
@@ -46,7 +46,8 @@ pub struct PrefetchEngine {
 impl PrefetchEngine {
     /// ワーカースレッドを起動する
     /// `notify`はレスポンス送信後に呼ばれるコールバック（UIスレッドへの通知用）
-    pub fn new(notify: Box<dyn Fn() + Send>) -> Self {
+    /// `decoder`は画像デコーダチェーン（Susieプラグイン含む）
+    pub fn new(notify: Box<dyn Fn() + Send>, decoder: Arc<DecoderChain>) -> Self {
         let (request_tx, request_rx) = crossbeam_channel::unbounded();
         let (response_tx, response_rx) = crossbeam_channel::unbounded();
         let current_generation = Arc::new(AtomicU64::new(0));
@@ -55,7 +56,7 @@ impl PrefetchEngine {
         let worker_handle = std::thread::Builder::new()
             .name("prefetch-worker".to_string())
             .spawn(move || {
-                worker_loop(request_rx, response_tx, gen_clone, notify);
+                worker_loop(request_rx, response_tx, gen_clone, notify, decoder);
             })
             .expect("先読みワーカースレッドの起動に失敗");
 
@@ -115,9 +116,8 @@ fn worker_loop(
     response_tx: Sender<LoadResponse>,
     current_generation: Arc<AtomicU64>,
     notify: Box<dyn Fn() + Send>,
+    decoder: Arc<DecoderChain>,
 ) {
-    let decoder = StandardDecoder::new();
-
     while let Ok(request) = request_rx.recv() {
         match request {
             LoadRequest::Load {
@@ -130,8 +130,10 @@ fn worker_loop(
                     continue;
                 }
 
+                let filename_hint = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+
                 let response = match std::fs::read(&path) {
-                    Ok(data) => match decoder.decode(&data) {
+                    Ok(data) => match decoder.decode(&data, filename_hint) {
                         Ok(image) => LoadResponse::Loaded {
                             index,
                             image,
@@ -163,6 +165,12 @@ mod tests {
     use super::*;
     use std::io::Write;
 
+    use crate::image::StandardDecoder;
+
+    fn test_decoder() -> Arc<DecoderChain> {
+        Arc::new(DecoderChain::new(vec![Box::new(StandardDecoder::new())]))
+    }
+
     /// テスト用: 1x1 白ピクセルのPNGバイナリを生成
     fn create_1x1_white_png() -> Vec<u8> {
         use image::{ImageBuffer, Rgba};
@@ -183,7 +191,7 @@ mod tests {
             f.write_all(&create_1x1_white_png()).unwrap();
         }
 
-        let engine = PrefetchEngine::new(Box::new(|| {}));
+        let engine = PrefetchEngine::new(Box::new(|| {}), test_decoder());
         engine.request_load(0, path);
 
         // ワーカーの処理完了を待つ
@@ -223,7 +231,7 @@ mod tests {
             f.write_all(&create_1x1_white_png()).unwrap();
         }
 
-        let mut engine = PrefetchEngine::new(Box::new(|| {}));
+        let mut engine = PrefetchEngine::new(Box::new(|| {}), test_decoder());
 
         // generation=0でリクエストを送信する前に世代を進める
         engine.request_load(0, path.clone());
@@ -249,7 +257,7 @@ mod tests {
 
     #[test]
     fn failed_response_on_nonexistent_file() {
-        let engine = PrefetchEngine::new(Box::new(|| {}));
+        let engine = PrefetchEngine::new(Box::new(|| {}), test_decoder());
         engine.request_load(0, PathBuf::from("nonexistent_file_xyz.png"));
 
         let mut failed = false;
@@ -269,7 +277,7 @@ mod tests {
 
     #[test]
     fn drop_shuts_down_cleanly() {
-        let engine = PrefetchEngine::new(Box::new(|| {}));
+        let engine = PrefetchEngine::new(Box::new(|| {}), test_decoder());
         drop(engine);
         // パニックせずに終了すればOK
     }

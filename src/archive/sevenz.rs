@@ -1,17 +1,26 @@
 use std::fs::File;
 use std::path::Path;
+use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 
 use super::{ArchiveHandler, extract_filename, resolve_filename};
-use crate::file_list::is_image_extension;
+use crate::extension_registry::ExtensionRegistry;
 
 /// 7zアーカイブハンドラ
-pub struct SevenZHandler;
+pub struct SevenZHandler {
+    registry: Arc<ExtensionRegistry>,
+}
+
+impl SevenZHandler {
+    pub fn new(registry: Arc<ExtensionRegistry>) -> Self {
+        Self { registry }
+    }
+}
 
 impl ArchiveHandler for SevenZHandler {
-    fn supported_extensions(&self) -> &[&str] {
-        &[".7z"]
+    fn supported_extensions(&self) -> Vec<String> {
+        vec![".7z".to_string()]
     }
 
     fn extract_images(&self, archive_path: &Path, target_dir: &Path) -> Result<usize> {
@@ -21,6 +30,7 @@ impl ArchiveHandler for SevenZHandler {
 
         let mut count = 0;
         let target_dir = target_dir.to_path_buf();
+        let registry = Arc::clone(&self.registry);
 
         // SevenZReaderで各エントリをコールバック処理
         let mut reader = sevenz_rust::SevenZReader::new(file, len, sevenz_rust::Password::empty())
@@ -37,7 +47,7 @@ impl ArchiveHandler for SevenZHandler {
                 }
 
                 // 画像ファイルのみ展開
-                if !is_image_extension(filename) {
+                if !registry.is_image_extension(filename) {
                     return Ok(true);
                 }
 
@@ -64,13 +74,15 @@ mod tests {
 
     #[test]
     fn supported_extensions() {
-        let handler = SevenZHandler;
-        assert!(handler.supported_extensions().contains(&".7z"));
+        let reg = Arc::new(ExtensionRegistry::new());
+        let handler = SevenZHandler::new(reg);
+        assert!(handler.supported_extensions().contains(&".7z".to_string()));
     }
 
     #[test]
     fn nonexistent_7z_returns_error() {
-        let handler = SevenZHandler;
+        let reg = Arc::new(ExtensionRegistry::new());
+        let handler = SevenZHandler::new(reg);
         let dir = std::env::temp_dir().join("gv3_test_7z_noexist");
         let _ = std::fs::create_dir_all(&dir);
         let result = handler.extract_images(Path::new("nonexistent.7z"), &dir);

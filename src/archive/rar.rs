@@ -1,17 +1,26 @@
 use std::path::Path;
+use std::sync::Arc;
 
 use anyhow::Result;
 
 use super::{ArchiveHandler, extract_filename, resolve_filename};
-use crate::file_list::is_image_extension;
+use crate::extension_registry::ExtensionRegistry;
 
 /// RAR/cbrアーカイブハンドラ
 /// unrarクレートはストリーム型APIのため、1パスで全画像を展開する
-pub struct RarHandler;
+pub struct RarHandler {
+    registry: Arc<ExtensionRegistry>,
+}
+
+impl RarHandler {
+    pub fn new(registry: Arc<ExtensionRegistry>) -> Self {
+        Self { registry }
+    }
+}
 
 impl ArchiveHandler for RarHandler {
-    fn supported_extensions(&self) -> &[&str] {
-        &[".rar", ".cbr"]
+    fn supported_extensions(&self) -> Vec<String> {
+        vec![".rar".to_string(), ".cbr".to_string()]
     }
 
     fn extract_images(&self, archive_path: &Path, target_dir: &Path) -> Result<usize> {
@@ -40,7 +49,7 @@ impl ArchiveHandler for RarHandler {
             let should_extract = !entry.is_directory()
                 && !filename.is_empty()
                 && !filename.starts_with('.')
-                && is_image_extension(filename);
+                && self.registry.is_image_extension(filename);
 
             if should_extract {
                 // エントリデータを読み出す
@@ -81,14 +90,17 @@ mod tests {
 
     #[test]
     fn supported_extensions() {
-        let handler = RarHandler;
-        assert!(handler.supported_extensions().contains(&".rar"));
-        assert!(handler.supported_extensions().contains(&".cbr"));
+        let reg = Arc::new(ExtensionRegistry::new());
+        let handler = RarHandler::new(reg);
+        let exts = handler.supported_extensions();
+        assert!(exts.contains(&".rar".to_string()));
+        assert!(exts.contains(&".cbr".to_string()));
     }
 
     #[test]
     fn nonexistent_rar_returns_error() {
-        let handler = RarHandler;
+        let reg = Arc::new(ExtensionRegistry::new());
+        let handler = RarHandler::new(reg);
         let dir = std::env::temp_dir().join("gv3_test_rar_noexist");
         let _ = std::fs::create_dir_all(&dir);
         let result = handler.extract_images(Path::new("nonexistent.rar"), &dir);

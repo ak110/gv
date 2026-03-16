@@ -1,0 +1,96 @@
+# ぐらびゅ3
+
+Windows用 軽量・高速 画像ビューア
+
+ぐらびゅ2の後継として、**画像を見ることに特化**してゼロから作り直したビューアです。
+先読み（プリフェッチ）機能により、瞬時の画像切り替えを実現します。
+
+## ビルド
+
+### 必要環境
+
+- [rustup](https://rustup.rs/)（Rust ツールチェーン）
+- Visual Studio Build Tools（C++ ビルドツール）
+
+### ビルド手順
+
+```bash
+# デバッグビルド
+cargo build
+
+# リリースビルド（最適化あり）
+cargo build --release
+# → target/release/gv3.exe
+
+# テスト
+cargo test
+
+# 静的解析
+cargo clippy
+
+# フォーマット
+cargo fmt
+```
+
+## 使い方
+
+```bash
+# 画像ファイルを指定して起動
+gv3.exe image.jpg
+
+# ファイル関連付けやD&Dでも起動可能
+```
+
+### 主要キーバインド
+
+| キー | 操作 |
+|------|------|
+| ← / → | 前後の画像に移動 |
+| ホイール上/下 | 前後の画像に移動 |
+| PageUp / PageDown | 5ページ移動 |
+| Ctrl+Home / End | 最初 / 最後へ |
+| Ctrl+ホイール | 拡大 / 縮小 |
+| Num / | 自動縮小表示 |
+| Num * | 自動縮小・拡大表示 |
+| Num 0 | 余白トグル |
+| A | αチャネル背景切替 |
+| Alt+Enter | フルスクリーン |
+| Esc | メニューバー表示/非表示 |
+
+詳細は [docs/keybindings.md](docs/keybindings.md) を参照してください。
+
+## 対応フォーマット
+
+### 画像（標準対応）
+
+JPEG, PNG, GIF, BMP, WebP
+
+### アーカイブ
+
+ZIP / cbz, RAR / cbr, 7z
+
+### Susieプラグイン
+
+64bit Susieプラグイン (.sph / .spi) に対応しています。
+実行ファイルと同じディレクトリの `spi/` フォルダにプラグインDLLを配置すると自動検出されます。
+
+```
+gv3.exe
+spi/
+  ifXXX.sph    ← 画像プラグイン
+  axXXX.spi    ← アーカイブプラグイン
+```
+
+## 技術スタック
+
+- **言語**: Rust
+- **GUI**: windows-rs (Win32 API) + Direct2D
+- **画像デコード**: image crate + Susieプラグイン
+- **アーカイブ**: zip / unrar / sevenz-rust + Susieプラグイン
+
+## ドキュメント
+
+- [コンセプト](docs/concept.md)
+- [機能仕様](docs/features.md)
+- [アーキテクチャ](docs/architecture.md)
+- [キーバインド](docs/keybindings.md)

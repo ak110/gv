@@ -1,11 +1,13 @@
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 use crossbeam_channel::Sender;
 
 use crate::archive::ArchiveManager;
+use crate::extension_registry::ExtensionRegistry;
 use crate::file_list::FileList;
-use crate::image::{DecodedImage, ImageDecoder, StandardDecoder};
+use crate::image::{DecodedImage, DecoderChain};
 use crate::prefetch::{LoadResponse, PageCache, PrefetchEngine};
 
 /// DocumentからUIへの通知イベント
@@ -26,7 +28,7 @@ pub enum DocumentEvent {
 /// Win32 APIやHWNDへの依存は一切持たない
 pub struct Document {
     event_sender: Sender<DocumentEvent>,
-    decoder: StandardDecoder,
+    decoder: Arc<DecoderChain>,
     current_image: Option<DecodedImage>,
     file_list: FileList,
     // 先読みエンジン
@@ -41,17 +43,22 @@ pub struct Document {
 }
 
 impl Document {
-    pub fn new(event_sender: Sender<DocumentEvent>) -> Self {
+    pub fn new(
+        event_sender: Sender<DocumentEvent>,
+        decoder: Arc<DecoderChain>,
+        registry: Arc<ExtensionRegistry>,
+        archive_manager: ArchiveManager,
+    ) -> Self {
         Self {
             event_sender,
-            decoder: StandardDecoder::new(),
+            decoder,
             current_image: None,
-            file_list: FileList::new(),
+            file_list: FileList::new(registry),
             cache: PageCache::new(0),
             prefetch: None,
             cache_backward: 0,
             cache_forward: 0,
-            archive_manager: ArchiveManager::new(),
+            archive_manager,
             archive_temp_dir: None,
             current_archive: None,
         }
@@ -61,7 +68,7 @@ impl Document {
     /// `notify`: レスポンス受信時のコールバック（UIスレッド通知用）
     /// `cache_budget`: キャッシュメモリ予算（バイト）
     pub fn start_prefetch(&mut self, notify: Box<dyn Fn() + Send>, cache_budget: usize) {
-        self.prefetch = Some(PrefetchEngine::new(notify));
+        self.prefetch = Some(PrefetchEngine::new(notify, Arc::clone(&self.decoder)));
         self.update_cache_range(cache_budget);
     }
 
@@ -169,7 +176,7 @@ impl Document {
         let path = Self::canonicalize(path)?;
 
         // アーカイブ判定
-        if ArchiveManager::is_archive(&path) {
+        if self.archive_manager.is_archive(&path) {
             return self.open_archive(&path);
         }
 
@@ -293,7 +300,9 @@ impl Document {
         let data = std::fs::read(&path)
             .with_context(|| format!("ファイル読み込み失敗: {}", path.display()))?;
 
-        match self.decoder.decode(&data) {
+        let filename_hint = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+
+        match self.decoder.decode(&data, filename_hint) {
             Ok(image) => {
                 self.current_image = Some(image);
                 let _ = self.event_sender.send(DocumentEvent::ImageReady);
