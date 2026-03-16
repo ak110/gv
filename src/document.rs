@@ -211,6 +211,17 @@ impl Document {
         self.load_current()
     }
 
+    /// 単一ファイルを開く（フォルダスキャンしない）
+    /// クリップボード貼り付けなど、tempディレクトリ内の単一ファイルを開く場合に使用
+    pub fn open_single(&mut self, path: &Path) -> Result<()> {
+        let path = Self::canonicalize(path)?;
+        self.cleanup_archive_temp();
+        self.invalidate_cache();
+        self.file_list.populate_single(&path)?;
+        let _ = self.event_sender.send(DocumentEvent::FileListChanged);
+        self.load_current()
+    }
+
     /// アーカイブを開く（単一アーカイブ）
     fn open_archive(&mut self, archive_path: &Path) -> Result<()> {
         self.open_archives(&[archive_path.to_path_buf()])

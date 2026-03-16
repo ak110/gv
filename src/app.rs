@@ -904,7 +904,7 @@ impl AppWindow {
                             image.data.clone(),
                         ) && img_buf.save(&temp_path).is_ok()
                         {
-                            if let Err(e) = self.document.open(&temp_path) {
+                            if let Err(e) = self.document.open_single(&temp_path) {
                                 eprintln!("貼り付け失敗: {e}");
                             }
                             self.process_document_events();
@@ -1055,6 +1055,10 @@ impl AppWindow {
             Action::ToggleFileList => {
                 self.file_list_panel.toggle();
                 // toggle内でWM_SIZEが送られてon_sizeが呼ばれる
+                // 同期再描画でちらつきを防止
+                unsafe {
+                    let _ = UpdateWindow(self.hwnd);
+                }
             }
 
             // --- ヘルプ ---

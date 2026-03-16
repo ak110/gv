@@ -25,6 +25,14 @@ pub enum AlphaBackground {
     Checker,
 }
 
+/// プリスケール済みビットマップのキャッシュエントリ
+struct PrescaledEntry {
+    source_key: usize, // 元画像データのポインタ（同一性判定用）
+    width: u32,        // プリスケール後の幅
+    height: u32,       // プリスケール後の高さ
+    bitmap: ID2D1Bitmap,
+}
+
 /// Direct2D描画エンジン
 pub struct D2DRenderer {
     #[allow(dead_code)]
@@ -33,6 +41,8 @@ pub struct D2DRenderer {
     layout: Layout,
     /// 現在キャッシュ中のD2Dビットマップとそのソースポインタ（同一画像の再描画を高速化）
     cached_bitmap: Option<(usize, ID2D1Bitmap)>,
+    /// CPU Lanczos3プリスケール済みビットマップのキャッシュ
+    prescaled: Option<PrescaledEntry>,
     /// αチャネル背景モード
     alpha_bg: AlphaBackground,
     /// チェッカーパターンブラシ（遅延初期化）
@@ -65,6 +75,7 @@ impl D2DRenderer {
                 render_target,
                 layout,
                 cached_bitmap: None,
+                prescaled: None,
                 alpha_bg,
                 checker_brush: None,
                 draw_offset_x: 0.0,
@@ -111,6 +122,9 @@ impl D2DRenderer {
         unsafe {
             self.render_target.BeginDraw();
 
+            // 全面クリア（クリップ前に実行し、パネル背後も含め未定義領域を残さない）
+            self.render_target.Clear(Some(&BG_COLOR));
+
             // ファイルリストパネルの右側のみに描画を制限
             // （D2DはGDIクリッピングをバイパスするため、パネル上に描画が被るのを防止）
             let size = self.render_target.GetSize();
@@ -126,11 +140,7 @@ impl D2DRenderer {
                     .PushAxisAlignedClip(&clip, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
             }
 
-            self.render_target.Clear(Some(&BG_COLOR));
-
-            if let Some(img) = image
-                && let Ok(bitmap) = self.get_or_create_bitmap(img)
-            {
+            if let Some(img) = image {
                 // パネル幅を差し引いた描画領域でレイアウト計算
                 let avail_width = size.width - self.draw_offset_x;
                 let mut draw_rect =
@@ -141,7 +151,13 @@ impl D2DRenderer {
 
                 // αチャネル背景を画像領域に描画
                 self.draw_alpha_background(&draw_rect);
-                self.draw_bitmap(&bitmap, &draw_rect);
+
+                // CPU Lanczos3プリスケーリングで高品質描画
+                let target_w = (draw_rect.width as u32).max(1);
+                let target_h = (draw_rect.height as u32).max(1);
+                if let Ok(bitmap) = self.get_prescaled_bitmap(img, target_w, target_h) {
+                    self.draw_bitmap(&bitmap, &draw_rect);
+                }
             }
 
             if has_clip {
@@ -165,6 +181,56 @@ impl D2DRenderer {
 
         let bitmap = unsafe { self.create_bitmap_from_image(image)? };
         self.cached_bitmap = Some((key, bitmap.clone()));
+        Ok(bitmap)
+    }
+
+    /// 表示サイズにプリスケールしたD2Dビットマップを取得（キャッシュ付き）
+    /// 原寸表示の場合はプリスケールせず原画像のビットマップを返す
+    unsafe fn get_prescaled_bitmap(
+        &mut self,
+        image: &DecodedImage,
+        target_width: u32,
+        target_height: u32,
+    ) -> Result<ID2D1Bitmap> {
+        let key = image.data.as_ptr() as usize;
+
+        // キャッシュヒット: ソース・サイズ両方一致
+        if let Some(ref entry) = self.prescaled
+            && entry.source_key == key
+            && entry.width == target_width
+            && entry.height == target_height
+        {
+            return Ok(entry.bitmap.clone());
+        }
+
+        // 原寸表示ならプリスケール不要
+        if target_width == image.width && target_height == image.height {
+            return unsafe { self.get_or_create_bitmap(image) };
+        }
+
+        // CPU Lanczos3リサイズ
+        let src = image::RgbaImage::from_raw(image.width, image.height, image.data.clone())
+            .ok_or_else(|| anyhow::anyhow!("RgbaImage作成失敗"))?;
+        let resized = image::imageops::resize(
+            &src,
+            target_width,
+            target_height,
+            image::imageops::FilterType::Lanczos3,
+        );
+
+        let prescaled = DecodedImage {
+            data: resized.into_raw(),
+            width: target_width,
+            height: target_height,
+        };
+
+        let bitmap = unsafe { self.create_bitmap_from_image(&prescaled)? };
+        self.prescaled = Some(PrescaledEntry {
+            source_key: key,
+            width: target_width,
+            height: target_height,
+            bitmap: bitmap.clone(),
+        });
         Ok(bitmap)
     }
 

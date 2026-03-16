@@ -72,6 +72,17 @@ impl FileList {
         Ok(())
     }
 
+    /// 単一ファイルのみでリストを構築する（フォルダスキャンしない）
+    pub fn populate_single(&mut self, path: &Path) -> Result<()> {
+        self.files.clear();
+        self.current_index = None;
+
+        let info = FileInfo::from_path(path)?;
+        self.files.push(info);
+        self.current_index = Some(0);
+        Ok(())
+    }
+
     /// パスで現在位置を設定する
     pub fn set_current_by_path(&mut self, path: &Path) -> bool {
         if let Some(idx) = self.files.iter().position(|f| f.path == path) {
@@ -783,6 +794,22 @@ mod tests {
         // マークなし → 移動しない
         assert!(!fl.navigate_next_mark());
         assert!(!fl.navigate_prev_mark());
+
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn populate_single_creates_one_entry() {
+        let dir = std::env::temp_dir().join("gv3_test_fl_single");
+        create_test_files(&dir, &["target.png", "other.png", "another.jpg"]);
+
+        let mut fl = FileList::new(test_registry());
+        fl.populate_single(&dir.join("target.png")).unwrap();
+
+        // フォルダ内の他のファイルはリストに含まれない
+        assert_eq!(fl.len(), 1);
+        assert_eq!(fl.current_index(), Some(0));
+        assert_eq!(fl.current().unwrap().file_name, "target.png");
 
         cleanup(&dir);
     }
