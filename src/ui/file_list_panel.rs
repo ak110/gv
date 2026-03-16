@@ -4,9 +4,11 @@
 //! キー入力は親ウィンドウへ転送し、マウスクリックによる項目選択はListBox標準動作を使う。
 
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Graphics::Gdi::InvalidateRect;
 use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
+use crate::file_info::FileInfo;
 use crate::file_list::FileList;
 
 /// ファイルリストパネルのコントロールID
@@ -97,17 +99,16 @@ impl FileListPanel {
         }
     }
 
-    /// ファイルリストの内容で ListBox を更新
+    /// ファイルリストの内容で ListBox を全件更新
     /// `is_cached`: 各インデックスのキャッシュ状態を返すクロージャ
     pub fn update(&self, file_list: &FileList, is_cached: impl Fn(usize) -> bool) {
         unsafe {
+            // 再描画を抑制してバッチ更新（大量項目でのちらつき・フリーズ防止）
+            SendMessageW(self.listbox, WM_SETREDRAW, Some(WPARAM(0)), None);
             SendMessageW(self.listbox, LB_RESETCONTENT, None, None);
 
             for (i, info) in file_list.files().iter().enumerate() {
-                // マーク: ★、キャッシュ: ● (済) / ○ (未)
-                let mark = if info.marked { "\u{2605}" } else { "\u{3000}" }; // ★ or 全角スペース
-                let cache = if is_cached(i) { "\u{25CF}" } else { "\u{25CB}" }; // ● or ○
-                let label = format!("{mark}{cache} {}\0", info.file_name);
+                let label = Self::format_label(info, is_cached(i));
                 let wide: Vec<u16> = label.encode_utf16().collect();
                 SendMessageW(
                     self.listbox,
@@ -116,7 +117,32 @@ impl FileListPanel {
                     Some(LPARAM(wide.as_ptr() as isize)),
                 );
             }
+
+            SendMessageW(self.listbox, WM_SETREDRAW, Some(WPARAM(1)), None);
+            let _ = InvalidateRect(Some(self.listbox), None, true);
         }
+    }
+
+    /// 単一項目を差分更新（マーク・キャッシュ状態の変更用）
+    pub fn update_item(&self, index: usize, info: &FileInfo, is_cached: bool) {
+        unsafe {
+            let label = Self::format_label(info, is_cached);
+            let wide: Vec<u16> = label.encode_utf16().collect();
+            SendMessageW(self.listbox, LB_DELETESTRING, Some(WPARAM(index)), None);
+            SendMessageW(
+                self.listbox,
+                LB_INSERTSTRING,
+                Some(WPARAM(index)),
+                Some(LPARAM(wide.as_ptr() as isize)),
+            );
+        }
+    }
+
+    /// ListBox項目のラベル文字列を生成
+    fn format_label(info: &FileInfo, is_cached: bool) -> String {
+        let mark = if info.marked { "\u{2605}" } else { "\u{3000}" }; // ★ or 全角スペース
+        let cache = if is_cached { "\u{25CF}" } else { "\u{25CB}" }; // ● or ○
+        format!("{mark}{cache} {}\0", info.file_name)
     }
 
     /// 現在位置をハイライト

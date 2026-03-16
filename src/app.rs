@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -52,6 +53,8 @@ pub struct AppWindow {
     menu_visible: bool,
     // ファイルリストパネル
     file_list_panel: FileListPanel,
+    // パネル表示中のキャッシュ状態追跡（差分更新用）
+    cached_indices: HashSet<usize>,
     // 等幅フォント（ダイアログ・ファイルリスト用）
     monospace_font: MonospaceFont,
 }
@@ -166,6 +169,7 @@ impl AppWindow {
             menu: menu_handle,
             menu_visible: true,
             file_list_panel,
+            cached_indices: HashSet::new(),
             monospace_font,
         });
 
@@ -274,15 +278,31 @@ impl AppWindow {
             }
         }
 
-        // ファイルリストパネルが表示中なら、キャッシュ状態をリアルタイム反映
+        // パネル表示中ならキャッシュ状態の差分のみ更新（全件再構築を避ける）
         if self.file_list_panel.is_visible() {
             let doc = &self.document;
-            self.file_list_panel
-                .update(doc.file_list(), |i| doc.is_cached(i));
-            // 選択位置を復元
-            if let Some(idx) = self.document.file_list().current_index() {
+            let files = doc.file_list().files();
+            // 現在のキャッシュ状態をスナップショット（上限6件程度なので軽量）
+            let mut new_cached = HashSet::new();
+            for i in 0..files.len() {
+                if doc.is_cached(i) {
+                    new_cached.insert(i);
+                }
+            }
+            // 前回との差分だけ update_item() で更新
+            for &i in self.cached_indices.symmetric_difference(&new_cached) {
+                if let Some(info) = files.get(i) {
+                    self.file_list_panel
+                        .update_item(i, info, new_cached.contains(&i));
+                }
+            }
+            // 差分があれば選択位置を復元（LB_DELETESTRING+LB_INSERTSTRINGで崩れるため）
+            if self.cached_indices != new_cached
+                && let Some(idx) = doc.file_list().current_index()
+            {
                 self.file_list_panel.set_selection(idx);
             }
+            self.cached_indices = new_cached;
         }
     }
 
@@ -701,17 +721,54 @@ impl AppWindow {
 
             // --- マーク操作 ---
             Action::MarkSet => {
+                // mark_current()は内部でnavigate_relative(1)するのでマーク元indexを先に取得
+                let mark_idx = self.document.file_list().current_index();
                 self.document.mark_current();
                 self.process_document_events();
+                if self.file_list_panel.is_visible()
+                    && let Some(idx) = mark_idx
+                    && let Some(info) = self.document.file_list().files().get(idx)
+                {
+                    let is_cached = self.document.is_cached(idx);
+                    self.file_list_panel.update_item(idx, info, is_cached);
+                    // update_itemでselectionが崩れるので復元
+                    if let Some(cur) = self.document.file_list().current_index() {
+                        self.file_list_panel.set_selection(cur);
+                    }
+                }
             }
             Action::MarkUnset => {
                 self.document.unmark_current();
+                if self.file_list_panel.is_visible()
+                    && let Some(idx) = self.document.file_list().current_index()
+                {
+                    let info = &self.document.file_list().files()[idx];
+                    let is_cached = self.document.is_cached(idx);
+                    self.file_list_panel.update_item(idx, info, is_cached);
+                    self.file_list_panel.set_selection(idx);
+                }
             }
             Action::MarkInvertAll => {
                 self.document.invert_all_marks();
+                if self.file_list_panel.is_visible() {
+                    let doc = &self.document;
+                    self.file_list_panel
+                        .update(doc.file_list(), |i| doc.is_cached(i));
+                    if let Some(idx) = doc.file_list().current_index() {
+                        self.file_list_panel.set_selection(idx);
+                    }
+                }
             }
             Action::MarkInvertToHere => {
                 self.document.invert_marks_to_here();
+                if self.file_list_panel.is_visible() {
+                    let doc = &self.document;
+                    self.file_list_panel
+                        .update(doc.file_list(), |i| doc.is_cached(i));
+                    if let Some(idx) = doc.file_list().current_index() {
+                        self.file_list_panel.set_selection(idx);
+                    }
+                }
             }
             Action::NavigatePrevMark => {
                 self.document.navigate_prev_mark();
@@ -1063,6 +1120,23 @@ impl AppWindow {
             // --- ファイルリスト ---
             Action::ToggleFileList => {
                 self.file_list_panel.toggle();
+                // パネルが表示状態になったら全同期（非表示中の変更を反映）
+                if self.file_list_panel.is_visible() {
+                    let doc = &self.document;
+                    self.file_list_panel
+                        .update(doc.file_list(), |i| doc.is_cached(i));
+                    if let Some(idx) = doc.file_list().current_index() {
+                        self.file_list_panel.set_selection(idx);
+                    }
+                    // cached_indicesも同期
+                    self.cached_indices.clear();
+                    let files = self.document.file_list().files();
+                    for i in 0..files.len() {
+                        if self.document.is_cached(i) {
+                            self.cached_indices.insert(i);
+                        }
+                    }
+                }
                 // toggle内でWM_SIZEが送られてon_sizeが呼ばれる
                 // 同期再描画でちらつきを防止
                 unsafe {

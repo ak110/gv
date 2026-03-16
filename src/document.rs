@@ -80,11 +80,18 @@ impl Document {
     }
 
     /// キャッシュ範囲を再計算する
+    /// 前方4枚・後方2枚を上限とし、余剰メモリは他用途に残す
     fn update_cache_range(&mut self, cache_budget: usize, base_image_size: usize) {
+        const MAX_CACHE_FORWARD: usize = 4;
+        const MAX_CACHE_BACKWARD: usize = 2;
+
         let total_slots = (cache_budget / base_image_size).max(3);
-        self.cache_forward = (total_slots * 2 / 3).max(1);
-        self.cache_backward = (total_slots / 3).max(1);
-        self.cache.set_max_memory(cache_budget);
+        self.cache_forward = (total_slots * 2 / 3).clamp(1, MAX_CACHE_FORWARD);
+        self.cache_backward = (total_slots / 3).clamp(1, MAX_CACHE_BACKWARD);
+        // メモリ予算もスロット数に合わせて制限
+        let actual_slots = self.cache_forward + self.cache_backward + 1;
+        let capped_budget = cache_budget.min(base_image_size * actual_slots);
+        self.cache.set_max_memory(capped_budget);
     }
 
     /// 先読みレスポンスを処理する（キャッシュ格納 + current_image更新）

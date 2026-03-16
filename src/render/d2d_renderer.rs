@@ -1,4 +1,5 @@
 use anyhow::{Context as _, Result};
+use rayon::prelude::*;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Direct2D::Common::{
     D2D_RECT_F, D2D_SIZE_U, D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COLOR_F, D2D1_PIXEL_FORMAT,
@@ -447,62 +448,67 @@ impl D2DRenderer {
 /// 各出力ピクセルに対応するソース矩形内の全ピクセルの面積加重平均で計算する。
 /// Lanczos3と異なりリンギングやモアレが発生しにくい。
 fn area_average_resize(src: &[u8], src_w: u32, src_h: u32, dst_w: u32, dst_h: u32) -> Vec<u8> {
+    let row_bytes = (dst_w * 4) as usize;
     let mut dst = vec![0u8; (dst_w * dst_h * 4) as usize];
 
     let sx = src_w as f64 / dst_w as f64;
     let sy = src_h as f64 / dst_h as f64;
 
-    for dy in 0..dst_h {
-        let y0 = dy as f64 * sy;
-        let y1 = ((dy + 1) as f64 * sy).min(src_h as f64);
+    // 各出力行は独立しているため rayon で並列処理
+    dst.par_chunks_mut(row_bytes)
+        .enumerate()
+        .for_each(|(dy, row)| {
+            let dy = dy as u32;
+            let y0 = dy as f64 * sy;
+            let y1 = ((dy + 1) as f64 * sy).min(src_h as f64);
 
-        for dx in 0..dst_w {
-            let x0 = dx as f64 * sx;
-            let x1 = ((dx + 1) as f64 * sx).min(src_w as f64);
+            for dx in 0..dst_w {
+                let x0 = dx as f64 * sx;
+                let x1 = ((dx + 1) as f64 * sx).min(src_w as f64);
 
-            let mut r_sum = 0.0_f64;
-            let mut g_sum = 0.0_f64;
-            let mut b_sum = 0.0_f64;
-            let mut a_sum = 0.0_f64;
-            let mut weight_sum = 0.0_f64;
+                let mut r_sum = 0.0_f64;
+                let mut g_sum = 0.0_f64;
+                let mut b_sum = 0.0_f64;
+                let mut a_sum = 0.0_f64;
+                let mut weight_sum = 0.0_f64;
 
-            // ソース矩形にかかる全ピクセルを走査
-            let iy_start = y0.floor() as u32;
-            let iy_end = (y1.ceil() as u32).min(src_h);
-            let ix_start = x0.floor() as u32;
-            let ix_end = (x1.ceil() as u32).min(src_w);
+                // ソース矩形にかかる全ピクセルを走査
+                let iy_start = y0.floor() as u32;
+                let iy_end = (y1.ceil() as u32).min(src_h);
+                let ix_start = x0.floor() as u32;
+                let ix_end = (x1.ceil() as u32).min(src_w);
 
-            for iy in iy_start..iy_end {
-                // このソース行がカバーする垂直方向の面積割合
-                let fy0 = (iy as f64).max(y0);
-                let fy1 = ((iy + 1) as f64).min(y1);
-                let wy = fy1 - fy0;
+                for iy in iy_start..iy_end {
+                    // このソース行がカバーする垂直方向の面積割合
+                    let fy0 = (iy as f64).max(y0);
+                    let fy1 = ((iy + 1) as f64).min(y1);
+                    let wy = fy1 - fy0;
 
-                for ix in ix_start..ix_end {
-                    // このソースピクセルがカバーする水平方向の面積割合
-                    let fx0 = (ix as f64).max(x0);
-                    let fx1 = ((ix + 1) as f64).min(x1);
-                    let wx = fx1 - fx0;
+                    for ix in ix_start..ix_end {
+                        // このソースピクセルがカバーする水平方向の面積割合
+                        let fx0 = (ix as f64).max(x0);
+                        let fx1 = ((ix + 1) as f64).min(x1);
+                        let wx = fx1 - fx0;
 
-                    let w = wx * wy;
-                    let offset = ((iy * src_w + ix) * 4) as usize;
-                    r_sum += src[offset] as f64 * w;
-                    g_sum += src[offset + 1] as f64 * w;
-                    b_sum += src[offset + 2] as f64 * w;
-                    a_sum += src[offset + 3] as f64 * w;
-                    weight_sum += w;
+                        let w = wx * wy;
+                        let offset = ((iy * src_w + ix) * 4) as usize;
+                        r_sum += src[offset] as f64 * w;
+                        g_sum += src[offset + 1] as f64 * w;
+                        b_sum += src[offset + 2] as f64 * w;
+                        a_sum += src[offset + 3] as f64 * w;
+                        weight_sum += w;
+                    }
+                }
+
+                let dst_offset = (dx * 4) as usize;
+                if weight_sum > 0.0 {
+                    row[dst_offset] = (r_sum / weight_sum).round() as u8;
+                    row[dst_offset + 1] = (g_sum / weight_sum).round() as u8;
+                    row[dst_offset + 2] = (b_sum / weight_sum).round() as u8;
+                    row[dst_offset + 3] = (a_sum / weight_sum).round() as u8;
                 }
             }
-
-            let dst_offset = ((dy * dst_w + dx) * 4) as usize;
-            if weight_sum > 0.0 {
-                dst[dst_offset] = (r_sum / weight_sum).round() as u8;
-                dst[dst_offset + 1] = (g_sum / weight_sum).round() as u8;
-                dst[dst_offset + 2] = (b_sum / weight_sum).round() as u8;
-                dst[dst_offset + 3] = (a_sum / weight_sum).round() as u8;
-            }
-        }
-    }
+        });
 
     dst
 }
