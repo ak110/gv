@@ -12,7 +12,7 @@ pub fn register_window_class(class_name: PCWSTR, wnd_proc: WNDPROC) -> Result<()
 
         let wc = WNDCLASSEXW {
             cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
-            style: CS_HREDRAW | CS_VREDRAW,
+            style: CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS,
             lpfnWndProc: wnd_proc,
             hInstance: instance.into(),
             hCursor: LoadCursorW(None, IDC_ARROW)?,
