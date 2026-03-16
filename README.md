@@ -2,32 +2,9 @@
 
 Windows用画像ビューアー。
 
-## ビルド
+## 動作環境
 
-### 必要環境
-
-- [rustup](https://rustup.rs/)（Rust ツールチェーン）
-- Visual Studio Build Tools（C++ ビルドツール）
-
-### ビルド手順
-
-```bash
-# デバッグビルド
-cargo build
-
-# リリースビルド（最適化あり）
-cargo build --release
-# → target/release/gv3.exe
-
-# テスト
-cargo test
-
-# 静的解析
-cargo clippy
-
-# フォーマット
-cargo fmt
-```
+- Windows 10 以降 (x64)
 
 ## 使い方
 
@@ -94,16 +71,14 @@ spi/
   axXXX.spi    ← アーカイブプラグイン
 ```
 
-## 技術スタック
-
-- **言語**: Rust
-- **GUI**: windows-rs (Win32 API) + Direct2D
-- **画像デコード**: image crate + Susieプラグイン
-- **アーカイブ**: zip / unrar / sevenz-rust + Susieプラグイン
-
 ## ドキュメント
 
 - [コンセプト](docs/concept.md)
 - [機能仕様](docs/features.md)
 - [アーキテクチャ](docs/architecture.md)
 - [キーバインド](docs/keybindings.md)
+- [開発ガイド](docs/development.md)
+
+## ライセンス
+
+[MIT License](LICENSE)

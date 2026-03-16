@@ -1,0 +1,96 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'バージョンの種類'
+        required: true
+        type: choice
+        options:
+          - 'バグフィックス'
+          - 'マイナーバージョンアップ'
+          - 'メジャーバージョンアップ'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Bump version
+        id: bump
+        shell: pwsh
+        run: |
+          $content = Get-Content Cargo.toml -Raw
+          if ($content -match '(?m)^version = "(\d+)\.(\d+)\.(\d+)"') {
+            $major = [int]$Matches[1]
+            $minor = [int]$Matches[2]
+            $patch = [int]$Matches[3]
+          } else {
+            throw "version not found in Cargo.toml"
+          }
+
+          $bump = "${{ inputs.bump }}"
+          switch ($bump) {
+            'バグフィックス'             { $patch++ }
+            'マイナーバージョンアップ'   { $minor++; $patch = 0 }
+            'メジャーバージョンアップ'   { $major++; $minor = 0; $patch = 0 }
+          }
+
+          $newVersion = "$major.$minor.$patch"
+          $content = $content -replace '(?m)^version = "\d+\.\d+\.\d+"', "version = `"$newVersion`""
+          Set-Content Cargo.toml -Value $content -NoNewline
+
+          Write-Output "version=$newVersion" >> $env:GITHUB_OUTPUT
+          Write-Host "New version: $newVersion"
+
+      - name: Update Cargo.lock
+        run: cargo generate-lockfile
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: Create release archive
+        shell: pwsh
+        run: |
+          $version = "${{ steps.bump.outputs.version }}"
+          $zipName = "gv3-v$version.zip"
+          Compress-Archive -Path @(
+            "target/release/gv3.exe",
+            "gv3.toml.default",
+            "gv3.keys.toml.default",
+            "LICENSE"
+          ) -DestinationPath $zipName
+
+      - name: Commit, tag and push
+        run: |
+          git add Cargo.toml Cargo.lock
+          git commit -m "release: v${{ steps.bump.outputs.version }}"
+          git tag "v${{ steps.bump.outputs.version }}"
+          git push origin HEAD --tags
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "v${{ steps.bump.outputs.version }}" `
+            "gv3-v${{ steps.bump.outputs.version }}.zip" `
+            --title "v${{ steps.bump.outputs.version }}" `
+            --generate-notes
