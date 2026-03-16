@@ -9,6 +9,13 @@ const IMAGE_EXTENSIONS: &[&str] = &[
     ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tiff", ".tif", ".tga", ".ico", ".cur",
 ];
 
+/// ファイル名が画像拡張子を持つか判定する
+/// アーカイブハンドラ等からも利用される
+pub fn is_image_extension(filename: &str) -> bool {
+    let lower = filename.to_lowercase();
+    IMAGE_EXTENSIONS.iter().any(|ext| lower.ends_with(ext))
+}
+
 /// ソート順
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
@@ -53,12 +60,8 @@ impl FileList {
                 continue;
             }
             // 拡張子フィルタ
-            let ext = path
-                .extension()
-                .and_then(|e| e.to_str())
-                .map(|e| format!(".{}", e.to_lowercase()));
-            if let Some(ext) = ext
-                && IMAGE_EXTENSIONS.contains(&ext.as_str())
+            if let Some(name) = path.file_name().and_then(|n| n.to_str())
+                && is_image_extension(name)
                 && let Ok(info) = FileInfo::from_path(&path)
             {
                 self.files.push(info);

@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, Result};
 use crossbeam_channel::Sender;
 
+use crate::archive::ArchiveManager;
 use crate::file_list::FileList;
 use crate::image::{DecodedImage, ImageDecoder, StandardDecoder};
 use crate::prefetch::{LoadResponse, PageCache, PrefetchEngine};
@@ -33,6 +34,10 @@ pub struct Document {
     prefetch: Option<PrefetchEngine>,
     cache_backward: usize,
     cache_forward: usize,
+    // アーカイブ対応
+    archive_manager: ArchiveManager,
+    archive_temp_dir: Option<PathBuf>,
+    current_archive: Option<PathBuf>,
 }
 
 impl Document {
@@ -46,6 +51,9 @@ impl Document {
             prefetch: None,
             cache_backward: 0,
             cache_forward: 0,
+            archive_manager: ArchiveManager::new(),
+            archive_temp_dir: None,
+            current_archive: None,
         }
     }
 
@@ -156,8 +164,17 @@ impl Document {
     }
 
     /// ファイルを開く（親フォルダの画像を列挙し、指定ファイルを表示）
+    /// アーカイブファイルの場合はアーカイブとして開く
     pub fn open(&mut self, path: &Path) -> Result<()> {
         let path = Self::canonicalize(path)?;
+
+        // アーカイブ判定
+        if ArchiveManager::is_archive(&path) {
+            return self.open_archive(&path);
+        }
+
+        // 通常ファイル: アーカイブtempがあればクリーンアップ
+        self.cleanup_archive_temp();
 
         // 親フォルダの画像を列挙
         if let Some(folder) = path.parent() {
@@ -170,9 +187,60 @@ impl Document {
         self.load_current()
     }
 
+    /// アーカイブを開く（画像をtempに一括展開し、ファイルリストを構築）
+    fn open_archive(&mut self, archive_path: &Path) -> Result<()> {
+        self.cleanup_archive_temp();
+        self.invalidate_cache();
+
+        // ユニークなtempディレクトリを作成（ワーカーが旧dirのファイルを掴んでいる可能性への対策）
+        let temp_dir = std::env::temp_dir().join(format!(
+            "gv3_archive_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
+        ));
+        std::fs::create_dir_all(&temp_dir)?;
+
+        // 画像を一括展開
+        let count = self
+            .archive_manager
+            .extract_images(archive_path, &temp_dir)?;
+        if count == 0 {
+            let _ = std::fs::remove_dir_all(&temp_dir);
+            anyhow::bail!(
+                "アーカイブ内に画像ファイルがありません: {}",
+                archive_path.display()
+            );
+        }
+
+        self.archive_temp_dir = Some(temp_dir.clone());
+        self.current_archive = Some(archive_path.to_path_buf());
+
+        // tempフォルダから画像列挙（既存メソッド再利用）
+        self.file_list.populate_from_folder(&temp_dir)?;
+        if self.file_list.len() > 0 {
+            self.file_list.navigate_first();
+        }
+        let _ = self.event_sender.send(DocumentEvent::FileListChanged);
+        self.load_current()
+    }
+
+    /// アーカイブ用tempディレクトリをクリーンアップする
+    fn cleanup_archive_temp(&mut self) {
+        if let Some(temp_dir) = self.archive_temp_dir.take() {
+            // ワーカーのin-flight fs::readがファイルを掴んでいる可能性があるため、
+            // 削除失敗は無視する（ユニークdir名なので次回openに影響しない）
+            let _ = std::fs::remove_dir_all(&temp_dir);
+        }
+        self.current_archive = None;
+    }
+
     /// フォルダを開く（先頭画像を表示）
     pub fn open_folder(&mut self, folder: &Path) -> Result<()> {
         let folder = Self::canonicalize(folder)?;
+        self.cleanup_archive_temp();
         self.invalidate_cache();
         self.file_list.populate_from_folder(&folder)?;
 
@@ -272,5 +340,16 @@ impl Document {
     /// ファイルリストへの参照
     pub fn file_list(&self) -> &FileList {
         &self.file_list
+    }
+
+    /// 現在開いているアーカイブのパス（タイトル表示用）
+    pub fn current_archive(&self) -> Option<&Path> {
+        self.current_archive.as_deref()
+    }
+}
+
+impl Drop for Document {
+    fn drop(&mut self) {
+        self.cleanup_archive_temp();
     }
 }

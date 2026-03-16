@@ -132,10 +132,22 @@ impl AppWindow {
         let title = if let Some(path) = self.document.current_path() {
             let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("???");
             let fl = self.document.file_list();
+            // アーカイブ名をタイトルに付加
+            let archive_suffix = self
+                .document
+                .current_archive()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+                .map(|name| format!(" [{name}]"))
+                .unwrap_or_default();
             if let Some(idx) = fl.current_index() {
-                format!("{filename} ({}/{}) - ぐらびゅ3\0", idx + 1, fl.len())
+                format!(
+                    "{filename} ({}/{}{archive_suffix}) - ぐらびゅ3\0",
+                    idx + 1,
+                    fl.len()
+                )
             } else {
-                format!("{filename} - ぐらびゅ3\0")
+                format!("{filename}{archive_suffix} - ぐらびゅ3\0")
             }
         } else {
             "ぐらびゅ3\0".to_string()
