@@ -27,6 +27,8 @@ pub fn build_menu_bar() -> HMENU {
             None,
             Some((Action::Reload, "再読み込み(&L)\tF5")),
             Some((Action::CloseAll, "全て閉じる(&W)\tCtrl+W")),
+            None,
+            Some((Action::Exit, "終了(&X)")),
         ]);
         append_popup(menu_bar, file_menu, "ファイル(&F)");
 
@@ -275,4 +277,5 @@ const ALL_ACTIONS: &[Action] = &[
     Action::OpenSpiFolder,
     Action::OpenTempFolder,
     Action::ShowHelp,
+    Action::Exit,
 ];

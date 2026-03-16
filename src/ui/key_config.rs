@@ -139,6 +139,7 @@ pub enum Action {
     OpenSpiFolder,
     OpenTempFolder,
     ShowHelp,
+    Exit,
 }
 
 // --- KeyConfig ---
@@ -555,6 +556,7 @@ fn field_to_action(field: &str) -> Option<Action> {
         "open_spi_folder" => Action::OpenSpiFolder,
         "open_temp_folder" => Action::OpenTempFolder,
         "show_help" => Action::ShowHelp,
+        "exit" => Action::Exit,
 
         _ => return None,
     })

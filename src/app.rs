@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -58,7 +58,7 @@ pub struct AppWindow {
 
 impl AppWindow {
     /// AppWindowを作成しウィンドウを表示する
-    pub fn create(config: Config, initial_file: Option<&Path>) -> Result<Box<Self>> {
+    pub fn create(config: Config, initial_files: &[PathBuf]) -> Result<Box<Self>> {
         let class_name = windows::core::w!("gv3_main");
 
         // アイコンをリソースからロード（リソースID 1）
@@ -164,7 +164,7 @@ impl AppWindow {
             always_on_top,
             key_config,
             menu: menu_handle,
-            menu_visible: false,
+            menu_visible: true,
             file_list_panel,
             monospace_font,
         });
@@ -203,11 +203,26 @@ impl AppWindow {
         }
 
         // 初期ファイルがあれば開く
-        if let Some(path) = initial_file {
-            if let Err(e) = app.document.open(path) {
+        if !initial_files.is_empty() {
+            let result = if initial_files.len() > 1
+                && initial_files.iter().all(|p| app.document.is_archive(p))
+            {
+                // 全てアーカイブなら複数アーカイブをまとめて開く
+                app.document.open_archives(initial_files)
+            } else if initial_files[0].is_dir() {
+                app.document.open_folder(&initial_files[0])
+            } else {
+                app.document.open(&initial_files[0])
+            };
+            if let Err(e) = result {
                 eprintln!("画像を開けませんでした: {e}");
             }
             app.process_document_events();
+        }
+
+        // メニューバーをデフォルト表示
+        unsafe {
+            let _ = SetMenu(hwnd, Some(app.menu));
         }
 
         unsafe {
@@ -778,7 +793,7 @@ impl AppWindow {
             }
             Action::MarkedDelete => {
                 // アーカイブ内は無効
-                if self.document.current_archive().is_some() {
+                if !self.document.current_archives().is_empty() {
                     return;
                 }
                 let paths: Vec<std::path::PathBuf> = self
@@ -795,7 +810,7 @@ impl AppWindow {
                 }
             }
             Action::MarkedMove => {
-                if self.document.current_archive().is_some() {
+                if !self.document.current_archives().is_empty() {
                     return;
                 }
                 let paths: Vec<std::path::PathBuf> = self
@@ -1039,6 +1054,11 @@ impl AppWindow {
                 self.show_help();
             }
 
+            // --- 終了 ---
+            Action::Exit => unsafe {
+                let _ = DestroyWindow(self.hwnd);
+            },
+
             // --- 未実装スタブ ---
             Action::OpenHistory
             | Action::DialogDisplay
@@ -1180,22 +1200,45 @@ Susieプラグイン (.sph/.spi) で拡張可能";
     }
 
     fn on_drop_files(&mut self, hdrop: HDROP) {
-        // ドロップされた最初のファイル/フォルダのパスを取得
+        // ドロップされた全ファイルを収集
+        let file_count = unsafe { DragQueryFileW(hdrop, 0xFFFFFFFF, None) } as usize;
+        let mut paths = Vec::new();
         let mut buf = [0u16; 1024];
-        let len = unsafe { DragQueryFileW(hdrop, 0, Some(&mut buf)) } as usize;
+        for i in 0..file_count {
+            let len = unsafe { DragQueryFileW(hdrop, i as u32, Some(&mut buf)) } as usize;
+            if len > 0 {
+                let path_str = String::from_utf16_lossy(&buf[..len]);
+                paths.push(std::path::PathBuf::from(path_str));
+            }
+        }
         unsafe { DragFinish(hdrop) };
 
-        if len == 0 {
+        if paths.is_empty() {
             return;
         }
 
-        let path_str = String::from_utf16_lossy(&buf[..len]);
-        let path = std::path::Path::new(&path_str);
-
-        let result = if path.is_dir() {
-            self.document.open_folder(path)
+        let result = if paths.len() > 1 && paths.iter().all(|p| self.document.is_archive(p)) {
+            // 全てアーカイブなら複数アーカイブをまとめて開く
+            self.document.open_archives(&paths)
+        } else if paths.len() > 1 {
+            // 混在: 通知して最初のファイルのみ開く
+            let msg = "複数ファイルを開く場合はアーカイブのみ対応しています\0";
+            let title = "ぐらびゅ3\0";
+            let wide_msg: Vec<u16> = msg.encode_utf16().collect();
+            let wide_title: Vec<u16> = title.encode_utf16().collect();
+            unsafe {
+                MessageBoxW(
+                    Some(self.hwnd),
+                    windows::core::PCWSTR(wide_msg.as_ptr()),
+                    windows::core::PCWSTR(wide_title.as_ptr()),
+                    MB_OK | MB_ICONINFORMATION,
+                );
+            }
+            self.document.open(&paths[0])
+        } else if paths[0].is_dir() {
+            self.document.open_folder(&paths[0])
         } else {
-            self.document.open(path)
+            self.document.open(&paths[0])
         };
 
         if let Err(e) = result {

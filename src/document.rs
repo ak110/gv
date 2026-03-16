@@ -39,8 +39,8 @@ pub struct Document {
     cache_forward: usize,
     // アーカイブ対応
     archive_manager: ArchiveManager,
-    archive_temp_dir: Option<PathBuf>,
-    current_archive: Option<PathBuf>,
+    archive_temp_dirs: Vec<PathBuf>,
+    current_archives: Vec<PathBuf>,
 }
 
 impl Document {
@@ -60,8 +60,8 @@ impl Document {
             cache_backward: 0,
             cache_forward: 0,
             archive_manager,
-            archive_temp_dir: None,
-            current_archive: None,
+            archive_temp_dirs: Vec::new(),
+            current_archives: Vec::new(),
         }
     }
 
@@ -199,50 +199,61 @@ impl Document {
         self.load_current()
     }
 
-    /// アーカイブを開く（画像をtempに一括展開し、ファイルリストを構築）
+    /// アーカイブを開く（単一アーカイブ）
     fn open_archive(&mut self, archive_path: &Path) -> Result<()> {
+        self.open_archives(&[archive_path.to_path_buf()])
+    }
+
+    /// 複数アーカイブをまとめて開く
+    pub fn open_archives(&mut self, archive_paths: &[PathBuf]) -> Result<()> {
         self.cleanup_archive_temp();
         self.invalidate_cache();
-
-        // ユニークなtempディレクトリを作成（ワーカーが旧dirのファイルを掴んでいる可能性への対策）
-        let temp_dir = std::env::temp_dir().join(format!(
-            "gv3_archive_{}_{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_millis()
-        ));
-        std::fs::create_dir_all(&temp_dir)?;
-
-        // 画像を一括展開（tempパスと元エントリ名のマッピング付き）
-        let entries = self
-            .archive_manager
-            .extract_images(archive_path, &temp_dir)?;
-        if entries.is_empty() {
-            let _ = std::fs::remove_dir_all(&temp_dir);
-            anyhow::bail!(
-                "アーカイブ内に画像ファイルがありません: {}",
-                archive_path.display()
-            );
-        }
-
-        self.archive_temp_dir = Some(temp_dir);
-        self.current_archive = Some(archive_path.to_path_buf());
-
-        // マッピング結果から直接FileListを構築（sourceにアーカイブ情報を設定）
         self.file_list.clear();
-        for (temp_path, entry_name) in &entries {
-            if let Ok(mut info) = crate::file_info::FileInfo::from_path(temp_path) {
-                info.source = FileSource::ArchiveEntry {
-                    archive: archive_path.to_path_buf(),
-                    entry: entry_name.clone(),
-                };
-                // ソート用のfile_nameはエントリパスのファイル名部分を使う
-                info.file_name = crate::archive::extract_filename(entry_name).to_string();
-                self.file_list.push(info);
+
+        let mut all_empty = true;
+        for archive_path in archive_paths {
+            // ユニークなtempディレクトリを作成
+            let temp_dir = std::env::temp_dir().join(format!(
+                "gv3_archive_{}_{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis()
+            ));
+            std::fs::create_dir_all(&temp_dir)?;
+
+            // 画像を一括展開
+            let entries = self
+                .archive_manager
+                .extract_images(archive_path, &temp_dir)?;
+            if entries.is_empty() {
+                let _ = std::fs::remove_dir_all(&temp_dir);
+                continue;
+            }
+
+            all_empty = false;
+            self.archive_temp_dirs.push(temp_dir);
+            self.current_archives.push(archive_path.clone());
+
+            // マッピング結果から直接FileListに追加（sourceにアーカイブ情報を設定）
+            for (temp_path, entry_name) in &entries {
+                if let Ok(mut info) = crate::file_info::FileInfo::from_path(temp_path) {
+                    info.source = FileSource::ArchiveEntry {
+                        archive: archive_path.clone(),
+                        entry: entry_name.clone(),
+                    };
+                    // ソート用のfile_nameはエントリパスのファイル名部分を使う
+                    info.file_name = crate::archive::extract_filename(entry_name).to_string();
+                    self.file_list.push(info);
+                }
             }
         }
+
+        if all_empty {
+            anyhow::bail!("アーカイブ内に画像ファイルがありません");
+        }
+
         self.file_list.sort_current();
 
         if self.file_list.len() > 0 {
@@ -254,12 +265,12 @@ impl Document {
 
     /// アーカイブ用tempディレクトリをクリーンアップする
     fn cleanup_archive_temp(&mut self) {
-        if let Some(temp_dir) = self.archive_temp_dir.take() {
+        for temp_dir in self.archive_temp_dirs.drain(..) {
             // ワーカーのin-flight fs::readがファイルを掴んでいる可能性があるため、
             // 削除失敗は無視する（ユニークdir名なので次回openに影響しない）
             let _ = std::fs::remove_dir_all(&temp_dir);
         }
-        self.current_archive = None;
+        self.current_archives.clear();
     }
 
     /// フォルダを開く（先頭画像を表示）
@@ -376,9 +387,14 @@ impl Document {
         &self.file_list
     }
 
-    /// 現在開いているアーカイブのパス（タイトル表示用）
-    pub fn current_archive(&self) -> Option<&Path> {
-        self.current_archive.as_deref()
+    /// パスがアーカイブファイルか判定する
+    pub fn is_archive(&self, path: &Path) -> bool {
+        self.archive_manager.is_archive(path)
+    }
+
+    /// 現在開いているアーカイブのパス一覧
+    pub fn current_archives(&self) -> &[PathBuf] {
+        &self.current_archives
     }
 
     /// 現在のファイルの論理ソース
@@ -507,43 +523,79 @@ impl Document {
 
     /// ブックマークデータからファイルリストを復元する
     pub fn load_bookmark_data(&mut self, data: crate::bookmark::BookmarkData) -> Result<()> {
-        self.cleanup_archive_temp();
-        self.invalidate_cache();
-        self.file_list.clear();
+        // アーカイブエントリが1つでもあればアーカイブモードで復元
+        let has_archives = data
+            .entries
+            .iter()
+            .any(|s| matches!(s, FileSource::ArchiveEntry { .. }));
 
-        // 通常ファイルのみをリストに追加（存在するもののみ）
-        // アーカイブエントリは現状未対応（アーカイブを開き直す必要がある）
-        for source in &data.entries {
-            match source {
-                FileSource::File(path) => {
-                    if path.exists()
-                        && let Ok(info) = crate::file_info::FileInfo::from_path(path)
-                    {
-                        self.file_list.push(info);
-                    }
-                }
-                FileSource::ArchiveEntry { archive, .. } => {
-                    // アーカイブを見つけたら、そのアーカイブを開く
-                    // （ブックマーク内の最初のアーカイブのみ対応）
-                    if archive.exists() && self.archive_manager.is_archive(archive) {
-                        if let Err(e) = self.open_archive(archive) {
-                            eprintln!("アーカイブ復元失敗: {e}");
-                        }
-                        // アーカイブを開いた場合、ブックマークの残りは無視
-                        break;
-                    }
+        if has_archives {
+            // ユニークなアーカイブパスを出現順に収集
+            let mut archive_paths: Vec<PathBuf> = Vec::new();
+            for source in &data.entries {
+                if let FileSource::ArchiveEntry { archive, .. } = source
+                    && archive.exists()
+                    && self.archive_manager.is_archive(archive)
+                    && !archive_paths.contains(archive)
+                {
+                    archive_paths.push(archive.clone());
                 }
             }
+
+            if archive_paths.is_empty() {
+                anyhow::bail!("ブックマーク内のアーカイブが見つかりません");
+            }
+
+            self.open_archives(&archive_paths)?;
+
+            // ブックマークのindex位置に対応するエントリで位置を特定
+            if let Some(target_source) = data.entries.get(data.index) {
+                let target_idx = self
+                    .file_list
+                    .files()
+                    .iter()
+                    .position(|f| match (target_source, &f.source) {
+                        (
+                            FileSource::ArchiveEntry {
+                                archive: a1,
+                                entry: e1,
+                            },
+                            FileSource::ArchiveEntry {
+                                archive: a2,
+                                entry: e2,
+                            },
+                        ) => a1 == a2 && e1 == e2,
+                        _ => false,
+                    })
+                    .unwrap_or_else(|| data.index.min(self.file_list.len().saturating_sub(1)));
+                self.file_list.navigate_to(target_idx);
+                let _ = self.load_current();
+            }
+        } else {
+            // 通常ファイルのみ
+            self.cleanup_archive_temp();
+            self.invalidate_cache();
+            self.file_list.clear();
+
+            for source in &data.entries {
+                if let FileSource::File(path) = source
+                    && path.exists()
+                    && let Ok(info) = crate::file_info::FileInfo::from_path(path)
+                {
+                    self.file_list.push(info);
+                }
+            }
+
+            if self.file_list.len() > 0 {
+                let idx = data.index.min(self.file_list.len() - 1);
+                self.file_list.navigate_to(idx);
+            }
+
+            let _ = self.event_sender.send(DocumentEvent::FileListChanged);
+            self.load_current()?;
         }
 
-        // 指定インデックスへ移動
-        if self.file_list.len() > 0 {
-            let idx = data.index.min(self.file_list.len() - 1);
-            self.file_list.navigate_to(idx);
-        }
-
-        let _ = self.event_sender.send(DocumentEvent::FileListChanged);
-        self.load_current()
+        Ok(())
     }
 
     /// 現在のファイルのメタデータを取得する

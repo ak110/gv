@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -7,7 +8,7 @@ use crate::extension_registry::ExtensionRegistry;
 use crate::file_info::{FileInfo, FileSource};
 
 /// フォルダ/アーカイブ単位ナビゲーション用のグループキー
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum GroupKey {
     Folder(std::path::PathBuf),
     Archive(std::path::PathBuf),
@@ -140,29 +141,26 @@ impl FileList {
     }
 
     /// ソート実行（現在位置をパスで維持）
+    /// グループ（フォルダ/アーカイブ）の出現順を保持しつつ、グループ内でソートする
     pub fn sort(&mut self, order: SortOrder) {
         // 現在のパスを記憶
         let current_path = self.current().map(|f| f.path.clone());
 
-        match order {
-            SortOrder::Name => {
-                self.files.sort_by(|a, b| a.file_name.cmp(&b.file_name));
-            }
-            SortOrder::NameNoCase => {
-                self.files
-                    .sort_by(|a, b| a.file_name.to_lowercase().cmp(&b.file_name.to_lowercase()));
-            }
-            SortOrder::Size => {
-                self.files.sort_by_key(|f| f.file_size);
-            }
-            SortOrder::Date => {
-                self.files.sort_by_key(|f| f.modified);
-            }
-            SortOrder::Natural => {
-                self.files
-                    .sort_by(|a, b| natord::compare(&a.file_name, &b.file_name));
-            }
+        // グループ出現順を記録
+        let mut group_order: HashMap<GroupKey, usize> = HashMap::new();
+        for file in &self.files {
+            let key = Self::group_key(file);
+            let next_id = group_order.len();
+            group_order.entry(key).or_insert(next_id);
         }
+
+        // 第1キー=グループ出現順、第2キー=ソート順
+        self.files.sort_by(|a, b| {
+            let ga = group_order.get(&Self::group_key(a)).copied().unwrap_or(0);
+            let gb = group_order.get(&Self::group_key(b)).copied().unwrap_or(0);
+            ga.cmp(&gb)
+                .then_with(|| Self::compare_by_sort_order(a, b, order))
+        });
 
         self.sort_order = order;
 
@@ -786,5 +784,52 @@ mod tests {
         assert!(!fl.navigate_prev_mark());
 
         cleanup(&dir);
+    }
+
+    /// テスト用のアーカイブエントリFileInfoを作成するヘルパー
+    fn make_archive_file_info(archive: &str, entry: &str, file_name: &str) -> FileInfo {
+        FileInfo {
+            path: std::path::PathBuf::from(format!("/tmp/{file_name}")),
+            file_name: file_name.to_string(),
+            file_size: 100,
+            modified: std::time::SystemTime::UNIX_EPOCH,
+            marked: false,
+            load_failed: false,
+            source: FileSource::ArchiveEntry {
+                archive: std::path::PathBuf::from(archive),
+                entry: entry.to_string(),
+            },
+        }
+    }
+
+    #[test]
+    fn sort_preserves_group_order() {
+        // 複数グループ（異なるアーカイブ）のファイルがソート後もグループ順を保持する
+        let registry = test_registry();
+        let mut fl = FileList::new(registry);
+
+        // グループA → グループB の出現順で追加
+        fl.push(make_archive_file_info(
+            "archive_a.zip",
+            "z_last.png",
+            "z_last.png",
+        ));
+        fl.push(make_archive_file_info(
+            "archive_a.zip",
+            "a_first.png",
+            "a_first.png",
+        ));
+        fl.push(make_archive_file_info(
+            "archive_b.zip",
+            "b_middle.png",
+            "b_middle.png",
+        ));
+
+        fl.sort(SortOrder::Natural);
+
+        let names: Vec<&str> = fl.files.iter().map(|f| f.file_name.as_str()).collect();
+        // グループA（出現順0）が先、グループ内はソート済み
+        // グループB（出現順1）が後
+        assert_eq!(names, vec!["a_first.png", "z_last.png", "b_middle.png"]);
     }
 }

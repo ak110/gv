@@ -59,12 +59,16 @@ fn main() -> Result<()> {
     // 設定ファイル読み込み
     let config = config::Config::load();
 
-    // コマンドライン引数から画像ファイルパスを取得
-    let initial_file: Option<PathBuf> = std::env::args_os().nth(1).map(PathBuf::from);
+    // コマンドライン引数からファイルパスを収集（--で始まるフラグは除外）
+    let initial_files: Vec<PathBuf> = std::env::args_os()
+        .skip(1)
+        .filter(|arg| !arg.to_str().is_some_and(|s| s.starts_with("--")))
+        .map(PathBuf::from)
+        .collect();
 
     // メインウィンドウ作成
     // _appはメッセージループ中に生存する必要がある（Box<AppWindow>のドロップ防止）
-    let _app = app::AppWindow::create(config, initial_file.as_deref())?;
+    let _app = app::AppWindow::create(config, &initial_files)?;
 
     // メッセージループ
     let exit_code = ui::window::run_message_loop();
