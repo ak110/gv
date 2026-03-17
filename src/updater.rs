@@ -412,10 +412,7 @@ mod tests {
             b"NEW_CONTENT",
             "gv3.exe の中身は新しいexeであるべき"
         );
-        assert!(
-            !update.exists(),
-            "gv3_update.exe は move で消えているべき"
-        );
+        assert!(!update.exists(), "gv3_update.exe は move で消えているべき");
 
         let _ = std::fs::remove_dir_all(&dir);
     }
