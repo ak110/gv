@@ -7,6 +7,7 @@ use std::thread::JoinHandle;
 use crossbeam_channel::{Receiver, Sender};
 
 use crate::archive::ArchiveManager;
+use crate::document::ZipBuffer;
 use crate::image::{DecodedImage, DecoderChain};
 
 /// ワーカースレッドへのリクエスト
@@ -57,7 +58,7 @@ impl PrefetchEngine {
         notify: Box<dyn Fn() + Send>,
         decoder: Arc<DecoderChain>,
         archive_manager: Arc<ArchiveManager>,
-        zip_buffers: Arc<RwLock<HashMap<PathBuf, Vec<u8>>>>,
+        zip_buffers: Arc<RwLock<HashMap<PathBuf, ZipBuffer>>>,
     ) -> Self {
         let (request_tx, request_rx) = crossbeam_channel::unbounded();
         let (response_tx, response_rx) = crossbeam_channel::unbounded();
@@ -169,7 +170,7 @@ fn worker_loop(
     notify: Box<dyn Fn() + Send>,
     decoder: Arc<DecoderChain>,
     archive_manager: Arc<ArchiveManager>,
-    zip_buffers: Arc<RwLock<HashMap<PathBuf, Vec<u8>>>>,
+    zip_buffers: Arc<RwLock<HashMap<PathBuf, ZipBuffer>>>,
 ) {
     // PDFレンダリングにWinRT APIが必要なのでCOM初期化
     let _com = ComGuard::init();
@@ -208,7 +209,7 @@ fn worker_loop(
                         let buffers = zip_buffers.read().unwrap();
                         if let Some(buffer) = buffers.get(&archive_path) {
                             crate::archive::zip::ZipHandler::read_entry_from_buffer(
-                                buffer,
+                                buffer.as_ref(),
                                 &entry_name,
                             )
                         } else {
@@ -290,7 +291,7 @@ mod tests {
         )))
     }
 
-    fn test_zip_buffers() -> Arc<RwLock<HashMap<PathBuf, Vec<u8>>>> {
+    fn test_zip_buffers() -> Arc<RwLock<HashMap<PathBuf, ZipBuffer>>> {
         Arc::new(RwLock::new(HashMap::new()))
     }
 

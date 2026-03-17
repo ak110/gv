@@ -587,7 +587,7 @@ impl FileList {
             SortOrder::NameNoCase => a.file_name.to_lowercase().cmp(&b.file_name.to_lowercase()),
             SortOrder::Size => a.file_size.cmp(&b.file_size),
             SortOrder::Date => a.modified.cmp(&b.modified),
-            SortOrder::Natural => natord::compare(&a.file_name, &b.file_name),
+            SortOrder::Natural => natord::compare_ignore_case(&a.file_name, &b.file_name),
         }
     }
 
@@ -662,6 +662,20 @@ mod tests {
 
         let names: Vec<&str> = fl.files.iter().map(|f| f.file_name.as_str()).collect();
         assert_eq!(names, vec!["img1.png", "img2.png", "img10.png"]);
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn natural_sort_case_insensitive() {
+        let dir = std::env::temp_dir().join("gv3_test_fl_natural_ci");
+        create_test_files(&dir, &["IMG1.png", "img2.png", "Img10.png"]);
+
+        let mut fl = FileList::new(test_registry());
+        fl.populate_from_folder(&dir).unwrap();
+        fl.sort(SortOrder::Natural);
+
+        let names: Vec<&str> = fl.files.iter().map(|f| f.file_name.as_str()).collect();
+        assert_eq!(names, vec!["IMG1.png", "img2.png", "Img10.png"]);
         cleanup(&dir);
     }
 

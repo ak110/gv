@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
@@ -11,6 +12,23 @@ use crate::file_info::FileSource;
 use crate::file_list::FileList;
 use crate::image::{DecodedImage, DecoderChain};
 use crate::prefetch::{LoadResponse, PageCache, PrefetchEngine};
+
+/// ZIPファイルのバッファ（mmapまたはメモリ読み込み）
+pub(crate) enum ZipBuffer {
+    /// メモリマップドファイル（OSがページフォルト駆動で必要部分のみロード）
+    Mmap(memmap2::Mmap),
+    /// ヒープ上のバイト列（mmapフォールバック用）
+    Memory(Vec<u8>),
+}
+
+impl AsRef<[u8]> for ZipBuffer {
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            ZipBuffer::Mmap(m) => m,
+            ZipBuffer::Memory(v) => v,
+        }
+    }
+}
 
 /// DocumentからUIへの通知イベント
 #[derive(Debug)]
@@ -42,8 +60,8 @@ pub struct Document {
     archive_manager: Arc<ArchiveManager>,
     archive_temp_dirs: Vec<PathBuf>,
     current_containers: Vec<PathBuf>,
-    /// ZIPファイルのインメモリキャッシュ（オンデマンド読み出し用、先読みスレッドと共有）
-    zip_buffers: Arc<RwLock<HashMap<PathBuf, Vec<u8>>>>,
+    /// ZIPファイルのバッファキャッシュ（オンデマンド読み出し用、先読みスレッドと共有）
+    zip_buffers: Arc<RwLock<HashMap<PathBuf, ZipBuffer>>>,
 }
 
 impl Document {
@@ -292,12 +310,21 @@ impl Document {
                 }
                 self.current_containers.push(path.clone());
             } else if self.archive_manager.supports_on_demand(path) {
-                // オンデマンド（ZIP）: ファイル全体をメモリに読み込み
-                let buffer = std::fs::read(path)
-                    .with_context(|| format!("アーカイブ読み込み失敗: {}", path.display()))?;
+                // オンデマンド（ZIP）: mmapで読み込み（OSがページフォルト駆動で必要部分のみロード）
+                let buffer = match File::open(path).and_then(|f| unsafe { memmap2::Mmap::map(&f) })
+                {
+                    Ok(mmap) => ZipBuffer::Mmap(mmap),
+                    Err(_) => {
+                        // mmapフォールバック: ヒープに読み込み
+                        let data = std::fs::read(path).with_context(|| {
+                            format!("アーカイブ読み込み失敗: {}", path.display())
+                        })?;
+                        ZipBuffer::Memory(data)
+                    }
+                };
                 let entries = self
                     .archive_manager
-                    .list_images_from_buffer(&buffer, path)?;
+                    .list_images_from_buffer(buffer.as_ref(), path)?;
                 if entries.is_empty() {
                     continue;
                 }
@@ -513,7 +540,7 @@ impl Document {
                 // キャッシュされたZIPバッファから読み出し（Stored最適化付き）
                 let buffers = self.zip_buffers.read().unwrap();
                 if let Some(buffer) = buffers.get(archive) {
-                    crate::archive::zip::ZipHandler::read_entry_from_buffer(buffer, entry)
+                    crate::archive::zip::ZipHandler::read_entry_from_buffer(buffer.as_ref(), entry)
                 } else {
                     // キャッシュミス（通常発生しない）: ファイルから直接読み出し
                     drop(buffers);

@@ -88,10 +88,6 @@ pub fn build_menu_bar() -> HMENU {
             None,
             Some((Action::BookmarkSave, "ブックマーク保存\tF9")),
             Some((Action::BookmarkLoad, "ブックマーク読み込み\tF12")),
-            Some((
-                Action::BookmarkOpenEditor,
-                "ブックマークをエディタで開く\tF11",
-            )),
         ]);
         append_popup(menu_bar, list_menu, "リスト(&L)");
 
@@ -265,7 +261,6 @@ const ALL_ACTIONS: &[Action] = &[
     // ブックマーク
     Action::BookmarkSave,
     Action::BookmarkLoad,
-    Action::BookmarkOpenEditor,
     // ファイルリスト
     Action::ToggleFileList,
     // ダイアログ

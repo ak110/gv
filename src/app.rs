@@ -838,6 +838,7 @@ impl AppWindow {
                         default_name,
                         "すべてのファイル",
                         "*.*",
+                        None,
                     ) {
                         if matches!(
                             current.source,
@@ -1091,12 +1092,6 @@ impl AppWindow {
                     Err(e) => self.show_error_title(&format!("ブックマーク読み込み失敗: {e}")),
                 }
             }
-            Action::BookmarkOpenEditor => {
-                let dir = crate::bookmark::bookmark_dir();
-                let _ = std::fs::create_dir_all(&dir);
-                let _ = std::process::Command::new("explorer.exe").arg(&dir).spawn();
-            }
-
             // --- ページ指定ナビゲーション ---
             Action::NavigateToPage => {
                 self.navigate_to_page_dialog();
@@ -1218,11 +1213,15 @@ impl AppWindow {
             .map(|s| format!("{s}.{ext}"))
             .unwrap_or_else(|| format!("image.{ext}"));
 
-        let Some(save_path) =
-            crate::file_ops::save_file_dialog(self.hwnd, &default_name, filter_name, filter_spec)
-                .ok()
-                .flatten()
-        else {
+        let Some(save_path) = crate::file_ops::save_file_dialog(
+            self.hwnd,
+            &default_name,
+            filter_name,
+            filter_spec,
+            None,
+        )
+        .ok()
+        .flatten() else {
             return;
         };
 

@@ -177,11 +177,13 @@ pub fn select_folder_dialog(hwnd: HWND, title: &str) -> Result<Option<PathBuf>> 
 }
 
 /// 保存先ダイアログ（IFileSaveDialog）
+/// `initial_dir`が指定されていればそのフォルダを初期表示する
 pub fn save_file_dialog(
     hwnd: HWND,
     default_name: &str,
     filter_name: &str,
     filter_ext: &str,
+    initial_dir: Option<&Path>,
 ) -> Result<Option<PathBuf>> {
     unsafe {
         let dialog: IFileSaveDialog = windows::Win32::System::Com::CoCreateInstance(
@@ -193,6 +195,13 @@ pub fn save_file_dialog(
 
         let options = dialog.GetOptions()?;
         dialog.SetOptions(options | FOS_FORCEFILESYSTEM | FOS_OVERWRITEPROMPT)?;
+
+        // 初期ディレクトリ設定
+        if let Some(dir) = initial_dir
+            && let Some(item) = create_shell_item(dir)
+        {
+            let _ = dialog.SetFolder(&item);
+        }
 
         // フィルタ設定
         let fname: Vec<u16> = filter_name
@@ -227,6 +236,74 @@ pub fn save_file_dialog(
         let path = PathBuf::from(path_raw.to_string()?);
         windows::Win32::System::Com::CoTaskMemFree(Some(path_raw.0 as *const _));
         Ok(Some(path))
+    }
+}
+
+/// ブックマーク読み込みダイアログ（.gv3bmフィルタ + bookmarksフォルダ初期表示）
+pub fn open_bookmark_dialog(hwnd: HWND) -> Result<Option<PathBuf>> {
+    unsafe {
+        let dialog: IFileOpenDialog = windows::Win32::System::Com::CoCreateInstance(
+            &windows::Win32::UI::Shell::FileOpenDialog,
+            None,
+            windows::Win32::System::Com::CLSCTX_INPROC_SERVER,
+        )
+        .context("FileOpenDialog作成失敗")?;
+
+        let options = dialog.GetOptions()?;
+        dialog.SetOptions(options | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST | FOS_PATHMUSTEXIST)?;
+
+        // 初期ディレクトリ: bookmarksフォルダ
+        let bookmark_dir = crate::bookmark::bookmark_dir();
+        let _ = std::fs::create_dir_all(&bookmark_dir);
+        if let Some(item) = create_shell_item(&bookmark_dir) {
+            let _ = dialog.SetFolder(&item);
+        }
+
+        // フィルタ: ブックマーク + すべてのファイル
+        let filter_name: Vec<u16> = "ぐらびゅ3ブックマーク\0".encode_utf16().collect();
+        let filter_spec: Vec<u16> = "*.gv3bm\0".encode_utf16().collect();
+        let all_name: Vec<u16> = "すべてのファイル\0".encode_utf16().collect();
+        let all_spec: Vec<u16> = "*.*\0".encode_utf16().collect();
+
+        let filters = [
+            windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC {
+                pszName: windows::core::PCWSTR(filter_name.as_ptr()),
+                pszSpec: windows::core::PCWSTR(filter_spec.as_ptr()),
+            },
+            windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC {
+                pszName: windows::core::PCWSTR(all_name.as_ptr()),
+                pszSpec: windows::core::PCWSTR(all_spec.as_ptr()),
+            },
+        ];
+        dialog.SetFileTypes(&filters)?;
+
+        match dialog.Show(Some(hwnd)) {
+            Ok(()) => {}
+            Err(e) if e.code().0 as u32 == 0x800704C7 => return Ok(None),
+            Err(e) => return Err(e.into()),
+        }
+
+        let result = dialog.GetResult()?;
+        let path_raw = result.GetDisplayName(windows::Win32::UI::Shell::SIGDN_FILESYSPATH)?;
+        let path = PathBuf::from(path_raw.to_string()?);
+        windows::Win32::System::Com::CoTaskMemFree(Some(path_raw.0 as *const _));
+        Ok(Some(path))
+    }
+}
+
+/// SHCreateItemFromParsingNameでIShellItemを取得するヘルパー
+fn create_shell_item(dir: &Path) -> Option<windows::Win32::UI::Shell::IShellItem> {
+    unsafe {
+        let dir_wide: Vec<u16> = dir
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        windows::Win32::UI::Shell::SHCreateItemFromParsingName(
+            windows::core::PCWSTR(dir_wide.as_ptr()),
+            None,
+        )
+        .ok()
     }
 }
 

@@ -37,8 +37,13 @@ pub fn save_bookmark(
         .as_secs();
     let default_name = format!("bookmark_{now}.gv3bm");
 
-    let save_path =
-        crate::file_ops::save_file_dialog(hwnd, &default_name, "ぐらびゅ3ブックマーク", "*.gv3bm")?;
+    let save_path = crate::file_ops::save_file_dialog(
+        hwnd,
+        &default_name,
+        "ぐらびゅ3ブックマーク",
+        "*.gv3bm",
+        Some(&dir),
+    )?;
 
     let Some(save_path) = save_path else {
         return Ok(()); // キャンセル
@@ -74,7 +79,7 @@ pub fn save_bookmark(
 
 /// ブックマークを読み込む
 pub fn load_bookmark(hwnd: HWND) -> Result<Option<BookmarkData>> {
-    let path = crate::file_ops::open_file_dialog(hwnd)?;
+    let path = crate::file_ops::open_bookmark_dialog(hwnd)?;
     let Some(path) = path else {
         return Ok(None);
     };

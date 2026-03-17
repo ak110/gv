@@ -80,7 +80,6 @@ marked_copy = "Ctrl+Shift+C"
 [bookmark]
 bookmark_save = "F9"
 bookmark_load = "F12"
-bookmark_open_editor = "F11"
 
 [list]
 toggle_file_list = "F4"

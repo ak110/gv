@@ -120,7 +120,6 @@ pub enum Action {
     // --- ブックマーク (Phase 8 スタブ) ---
     BookmarkSave,
     BookmarkLoad,
-    BookmarkOpenEditor,
 
     // --- ファイルリスト (Phase 8 スタブ) ---
     ToggleFileList,
@@ -291,7 +290,6 @@ impl KeyConfig {
         // ブックマーク
         bind(&mut m, "F9", Action::BookmarkSave);
         bind(&mut m, "F12", Action::BookmarkLoad);
-        bind(&mut m, "F11", Action::BookmarkOpenEditor);
 
         // ファイルリスト
         bind(&mut m, "F4", Action::ToggleFileList);
@@ -540,7 +538,6 @@ fn field_to_action(field: &str) -> Option<Action> {
         // ブックマーク
         "bookmark_save" => Action::BookmarkSave,
         "bookmark_load" => Action::BookmarkLoad,
-        "bookmark_open_editor" => Action::BookmarkOpenEditor,
 
         // ファイルリスト
         "toggle_file_list" => Action::ToggleFileList,
