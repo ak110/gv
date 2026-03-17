@@ -27,7 +27,7 @@ cargo fmt
 
 ## Git フックのセットアップ
 
-`git push` 時に自動で lint・テストを実行する pre-push フックを用意している。
+`git push`時に自動でlint・テストを実行するpre-pushフックを用意している。
 
 ```powershell
 # 初回セットアップ（リポジトリごとに1回）
@@ -38,7 +38,7 @@ powershell -ExecutionPolicy Bypass -File scripts/lint-all.ps1
 ```
 
 `lint-all.ps1` は `cargo fmt --check`、`cargo clippy -- -D warnings`、`cargo test` を順に実行する。
-pre-push フック自体は Git for Windows の bash で実行されるため `.sh` も同梱している。
+pre-pushフック自体はGit for Windowsのbashで実行されるため`.sh`も同梱している。
 
 ```powershell
 # フックを無効化する場合

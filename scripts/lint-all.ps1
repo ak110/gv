@@ -18,11 +18,16 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 if ((Test-Path "node_modules") -and (Test-Path "package.json"))
 {
     Write-Host "=== markdownlint ==="
-    pnpm run markdownlint 2>&1 | Out-Null
+    pnpm run markdownlint
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
     Write-Host "=== textlint ==="
-    pnpm run textlint 2>&1 | Out-Null
+    pnpm run textlint
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
     Write-Host "=== prettier:check ==="
-    pnpm run prettier:check 2>&1 | Out-Null
+    pnpm run prettier:check
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
 Write-Host "All checks passed."

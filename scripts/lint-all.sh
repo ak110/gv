@@ -16,11 +16,11 @@ cargo test
 if [ -d "node_modules" ]; then
     if [ -f "package.json" ]; then
         echo "=== markdownlint ==="
-        pnpm run markdownlint 2>/dev/null || true
+        pnpm run markdownlint
         echo "=== textlint ==="
-        pnpm run textlint 2>/dev/null || true
+        pnpm run textlint
         echo "=== prettier:check ==="
-        pnpm run prettier:check 2>/dev/null || true
+        pnpm run prettier:check
     fi
 fi
 
