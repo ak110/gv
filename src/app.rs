@@ -1377,7 +1377,7 @@ Susieプラグイン (.sph/.spi) で拡張可能";
                             unsafe {
                                 let _ = SetCursor(Some(prev));
                             }
-                            let msg = format!("更新に失敗しました:\n{e}\0");
+                            let msg = format!("更新に失敗しました:\n{e:?}\0");
                             let title = "アップデート\0";
                             let wide_msg: Vec<u16> = msg.encode_utf16().collect();
                             let wide_title: Vec<u16> = title.encode_utf16().collect();
