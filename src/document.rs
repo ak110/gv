@@ -80,7 +80,10 @@ impl Document {
     }
 
     /// キャッシュ範囲を再計算する
-    /// 前方4枚・後方2枚を上限とし、余剰メモリは他用途に残す
+    /// 前方4枚・後方2枚を上限とし、スロット数で枚数を制御する。
+    /// メモリ予算はcache_budget（空きメモリの50%）をそのまま使う。
+    /// base_image_sizeはスロット数の計算にのみ使用する（実画像が大きい場合でも
+    /// キャッシュが機能するよう、予算の追加制限はかけない）。
     fn update_cache_range(&mut self, cache_budget: usize, base_image_size: usize) {
         const MAX_CACHE_FORWARD: usize = 4;
         const MAX_CACHE_BACKWARD: usize = 2;
@@ -88,10 +91,7 @@ impl Document {
         let total_slots = (cache_budget / base_image_size).max(3);
         self.cache_forward = (total_slots * 2 / 3).clamp(1, MAX_CACHE_FORWARD);
         self.cache_backward = (total_slots / 3).clamp(1, MAX_CACHE_BACKWARD);
-        // メモリ予算もスロット数に合わせて制限
-        let actual_slots = self.cache_forward + self.cache_backward + 1;
-        let capped_budget = cache_budget.min(base_image_size * actual_slots);
-        self.cache.set_max_memory(capped_budget);
+        self.cache.set_max_memory(cache_budget);
     }
 
     /// 先読みレスポンスを処理する（キャッシュ格納 + current_image更新）
@@ -155,15 +155,19 @@ impl Document {
         let files = self.file_list.files();
         let len = files.len();
 
-        // 近い順にリクエスト: 前方優先（center+1, center+2, ..., center-1, center-2, ...）
+        // 距離ベースの交互読み込み: 前1, 後1, 前2, 後2, ... の順でリクエスト
         let mut indices = Vec::new();
-        let fwd_end = (center + self.cache_forward + 1).min(len);
-        for i in (center + 1)..fwd_end {
-            indices.push(i);
-        }
-        let bwd_start = center.saturating_sub(self.cache_backward);
-        for i in (bwd_start..center).rev() {
-            indices.push(i);
+        let max_dist = self.cache_forward.max(self.cache_backward);
+        for dist in 1..=max_dist {
+            // 前方（次のページ）
+            let fwd = center + dist;
+            if dist <= self.cache_forward && fwd < len {
+                indices.push(fwd);
+            }
+            // 後方（前のページ）
+            if dist <= self.cache_backward && dist <= center {
+                indices.push(center - dist);
+            }
         }
 
         for idx in indices {

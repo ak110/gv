@@ -132,17 +132,37 @@ fn extract_exe_from_zip(zip_path: &std::path::Path, temp_dir: &std::path::Path) 
 }
 
 /// 更新用バッチスクリプトを生成する
+///
+/// rename-then-replaceパターン:
+/// 1. 実行中のexeを.oldにリネーム（Windowsはリネームを許可する）
+/// 2. 新しいexeを本来の名前で配置
+/// 3. 新exeを起動
+///
+/// `cleanup_old_exe()`が次回起動時に.oldを削除する。
 fn generate_update_batch(
     batch_path: &std::path::Path,
     update_exe: &std::path::Path,
     target_exe: &std::path::Path,
 ) -> Result<()> {
+    let old_exe = target_exe.with_extension("exe.old");
     let content = format!(
         r#"@echo off
-timeout /t 2 /nobreak >nul
+timeout /t 1 /nobreak >nul
+if exist "{old}" del /f "{old}"
+rename "{target}" "{old_name}"
+if %errorlevel% neq 0 (
+  timeout /t 3 /nobreak >nul
+  rename "{target}" "{old_name}"
+)
+if %errorlevel% neq 0 (
+  echo 更新に失敗しました。exeのリネームができません。
+  pause
+  exit /b 1
+)
 move /y "{update}" "{target}"
 if %errorlevel% neq 0 (
-  echo 更新に失敗しました。
+  echo 更新に失敗しました。新しいexeの配置に失敗しました。
+  rename "{old}" "{target_name}"
   pause
   exit /b 1
 )
@@ -151,6 +171,9 @@ del "%~f0"
 "#,
         update = update_exe.display(),
         target = target_exe.display(),
+        old = old_exe.display(),
+        old_name = old_exe.file_name().unwrap().to_string_lossy(),
+        target_name = target_exe.file_name().unwrap().to_string_lossy(),
     );
 
     std::fs::write(batch_path, content).context("バッチスクリプト書き込み失敗")
