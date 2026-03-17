@@ -207,9 +207,12 @@
 
 ### 10.3 一括登録/解除
 
-```bash
-gv3.exe --register      # 関連付け・コンテキストメニュー・送るを一括登録
-gv3.exe --unregister    # 一括解除
+```cmd
+REM 関連付け・コンテキストメニュー・送るを一括登録
+gv3.exe --register
+
+REM 一括解除
+gv3.exe --unregister
 ```
 
 ---

@@ -49,21 +49,21 @@
 
 ### ビルド・開発フロー
 
-```bash
-# 環境構築（初回のみ）
-# 1. rustup インストール（公式サイト）
-# 2. Visual Studio Build Tools インストール（C++ビルドツールのみ）
-# 3. VSCode + rust-analyzer 拡張
+```cmd
+REM 環境構築（初回のみ）
+REM 1. rustup インストール（公式サイト）
+REM 2. Visual Studio Build Tools インストール（C++ビルドツールのみ）
+REM 3. VSCode + rust-analyzer 拡張
 
-# 日常の開発
-cargo build              # ビルド
-cargo run                # 実行
-cargo run -- image.jpg   # 画像ファイルを指定して実行
-cargo test               # テスト
-cargo clippy             # 静的解析
-cargo fmt                # コードフォーマット
+REM 日常の開発
+cargo build
+cargo run
+cargo run -- image.jpg
+cargo test
+cargo clippy
+cargo fmt
 
-# リリースビルド
-cargo build --release    # 最適化ビルド（LTO有効）
-# → target/release/gv3.exe
+REM リリースビルド
+cargo build --release
+REM → target/release/gv3.exe
 ```
