@@ -77,8 +77,9 @@ jobs:
           $zipName = "gv3-v$version.zip"
           Compress-Archive -Path @(
             "target/release/gv3.exe",
-            "gv3.toml.default",
-            "gv3.keys.toml.default",
+            "gv3.default.toml",
+            "gv3.keys.default.toml",
+            "README.md",
             "LICENSE"
           ) -DestinationPath $zipName
 

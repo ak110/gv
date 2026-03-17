@@ -1,6 +1,6 @@
 target/
 node_modules/
 *.toml
-*.toml.default
+*.default.toml
 *.rs
 *.md

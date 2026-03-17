@@ -1,10 +1,14 @@
 # ぐらびゅ3
 
-Windows用画像ビューアー。
+Windows用の軽量画像ビューアーです。先読みエンジンにより、大量の画像をサクサク閲覧できます。
 
 ## 動作環境
 
 - Windows 10以降 (x64)
+
+## インストール
+
+[Releases](https://github.com/ak110/gv3/releases) からZIPをダウンロードし、任意のフォルダに展開してください。
 
 ## 使い方
 
@@ -32,12 +36,12 @@ REM ファイル関連付けやD&Dでも起動可能
 | Alt+Enter         | フルスクリーン          |
 | Esc               | メニューバー表示/非表示 |
 
-詳細は [docs/keybindings.md](docs/keybindings.md) を参照してください。
+全キーバインドの一覧は [docs/keybindings.md](docs/keybindings.md) を参照してください。
 
 ### 設定ファイル
 
 `gv3.toml` と `gv3.keys.toml` をexeと同じディレクトリに配置することで設定をカスタマイズできます。
-テンプレートは `gv3.toml.default` / `gv3.keys.toml.default` を参照してください。
+同梱の `gv3.default.toml` / `gv3.keys.default.toml` をコピーしてリネームしてお使いください。
 
 ### シェル統合
 
@@ -70,14 +74,6 @@ spi/
   ifXXX.sph    ← 画像プラグイン
   axXXX.spi    ← アーカイブプラグイン
 ```
-
-## ドキュメント
-
-- [コンセプト](docs/concept.md)
-- [機能仕様](docs/features.md)
-- [アーキテクチャ](docs/architecture.md)
-- [キーバインド](docs/keybindings.md)
-- [開発ガイド](docs/development.md)
 
 ## ライセンス
 

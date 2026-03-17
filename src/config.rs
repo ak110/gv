@@ -313,8 +313,8 @@ auto_scale = "original"
 
     #[test]
     fn toml_default_matches_rust_default() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("gv3.toml.default");
-        let config = Config::load_from(&path).expect("gv3.toml.default の読み込みに失敗");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("gv3.default.toml");
+        let config = Config::load_from(&path).expect("gv3.default.toml の読み込みに失敗");
         let default = Config::default();
 
         // display

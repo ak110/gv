@@ -6,8 +6,8 @@
 gv3/
 ├── Cargo.toml
 ├── build.rs                    # リソースコンパイル（アイコン等）
-├── gv3.toml.default            # デフォルト設定ファイル
-├── gv3.keys.toml.default       # デフォルトキーバインド
+├── gv3.default.toml             # デフォルト設定ファイル
+├── gv3.keys.default.toml       # デフォルトキーバインド
 ├── spi/                        # Susieプラグイン配置ディレクトリ
 ├── src/
 │   ├── main.rs                 # エントリーポイント、メッセージループ
