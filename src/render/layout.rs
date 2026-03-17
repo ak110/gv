@@ -35,9 +35,9 @@ impl Layout {
     #[allow(dead_code)]
     pub fn new() -> Self {
         Self {
-            mode: DisplayMode::AutoShrink,
+            mode: DisplayMode::AutoFit,
             margin_enabled: false,
-            margin_amount: 20.0,
+            margin_amount: 64.0,
         }
     }
 
@@ -156,7 +156,11 @@ mod tests {
 
     #[test]
     fn auto_shrink_scales_down_large_image() {
-        let layout = Layout::new();
+        let layout = Layout {
+            mode: DisplayMode::AutoShrink,
+            margin_enabled: false,
+            margin_amount: 64.0,
+        };
         let rect = layout.calculate(2000, 1000, 800.0, 600.0);
         assert!(rect.width <= 800.0);
         assert!(rect.height <= 600.0);
@@ -166,7 +170,11 @@ mod tests {
 
     #[test]
     fn auto_shrink_does_not_enlarge_small_image() {
-        let layout = Layout::new();
+        let layout = Layout {
+            mode: DisplayMode::AutoShrink,
+            margin_enabled: false,
+            margin_amount: 64.0,
+        };
         let rect = layout.calculate(100, 100, 800.0, 600.0);
         assert!((rect.width - 100.0).abs() < 0.01);
         assert!((rect.height - 100.0).abs() < 0.01);
@@ -224,15 +232,15 @@ mod tests {
         let layout = Layout {
             mode: DisplayMode::AutoFit,
             margin_enabled: true,
-            margin_amount: 20.0,
+            margin_amount: 64.0,
         };
-        // 800-40=760, 600-40=560 の有効領域
-        let rect = layout.calculate(760, 560, 800.0, 600.0);
-        assert!(rect.width <= 760.0 + 0.01);
-        assert!(rect.height <= 560.0 + 0.01);
+        // 800-128=672, 600-128=472 の有効領域
+        let rect = layout.calculate(672, 472, 800.0, 600.0);
+        assert!(rect.width <= 672.0 + 0.01);
+        assert!(rect.height <= 472.0 + 0.01);
         // 中央配置はウィンドウ全体基準
-        assert!((rect.x - 20.0).abs() < 0.01);
-        assert!((rect.y - 20.0).abs() < 0.01);
+        assert!((rect.x - 64.0).abs() < 0.01);
+        assert!((rect.y - 64.0).abs() < 0.01);
     }
 
     #[test]

@@ -25,6 +25,26 @@ REM フォーマット
 cargo fmt
 ```
 
+## Git フックのセットアップ
+
+`git push` 時に自動で lint・テストを実行する pre-push フックを用意している。
+
+```powershell
+# 初回セットアップ（リポジトリごとに1回）
+powershell -ExecutionPolicy Bypass -File scripts/setup-hooks.ps1
+
+# 手動で全チェックを実行する場合
+powershell -ExecutionPolicy Bypass -File scripts/lint-all.ps1
+```
+
+`lint-all.ps1` は `cargo fmt --check`、`cargo clippy -- -D warnings`、`cargo test` を順に実行する。
+pre-push フック自体は Git for Windows の bash で実行されるため `.sh` も同梱している。
+
+```powershell
+# フックを無効化する場合
+git config --unset core.hooksPath
+```
+
 ## 依存パッケージの更新
 
 ```cmd

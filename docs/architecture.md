@@ -227,9 +227,9 @@ struct SusieManager {
 # gv3.toml
 
 [display]
-auto_scale = "shrink"          # shrink | shrink_and_enlarge | enlarge | original
+auto_scale = "fit"             # shrink | fit | enlarge | original
 fixed_scale = 1.0
-margin = 20.0
+margin = 64.0
 alpha_background = "checker"   # white | black | checker
 
 [prefetch]
@@ -240,8 +240,8 @@ cache_base_height = 1536
 default_sort = "name"          # name | name_nocase | size | date | natural
 
 [window]
-remember_position = true
-remember_size = true
+remember_position = false
+remember_size = false
 always_on_top = false
 
 [susie]

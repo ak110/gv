@@ -45,7 +45,7 @@ pub struct ListConfig {
     pub default_sort: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct WindowConfig {
     pub remember_position: bool,
@@ -68,9 +68,9 @@ pub struct SusieConfig {
 impl Default for DisplayConfig {
     fn default() -> Self {
         Self {
-            auto_scale: "shrink".to_string(),
+            auto_scale: "fit".to_string(),
             fixed_scale: 1.0,
-            margin: 20.0,
+            margin: 64.0,
             alpha_background: "checker".to_string(),
         }
     }
@@ -89,16 +89,6 @@ impl Default for ListConfig {
     fn default() -> Self {
         Self {
             default_sort: "name".to_string(),
-        }
-    }
-}
-
-impl Default for WindowConfig {
-    fn default() -> Self {
-        Self {
-            remember_position: true,
-            remember_size: true,
-            always_on_top: false,
         }
     }
 }
@@ -193,15 +183,15 @@ mod tests {
     #[test]
     fn default_config_values() {
         let config = Config::default();
-        assert_eq!(config.display.auto_scale, "shrink");
+        assert_eq!(config.display.auto_scale, "fit");
         assert_eq!(config.display.fixed_scale, 1.0);
-        assert_eq!(config.display.margin, 20.0);
+        assert_eq!(config.display.margin, 64.0);
         assert_eq!(config.display.alpha_background, "checker");
         assert_eq!(config.prefetch.cache_base_width, 1024);
         assert_eq!(config.prefetch.cache_base_height, 1536);
         assert_eq!(config.list.default_sort, "name");
-        assert!(config.window.remember_position);
-        assert!(config.window.remember_size);
+        assert!(!config.window.remember_position);
+        assert!(!config.window.remember_size);
         assert!(!config.window.always_on_top);
         assert_eq!(config.susie.plugin_dir, "spi");
     }
@@ -254,7 +244,7 @@ auto_scale = "original"
         let config: Config = toml::from_str(toml_str).unwrap();
         assert_eq!(config.display.auto_scale, "original");
         // 未指定フィールドはデフォルト
-        assert_eq!(config.display.margin, 20.0);
+        assert_eq!(config.display.margin, 64.0);
         assert_eq!(config.list.default_sort, "name");
     }
 
@@ -319,6 +309,48 @@ auto_scale = "original"
             default_sort: "size".into(),
         };
         assert_eq!(l.to_sort_order(), SortOrder::Size);
+    }
+
+    #[test]
+    fn toml_default_matches_rust_default() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("gv3.toml.default");
+        let config = Config::load_from(&path).expect("gv3.toml.default の読み込みに失敗");
+        let default = Config::default();
+
+        // display
+        assert_eq!(config.display.auto_scale, default.display.auto_scale);
+        assert_eq!(config.display.fixed_scale, default.display.fixed_scale);
+        assert_eq!(config.display.margin, default.display.margin);
+        assert_eq!(
+            config.display.alpha_background,
+            default.display.alpha_background
+        );
+
+        // prefetch
+        assert_eq!(
+            config.prefetch.cache_base_width,
+            default.prefetch.cache_base_width
+        );
+        assert_eq!(
+            config.prefetch.cache_base_height,
+            default.prefetch.cache_base_height
+        );
+
+        // list
+        assert_eq!(config.list.default_sort, default.list.default_sort);
+
+        // window
+        assert_eq!(
+            config.window.remember_position,
+            default.window.remember_position
+        );
+        assert_eq!(config.window.remember_size, default.window.remember_size);
+        assert_eq!(config.window.always_on_top, default.window.always_on_top);
+
+        // susie
+        assert_eq!(config.susie.plugin_dir, default.susie.plugin_dir);
+        assert_eq!(config.susie.image_plugins, default.susie.image_plugins);
+        assert_eq!(config.susie.archive_plugins, default.susie.archive_plugins);
     }
 
     #[test]
