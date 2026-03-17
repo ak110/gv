@@ -84,6 +84,8 @@ bookmark_open_editor = "F11"
 
 [list]
 toggle_file_list = "F4"
+# shuffle_all = ""
+# shuffle_groups = ""
 
 [dialog]
 dialog_display = "C"

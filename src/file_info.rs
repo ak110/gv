@@ -27,18 +27,19 @@ impl FileSource {
         match self {
             FileSource::File(path) => path.display().to_string(),
             FileSource::ArchiveEntry { archive, entry, .. } => {
-                format!("{} > {}", archive.display(), entry)
+                format!("{}/{}", archive.display(), entry)
             }
             FileSource::PdfPage {
                 pdf_path,
                 page_index,
             } => {
-                format!("{} > Page {}", pdf_path.display(), page_index + 1)
+                format!("{}/Page {}", pdf_path.display(), page_index + 1)
             }
         }
     }
 
     /// アーカイブパスを返す（アーカイブエントリ/PDFの場合）
+    #[allow(dead_code)]
     pub fn archive_path(&self) -> Option<&Path> {
         match self {
             FileSource::ArchiveEntry { archive, .. } => Some(archive),
@@ -142,7 +143,7 @@ mod tests {
             entry: "folder/image.png".to_string(),
             on_demand: false,
         };
-        assert_eq!(source.display_path(), r"C:\archive.zip > folder/image.png");
+        assert_eq!(source.display_path(), r"C:\archive.zip/folder/image.png");
         assert!(source.is_archive_entry());
         assert_eq!(source.archive_path().unwrap(), Path::new(r"C:\archive.zip"));
     }
@@ -153,7 +154,7 @@ mod tests {
             pdf_path: PathBuf::from(r"C:\docs\test.pdf"),
             page_index: 2,
         };
-        assert_eq!(source.display_path(), r"C:\docs\test.pdf > Page 3");
+        assert_eq!(source.display_path(), r"C:\docs\test.pdf/Page 3");
         assert!(!source.is_archive_entry());
         assert!(source.is_contained());
         assert_eq!(

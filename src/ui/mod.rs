@@ -5,4 +5,5 @@ pub mod fullscreen;
 pub mod info_dialog;
 pub mod key_config;
 pub mod menu;
+pub mod page_dialog;
 pub mod window;

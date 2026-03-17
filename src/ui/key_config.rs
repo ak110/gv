@@ -66,6 +66,8 @@ pub enum Action {
     NavigateToPage,
     SortNavigateBack,
     SortNavigateForward,
+    ShuffleAll,
+    ShuffleGroups,
 
     // --- 表示モード ---
     DisplayAutoShrink,
@@ -484,6 +486,8 @@ fn field_to_action(field: &str) -> Option<Action> {
         "navigate_to_page" => Action::NavigateToPage,
         "sort_navigate_back" => Action::SortNavigateBack,
         "sort_navigate_forward" => Action::SortNavigateForward,
+        "shuffle_all" => Action::ShuffleAll,
+        "shuffle_groups" => Action::ShuffleGroups,
 
         // 表示
         "auto_shrink" => Action::DisplayAutoShrink,

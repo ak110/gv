@@ -310,28 +310,11 @@ impl AppWindow {
     fn update_title(&self) {
         let title = if let Some(source) = self.document.current_source() {
             let display = source.display_path();
-            // 表示名: ファイル名部分を抽出
-            let filename = display
-                .rsplit(['/', '\\', '>'])
-                .next()
-                .map(|s| s.trim())
-                .unwrap_or("???");
             let fl = self.document.file_list();
-            // アーカイブ名をタイトルに付加
-            let archive_suffix = source
-                .archive_path()
-                .and_then(|p| p.file_name())
-                .and_then(|n| n.to_str())
-                .map(|name| format!(" [{name}]"))
-                .unwrap_or_default();
             if let Some(idx) = fl.current_index() {
-                format!(
-                    "{filename} ({}/{}{archive_suffix}) - ぐらびゅ3\0",
-                    idx + 1,
-                    fl.len()
-                )
+                format!("{display} [{}/{}] - ぐらびゅ3\0", idx + 1, fl.len())
             } else {
-                format!("{filename}{archive_suffix} - ぐらびゅ3\0")
+                format!("{display} - ぐらびゅ3\0")
             }
         } else {
             "ぐらびゅ3\0".to_string()
@@ -504,6 +487,10 @@ impl AppWindow {
                     };
                     if let Some(action) = app.key_config.lookup(&chord) {
                         app.execute_action(action);
+                        // 同期再描画でフレームスキップ防止
+                        unsafe {
+                            let _ = UpdateWindow(app.hwnd);
+                        }
                     }
                     return LRESULT(0);
                 }
@@ -1125,6 +1112,16 @@ impl AppWindow {
                 self.process_document_events();
             }
 
+            // --- シャッフル ---
+            Action::ShuffleAll => {
+                self.document.shuffle_all();
+                self.process_document_events();
+            }
+            Action::ShuffleGroups => {
+                self.document.shuffle_groups();
+                self.process_document_events();
+            }
+
             // --- メニューバー ---
             Action::ToggleMenuBar => {
                 self.menu_visible = !self.menu_visible;
@@ -1195,31 +1192,17 @@ impl AppWindow {
     }
 
     /// ページ指定ナビゲーション
-    /// 総ページ数の桁数に応じて、数字キー入力でページ移動する簡易方式
     fn navigate_to_page_dialog(&mut self) {
         let total = self.document.file_list().len();
         if total == 0 {
             return;
         }
         let current = self.document.file_list().current_index().unwrap_or(0) + 1;
-
-        // MessageBoxで現在位置と総数を表示して入力を促す
-        // （本格的な入力ダイアログは設定ダイアログフェーズで実装予定）
-        let prompt = format!(
-            "現在: {current} / {total}\n\nページ番号をタイトルバーに入力してEnterで移動\n（この機能は設定ダイアログフェーズで改善予定）\0"
-        );
-        let title = "ページ指定移動\0";
-        let wide_prompt: Vec<u16> = prompt.encode_utf16().collect();
-        let wide_title: Vec<u16> = title.encode_utf16().collect();
-        unsafe {
-            MessageBoxW(
-                Some(self.hwnd),
-                windows::core::PCWSTR(wide_prompt.as_ptr()),
-                windows::core::PCWSTR(wide_title.as_ptr()),
-                MB_OK | MB_ICONINFORMATION,
-            );
+        if let Some(page) = crate::ui::page_dialog::show_page_dialog(self.hwnd, current, total) {
+            let index = (page.saturating_sub(1)).min(total - 1);
+            self.document.navigate_to(index);
+            self.process_document_events();
         }
-        // TODO: 設定ダイアログフェーズで入力ダイアログに置き換え
     }
 
     /// 画像を指定フォーマットで書き出す

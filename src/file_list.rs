@@ -14,6 +14,26 @@ enum GroupKey {
     Archive(std::path::PathBuf),
 }
 
+/// 軽量PRNG（xorshift64）。シャッフル用途のため暗号強度は不要。
+struct SimpleRng(u64);
+
+impl SimpleRng {
+    fn new() -> Self {
+        let seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(42);
+        Self(seed | 1) // 0シード回避
+    }
+
+    fn next_usize(&mut self, bound: usize) -> usize {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        (self.0 as usize) % bound
+    }
+}
+
 /// ソート順
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
@@ -257,6 +277,71 @@ impl FileList {
     /// 現在のソート順で再ソートする
     pub fn sort_current(&mut self) {
         self.sort(self.sort_order);
+    }
+
+    /// ファイルリスト全体をシャッフルする（Fisher-Yates）
+    /// 現在位置を維持する。
+    pub fn shuffle_all(&mut self) {
+        let len = self.files.len();
+        if len <= 1 {
+            return;
+        }
+        let current_info = self.current().map(|f| (f.path.clone(), f.source.clone()));
+
+        let mut rng = SimpleRng::new();
+        for i in (1..len).rev() {
+            let j = rng.next_usize(i + 1);
+            self.files.swap(i, j);
+        }
+
+        if let Some((path, source)) = current_info {
+            self.restore_current_position(&path, &source);
+        }
+    }
+
+    /// グループ（フォルダ/アーカイブ）の並び順をシャッフルする
+    /// グループ内の順序は保持し、グループ間の順序のみ変更する。
+    pub fn shuffle_groups(&mut self) {
+        if self.files.is_empty() {
+            return;
+        }
+        let current_info = self.current().map(|f| (f.path.clone(), f.source.clone()));
+
+        // グループを出現順に分割
+        let mut groups: Vec<Vec<FileInfo>> = Vec::new();
+        let mut current_key = Self::group_key(&self.files[0]);
+        let mut current_group = Vec::new();
+
+        for file in self.files.drain(..) {
+            let key = Self::group_key(&file);
+            if key == current_key {
+                current_group.push(file);
+            } else {
+                groups.push(current_group);
+                current_group = vec![file];
+                current_key = key;
+            }
+        }
+        groups.push(current_group);
+
+        // グループ単位でFisher-Yatesシャッフル
+        let glen = groups.len();
+        if glen > 1 {
+            let mut rng = SimpleRng::new();
+            for i in (1..glen).rev() {
+                let j = rng.next_usize(i + 1);
+                groups.swap(i, j);
+            }
+        }
+
+        // flattenして復元
+        for group in groups {
+            self.files.extend(group);
+        }
+
+        if let Some((path, source)) = current_info {
+            self.restore_current_position(&path, &source);
+        }
     }
 
     // --- マーク操作 ---
@@ -902,5 +987,82 @@ mod tests {
         // グループA（出現順0）が先、グループ内はソート済み
         // グループB（出現順1）が後
         assert_eq!(names, vec!["a_first.png", "z_last.png", "b_middle.png"]);
+    }
+
+    #[test]
+    fn shuffle_all_preserves_elements_and_position() {
+        let dir = std::env::temp_dir().join("gv3_test_fl_shuffle_all");
+        create_test_files(&dir, &["a.png", "b.png", "c.png", "d.png", "e.png"]);
+
+        let mut fl = FileList::new(test_registry());
+        fl.populate_from_folder(&dir).unwrap();
+        fl.set_current_by_path(&dir.join("c.png"));
+
+        fl.shuffle_all();
+
+        // 全要素が保持されている
+        let mut names: Vec<String> = fl.files.iter().map(|f| f.file_name.clone()).collect();
+        names.sort();
+        assert_eq!(names, vec!["a.png", "b.png", "c.png", "d.png", "e.png"]);
+
+        // 現在位置がc.pngを指している
+        assert_eq!(fl.current().unwrap().file_name, "c.png");
+
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn shuffle_groups_preserves_intra_group_order() {
+        let registry = test_registry();
+        let mut fl = FileList::new(registry);
+
+        // グループA: a1, a2, a3（この順）
+        fl.push(make_archive_file_info("archive_a.zip", "a1.png", "a1.png"));
+        fl.push(make_archive_file_info("archive_a.zip", "a2.png", "a2.png"));
+        fl.push(make_archive_file_info("archive_a.zip", "a3.png", "a3.png"));
+        // グループB: b1, b2
+        fl.push(make_archive_file_info("archive_b.zip", "b1.png", "b1.png"));
+        fl.push(make_archive_file_info("archive_b.zip", "b2.png", "b2.png"));
+
+        fl.navigate_to(0);
+        fl.shuffle_groups();
+
+        // 全要素が保持されている
+        assert_eq!(fl.len(), 5);
+
+        // グループ内の順序が保持されている
+        // グループAの相対順序を確認
+        let positions: Vec<usize> = fl
+            .files
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| f.file_name.starts_with('a'))
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(positions.len(), 3);
+        // 連続している（隣接）かつ順序が保持
+        assert_eq!(positions[1] - positions[0], 1);
+        assert_eq!(positions[2] - positions[1], 1);
+        let a_names: Vec<&str> = positions
+            .iter()
+            .map(|&i| fl.files[i].file_name.as_str())
+            .collect();
+        assert_eq!(a_names, vec!["a1.png", "a2.png", "a3.png"]);
+
+        // グループBの相対順序も保持
+        let b_positions: Vec<usize> = fl
+            .files
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| f.file_name.starts_with('b'))
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(b_positions.len(), 2);
+        assert_eq!(b_positions[1] - b_positions[0], 1);
+        let b_names: Vec<&str> = b_positions
+            .iter()
+            .map(|&i| fl.files[i].file_name.as_str())
+            .collect();
+        assert_eq!(b_names, vec!["b1.png", "b2.png"]);
     }
 }

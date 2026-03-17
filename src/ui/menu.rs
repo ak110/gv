@@ -81,6 +81,9 @@ pub fn build_menu_bar() -> HMENU {
             Some((Action::SortNavigateBack, "ソート順で前へ\tShift+Tab")),
             Some((Action::SortNavigateForward, "ソート順で次へ\tTab")),
             None,
+            Some((Action::ShuffleAll, "全体をシャッフル")),
+            Some((Action::ShuffleGroups, "グループ順をシャッフル")),
+            None,
             Some((Action::ToggleFileList, "ファイルリスト\tF4")),
             None,
             Some((Action::BookmarkSave, "ブックマーク保存\tF9")),
@@ -213,6 +216,8 @@ const ALL_ACTIONS: &[Action] = &[
     Action::NavigateToPage,
     Action::SortNavigateBack,
     Action::SortNavigateForward,
+    Action::ShuffleAll,
+    Action::ShuffleGroups,
     // 表示モード
     Action::DisplayAutoShrink,
     Action::DisplayAutoFit,

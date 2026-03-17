@@ -637,6 +637,18 @@ impl Document {
         }
     }
 
+    /// ファイルリスト全体をシャッフル
+    pub fn shuffle_all(&mut self) {
+        self.file_list.shuffle_all();
+        self.after_list_change();
+    }
+
+    /// グループ順をシャッフル（グループ内順序は保持）
+    pub fn shuffle_groups(&mut self) {
+        self.file_list.shuffle_groups();
+        self.after_list_change();
+    }
+
     /// ソート順で次の画像へ移動
     pub fn sort_navigate_forward(&mut self) {
         let order = self.file_list.sort_order();
