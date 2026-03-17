@@ -73,13 +73,8 @@ gh workflow run release.yml --field "bump=バグフィックス"
 gh workflow run release.yml --field "bump=マイナーバージョンアップ"
 gh workflow run release.yml --field "bump=メジャーバージョンアップ"
 
-REM 2. ワークフロー完了を待つ（数秒待ってから実行）
-for /f %i in ('gh run list --workflow=release.yml -L1 --json databaseId -q ".[0].databaseId"') do gh run watch %i
-
-REM 3. バージョンバンプコミットを取り込む
-git pull
+REM 2. ワークフロー完了を待ち、バージョンバンプコミットを取り込む
+for /f %i in ('gh run list --workflow=release.yml -L1 --json databaseId -q ".[0].databaseId"') do (gh run watch %i & git pull)
 ```
-
-> **注意**: 手順3を忘れると、ローカルの git グラフが枝分かれします。
 
 結果の確認: <https://github.com/ak110/gv3/actions>
