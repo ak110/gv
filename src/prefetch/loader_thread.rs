@@ -1,10 +1,12 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, RwLock};
 use std::thread::JoinHandle;
 
 use crossbeam_channel::{Receiver, Sender};
 
+use crate::archive::ArchiveManager;
 use crate::image::{DecodedImage, DecoderChain};
 
 /// ワーカースレッドへのリクエスト
@@ -15,6 +17,8 @@ enum LoadRequest {
         generation: u64,
         /// PDFページの場合: (pdf_path, page_index)
         pdf_page: Option<(PathBuf, u32)>,
+        /// オンデマンドアーカイブエントリの場合: (archive_path, entry_name)
+        archive_entry: Option<(PathBuf, String)>,
     },
     Shutdown,
 }
@@ -49,7 +53,12 @@ impl PrefetchEngine {
     /// ワーカースレッドを起動する
     /// `notify`はレスポンス送信後に呼ばれるコールバック（UIスレッドへの通知用）
     /// `decoder`は画像デコーダチェーン（Susieプラグイン含む）
-    pub fn new(notify: Box<dyn Fn() + Send>, decoder: Arc<DecoderChain>) -> Self {
+    pub fn new(
+        notify: Box<dyn Fn() + Send>,
+        decoder: Arc<DecoderChain>,
+        archive_manager: Arc<ArchiveManager>,
+        zip_buffers: Arc<RwLock<HashMap<PathBuf, Vec<u8>>>>,
+    ) -> Self {
         let (request_tx, request_rx) = crossbeam_channel::unbounded();
         let (response_tx, response_rx) = crossbeam_channel::unbounded();
         let current_generation = Arc::new(AtomicU64::new(0));
@@ -58,7 +67,15 @@ impl PrefetchEngine {
         let worker_handle = std::thread::Builder::new()
             .name("prefetch-worker".to_string())
             .spawn(move || {
-                worker_loop(request_rx, response_tx, gen_clone, notify, decoder);
+                worker_loop(
+                    request_rx,
+                    response_tx,
+                    gen_clone,
+                    notify,
+                    decoder,
+                    archive_manager,
+                    zip_buffers,
+                );
             })
             .expect("先読みワーカースレッドの起動に失敗");
 
@@ -72,12 +89,19 @@ impl PrefetchEngine {
     }
 
     /// 現在のgenerationを付与してロードリクエストを送信
-    pub fn request_load(&self, index: usize, path: PathBuf, pdf_page: Option<(PathBuf, u32)>) {
+    pub fn request_load(
+        &self,
+        index: usize,
+        path: PathBuf,
+        pdf_page: Option<(PathBuf, u32)>,
+        archive_entry: Option<(PathBuf, String)>,
+    ) {
         let _ = self.request_tx.send(LoadRequest::Load {
             index,
             path,
             generation: self.generation,
             pdf_page,
+            archive_entry,
         });
     }
 
@@ -144,6 +168,8 @@ fn worker_loop(
     current_generation: Arc<AtomicU64>,
     notify: Box<dyn Fn() + Send>,
     decoder: Arc<DecoderChain>,
+    archive_manager: Arc<ArchiveManager>,
+    zip_buffers: Arc<RwLock<HashMap<PathBuf, Vec<u8>>>>,
 ) {
     // PDFレンダリングにWinRT APIが必要なのでCOM初期化
     let _com = ComGuard::init();
@@ -155,6 +181,7 @@ fn worker_loop(
                 path,
                 generation,
                 pdf_page,
+                archive_entry,
             } => {
                 // デコード前に世代チェック → 古いリクエストはスキップ
                 if generation < current_generation.load(Ordering::Relaxed) {
@@ -172,6 +199,45 @@ fn worker_loop(
                         Err(e) => LoadResponse::Failed {
                             index,
                             error: format!("{} page {}: {}", pdf_path.display(), page_index + 1, e),
+                            generation,
+                        },
+                    }
+                } else if let Some((archive_path, entry_name)) = archive_entry {
+                    // オンデマンドアーカイブエントリ: バッファ→decode
+                    let read_result = {
+                        let buffers = zip_buffers.read().unwrap();
+                        if let Some(buffer) = buffers.get(&archive_path) {
+                            crate::archive::zip::ZipHandler::read_entry_from_buffer(
+                                buffer,
+                                &entry_name,
+                            )
+                        } else {
+                            drop(buffers);
+                            archive_manager.read_entry(&archive_path, &entry_name)
+                        }
+                    };
+                    let filename_hint = crate::archive::extract_filename(&entry_name).to_string();
+                    match read_result {
+                        Ok(data) => match decoder.decode(&data, &filename_hint) {
+                            Ok(image) => LoadResponse::Loaded {
+                                index,
+                                image,
+                                generation,
+                            },
+                            Err(e) => LoadResponse::Failed {
+                                index,
+                                error: format!(
+                                    "{} > {}: {}",
+                                    archive_path.display(),
+                                    entry_name,
+                                    e
+                                ),
+                                generation,
+                            },
+                        },
+                        Err(e) => LoadResponse::Failed {
+                            index,
+                            error: format!("{} > {}: {}", archive_path.display(), entry_name, e),
                             generation,
                         },
                     }
@@ -218,6 +284,16 @@ mod tests {
         Arc::new(DecoderChain::new(vec![Box::new(StandardDecoder::new())]))
     }
 
+    fn test_archive_manager() -> Arc<ArchiveManager> {
+        Arc::new(ArchiveManager::new(Arc::new(
+            crate::extension_registry::ExtensionRegistry::new(),
+        )))
+    }
+
+    fn test_zip_buffers() -> Arc<RwLock<HashMap<PathBuf, Vec<u8>>>> {
+        Arc::new(RwLock::new(HashMap::new()))
+    }
+
     /// テスト用: 1x1 白ピクセルのPNGバイナリを生成
     fn create_1x1_white_png() -> Vec<u8> {
         use image::{ImageBuffer, Rgba};
@@ -238,8 +314,13 @@ mod tests {
             f.write_all(&create_1x1_white_png()).unwrap();
         }
 
-        let engine = PrefetchEngine::new(Box::new(|| {}), test_decoder());
-        engine.request_load(0, path, None);
+        let engine = PrefetchEngine::new(
+            Box::new(|| {}),
+            test_decoder(),
+            test_archive_manager(),
+            test_zip_buffers(),
+        );
+        engine.request_load(0, path, None, None);
 
         // ワーカーの処理完了を待つ
         let mut loaded = false;
@@ -278,14 +359,19 @@ mod tests {
             f.write_all(&create_1x1_white_png()).unwrap();
         }
 
-        let mut engine = PrefetchEngine::new(Box::new(|| {}), test_decoder());
+        let mut engine = PrefetchEngine::new(
+            Box::new(|| {}),
+            test_decoder(),
+            test_archive_manager(),
+            test_zip_buffers(),
+        );
 
         // generation=0でリクエストを送信する前に世代を進める
-        engine.request_load(0, path.clone(), None);
+        engine.request_load(0, path.clone(), None, None);
         engine.advance_generation(); // → generation=1
 
         // generation=1で新しいリクエスト
-        engine.request_load(1, path, None);
+        engine.request_load(1, path, None, None);
 
         // 少し待ってレスポンスを収集
         std::thread::sleep(std::time::Duration::from_millis(200));
@@ -304,8 +390,13 @@ mod tests {
 
     #[test]
     fn failed_response_on_nonexistent_file() {
-        let engine = PrefetchEngine::new(Box::new(|| {}), test_decoder());
-        engine.request_load(0, PathBuf::from("nonexistent_file_xyz.png"), None);
+        let engine = PrefetchEngine::new(
+            Box::new(|| {}),
+            test_decoder(),
+            test_archive_manager(),
+            test_zip_buffers(),
+        );
+        engine.request_load(0, PathBuf::from("nonexistent_file_xyz.png"), None, None);
 
         let mut failed = false;
         for _ in 0..100 {
@@ -324,7 +415,12 @@ mod tests {
 
     #[test]
     fn drop_shuts_down_cleanly() {
-        let engine = PrefetchEngine::new(Box::new(|| {}), test_decoder());
+        let engine = PrefetchEngine::new(
+            Box::new(|| {}),
+            test_decoder(),
+            test_archive_manager(),
+            test_zip_buffers(),
+        );
         drop(engine);
         // パニックせずに終了すればOK
     }

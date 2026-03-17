@@ -19,9 +19,100 @@ impl ZipHandler {
     }
 }
 
+impl ZipHandler {
+    /// インメモリバッファからエントリ一覧を取得する
+    pub fn list_images_from_buffer(
+        buffer: &[u8],
+        registry: &ExtensionRegistry,
+    ) -> Result<Vec<super::ArchiveImageEntry>> {
+        let cursor = std::io::Cursor::new(buffer);
+        let archive = zip::ZipArchive::new(cursor).context("ZIPバッファの読み取りに失敗")?;
+        Self::list_images_from_archive(archive, registry)
+    }
+
+    /// インメモリバッファからエントリを読み出す（Stored最適化付き）
+    pub fn read_entry_from_buffer(buffer: &[u8], entry_name: &str) -> Result<Vec<u8>> {
+        let cursor = std::io::Cursor::new(buffer);
+        let mut archive = zip::ZipArchive::new(cursor).context("ZIPバッファの読み取りに失敗")?;
+        let mut entry = archive
+            .by_name(entry_name)
+            .with_context(|| format!("エントリが見つかりません: {entry_name}"))?;
+
+        // Storedエントリ: バッファから直接スライス（zip Readerのオーバーヘッド回避）
+        if entry.compression() == zip::CompressionMethod::Stored {
+            let start = entry.data_start() as usize;
+            let size = entry.size() as usize;
+            drop(entry);
+            return Ok(buffer[start..start + size].to_vec());
+        }
+
+        // 圧縮エントリ: 通常の展開
+        let mut data = Vec::with_capacity(entry.size() as usize);
+        entry.read_to_end(&mut data)?;
+        Ok(data)
+    }
+
+    /// ZipArchiveからエントリ一覧を取得する共通実装
+    fn list_images_from_archive<R: std::io::Read + std::io::Seek>(
+        mut archive: zip::ZipArchive<R>,
+        registry: &ExtensionRegistry,
+    ) -> Result<Vec<super::ArchiveImageEntry>> {
+        let mut results = Vec::new();
+        for i in 0..archive.len() {
+            let entry = match archive.by_index_raw(i) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            if entry.is_dir() {
+                continue;
+            }
+            let entry_name = entry.name().to_string();
+            let file_size = entry.size();
+            let filename = extract_filename(&entry_name).to_string();
+            if filename.is_empty() || filename.starts_with('.') {
+                continue;
+            }
+            if !registry.is_image_extension(&filename) {
+                continue;
+            }
+            results.push(super::ArchiveImageEntry {
+                entry_name,
+                file_name: filename,
+                file_size,
+            });
+        }
+        Ok(results)
+    }
+}
+
 impl ArchiveHandler for ZipHandler {
     fn supported_extensions(&self) -> Vec<String> {
         vec![".zip".to_string(), ".cbz".to_string()]
+    }
+
+    fn supports_on_demand(&self) -> bool {
+        true
+    }
+
+    fn list_images(&self, archive_path: &Path) -> Result<Vec<super::ArchiveImageEntry>> {
+        let file = File::open(archive_path)
+            .with_context(|| format!("アーカイブを開けません: {}", archive_path.display()))?;
+        let archive = zip::ZipArchive::new(file)
+            .with_context(|| format!("ZIP読み取り失敗: {}", archive_path.display()))?;
+        Self::list_images_from_archive(archive, &self.registry)
+    }
+
+    fn read_entry(&self, archive_path: &Path, entry_name: &str) -> Result<Vec<u8>> {
+        let file = File::open(archive_path)
+            .with_context(|| format!("アーカイブを開けません: {}", archive_path.display()))?;
+        let mut archive = zip::ZipArchive::new(file)
+            .with_context(|| format!("ZIP読み取り失敗: {}", archive_path.display()))?;
+        let mut entry = archive
+            .by_name(entry_name)
+            .with_context(|| format!("エントリが見つかりません: {entry_name}"))?;
+        let mut data = Vec::with_capacity(entry.size() as usize);
+        entry.read_to_end(&mut data)?;
+        Ok(data)
     }
 
     fn extract_images(
@@ -163,5 +254,104 @@ mod tests {
         assert_eq!(entries[1].1, "b/image.jpg");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ZIPをメモリ上で作成しバイト列として返す
+    fn create_test_zip_buffer(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut buf = Vec::new();
+        {
+            let cursor = std::io::Cursor::new(&mut buf);
+            let mut writer = zip::ZipWriter::new(cursor);
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+            for (name, data) in entries {
+                writer.start_file(*name, options).unwrap();
+                writer.write_all(data).unwrap();
+            }
+            writer.finish().unwrap();
+        }
+        buf
+    }
+
+    #[test]
+    fn list_images_returns_image_entries_only() {
+        let dir = std::env::temp_dir().join("gv3_test_zip_list");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let zip_path = dir.join("test.zip");
+        create_test_zip(
+            &zip_path,
+            &[
+                ("image1.jpg", b"fake-jpg"),
+                ("subfolder/image2.png", b"fake-png"),
+                ("readme.txt", b"text"),
+            ],
+        );
+
+        let reg = Arc::new(ExtensionRegistry::new());
+        let handler = ZipHandler::new(reg);
+        let entries = handler.list_images(&zip_path).unwrap();
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].entry_name, "image1.jpg");
+        assert_eq!(entries[0].file_name, "image1.jpg");
+        assert_eq!(entries[1].entry_name, "subfolder/image2.png");
+        assert_eq!(entries[1].file_name, "image2.png");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn read_entry_returns_data() {
+        let dir = std::env::temp_dir().join("gv3_test_zip_read");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let zip_path = dir.join("test.zip");
+        create_test_zip(&zip_path, &[("image.jpg", b"fake-jpg-data-123")]);
+
+        let reg = Arc::new(ExtensionRegistry::new());
+        let handler = ZipHandler::new(reg);
+        let data = handler.read_entry(&zip_path, "image.jpg").unwrap();
+        assert_eq!(data, b"fake-jpg-data-123");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn list_images_from_buffer_works() {
+        let reg = Arc::new(ExtensionRegistry::new());
+        let buffer = create_test_zip_buffer(&[
+            ("a.jpg", b"jpg-data"),
+            ("b.png", b"png-data"),
+            ("c.txt", b"text"),
+        ]);
+        let entries = ZipHandler::list_images_from_buffer(&buffer, &reg).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].file_name, "a.jpg");
+        assert_eq!(entries[1].file_name, "b.png");
+    }
+
+    #[test]
+    fn read_entry_from_buffer_stored() {
+        let buffer = create_test_zip_buffer(&[("img.jpg", b"stored-data")]);
+        let data = ZipHandler::read_entry_from_buffer(&buffer, "img.jpg").unwrap();
+        assert_eq!(data, b"stored-data");
+    }
+
+    #[test]
+    fn read_entry_from_buffer_compressed() {
+        // Deflate圧縮のZIPを作成
+        let mut buf = Vec::new();
+        {
+            let cursor = std::io::Cursor::new(&mut buf);
+            let mut writer = zip::ZipWriter::new(cursor);
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+            writer.start_file("img.jpg", options).unwrap();
+            writer.write_all(b"deflated-data-content").unwrap();
+            writer.finish().unwrap();
+        }
+        let data = ZipHandler::read_entry_from_buffer(&buf, "img.jpg").unwrap();
+        assert_eq!(data, b"deflated-data-content");
     }
 }

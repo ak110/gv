@@ -27,7 +27,7 @@ impl ImageDecoder for StandardDecoder {
 
     fn decode(&self, data: &[u8], _filename_hint: &str) -> anyhow::Result<DecodedImage> {
         let img = image::load_from_memory(data).context("画像のデコードに失敗")?;
-        let rgba = img.to_rgba8();
+        let rgba = img.into_rgba8(); // moveセマンティクス（PNGのRGBA画像でコピー削減）
         let (width, height) = rgba.dimensions();
 
         Ok(DecodedImage {

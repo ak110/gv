@@ -83,6 +83,54 @@ impl FileList {
         Ok(())
     }
 
+    /// FileSourceの同一性判定（コンテナ内エントリの位置復元用）
+    pub fn source_matches(a: &FileSource, b: &FileSource) -> bool {
+        match (a, b) {
+            (
+                FileSource::ArchiveEntry {
+                    archive: a1,
+                    entry: e1,
+                    ..
+                },
+                FileSource::ArchiveEntry {
+                    archive: a2,
+                    entry: e2,
+                    ..
+                },
+            ) => a1 == a2 && e1 == e2,
+            (
+                FileSource::PdfPage {
+                    pdf_path: p1,
+                    page_index: i1,
+                },
+                FileSource::PdfPage {
+                    pdf_path: p2,
+                    page_index: i2,
+                },
+            ) => p1 == p2 && i1 == i2,
+            _ => false,
+        }
+    }
+
+    /// ソート/削除後の位置復元（コンテナ内エントリはsourceで、通常ファイルはpathで復元）
+    fn restore_current_position(&mut self, path: &Path, source: &FileSource) {
+        if source.is_contained() {
+            // コンテナ内エントリはsourceで位置復元
+            if let Some(idx) = self
+                .files
+                .iter()
+                .position(|f| Self::source_matches(&f.source, source))
+            {
+                self.current_index = Some(idx);
+                return;
+            }
+        }
+        // 通常ファイル or sourceマッチ失敗 → pathで復元
+        if !self.set_current_by_path(path) {
+            self.current_index = if self.files.is_empty() { None } else { Some(0) };
+        }
+    }
+
     /// パスで現在位置を設定する
     pub fn set_current_by_path(&mut self, path: &Path) -> bool {
         if let Some(idx) = self.files.iter().position(|f| f.path == path) {
@@ -151,11 +199,11 @@ impl FileList {
         self.navigate_to(self.files.len() - 1)
     }
 
-    /// ソート実行（現在位置をパスで維持）
+    /// ソート実行（現在位置を維持）
     /// グループ（フォルダ/アーカイブ）の出現順を保持しつつ、グループ内でソートする
     pub fn sort(&mut self, order: SortOrder) {
-        // 現在のパスを記憶
-        let current_path = self.current().map(|f| f.path.clone());
+        // 現在のパスとsourceを記憶（位置復元用）
+        let current_info = self.current().map(|f| (f.path.clone(), f.source.clone()));
 
         // グループ出現順を記録
         let mut group_order: HashMap<GroupKey, usize> = HashMap::new();
@@ -175,9 +223,9 @@ impl FileList {
 
         self.sort_order = order;
 
-        // パスで位置を復元
-        if let Some(path) = current_path {
-            self.set_current_by_path(&path);
+        // 位置を復元（コンテナ内エントリはsourceベース）
+        if let Some((path, source)) = current_info {
+            self.restore_current_position(&path, &source);
         }
     }
 
@@ -284,8 +332,8 @@ impl FileList {
     /// マーク済みファイルをリストから削除する
     /// 削除されたファイル一覧を返す
     pub fn remove_marked(&mut self) -> Vec<FileInfo> {
-        // 現在のパスを記憶（位置復元用）
-        let current_path = self.current().map(|f| f.path.clone());
+        // 現在のパスとsourceを記憶（位置復元用）
+        let current_info = self.current().map(|f| (f.path.clone(), f.source.clone()));
 
         let mut removed = Vec::new();
         let mut kept = Vec::new();
@@ -298,17 +346,11 @@ impl FileList {
         }
         self.files = kept;
 
-        // current_indexの復元
-        if self.files.is_empty() {
-            self.current_index = None;
-        } else if let Some(path) = current_path {
-            // 元の位置のファイルがまだ残っていればそれを選択
-            if !self.set_current_by_path(&path) {
-                // 削除されていたら先頭にフォールバック
-                self.current_index = Some(0);
-            }
+        // current_indexの復元（コンテナ内エントリはsourceベース）
+        if let Some((path, source)) = current_info {
+            self.restore_current_position(&path, &source);
         } else {
-            self.current_index = Some(0);
+            self.current_index = if self.files.is_empty() { None } else { Some(0) };
         }
 
         removed
@@ -826,6 +868,7 @@ mod tests {
             source: FileSource::ArchiveEntry {
                 archive: std::path::PathBuf::from(archive),
                 entry: entry.to_string(),
+                on_demand: false,
             },
         }
     }

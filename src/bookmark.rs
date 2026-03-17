@@ -53,7 +53,8 @@ pub fn save_bookmark(
             FileSource::File(path) => {
                 content.push_str(&format!("file\t{}\n", path.display()));
             }
-            FileSource::ArchiveEntry { archive, entry } => {
+            FileSource::ArchiveEntry { archive, entry, .. } => {
+                // on_demandフラグは保存しない（復元時にopen_containersで再判定）
                 content.push_str(&format!("archive\t{}\t{}\n", archive.display(), entry));
             }
             FileSource::PdfPage {
@@ -116,6 +117,7 @@ fn parse_bookmark(content: &str) -> Result<BookmarkData> {
                 entries.push(FileSource::ArchiveEntry {
                     archive: PathBuf::from(archive_path),
                     entry: entry.to_string(),
+                    on_demand: false, // 復元時にopen_containersで再判定
                 });
             }
             ["pdf", pdf_path, page_index_str] => {
@@ -172,7 +174,7 @@ archive	C:\archive.zip	folder/image.png
         assert_eq!(data.entries.len(), 2);
         assert!(matches!(
             &data.entries[1],
-            FileSource::ArchiveEntry { archive, entry }
+            FileSource::ArchiveEntry { archive, entry, .. }
             if archive == Path::new(r"C:\archive.zip") && entry == "folder/image.png"
         ));
     }

@@ -1,5 +1,6 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use anyhow::{Context as _, Result};
 use crossbeam_channel::Sender;
@@ -38,9 +39,11 @@ pub struct Document {
     cache_backward: usize,
     cache_forward: usize,
     // アーカイブ対応
-    archive_manager: ArchiveManager,
+    archive_manager: Arc<ArchiveManager>,
     archive_temp_dirs: Vec<PathBuf>,
-    current_archives: Vec<PathBuf>,
+    current_containers: Vec<PathBuf>,
+    /// ZIPファイルのインメモリキャッシュ（オンデマンド読み出し用、先読みスレッドと共有）
+    zip_buffers: Arc<RwLock<HashMap<PathBuf, Vec<u8>>>>,
 }
 
 impl Document {
@@ -59,9 +62,10 @@ impl Document {
             prefetch: None,
             cache_backward: 0,
             cache_forward: 0,
-            archive_manager,
+            archive_manager: Arc::new(archive_manager),
             archive_temp_dirs: Vec::new(),
-            current_archives: Vec::new(),
+            current_containers: Vec::new(),
+            zip_buffers: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -75,7 +79,12 @@ impl Document {
         cache_budget: usize,
         base_image_size: usize,
     ) {
-        self.prefetch = Some(PrefetchEngine::new(notify, Arc::clone(&self.decoder)));
+        self.prefetch = Some(PrefetchEngine::new(
+            notify,
+            Arc::clone(&self.decoder),
+            Arc::clone(&self.archive_manager),
+            Arc::clone(&self.zip_buffers),
+        ));
         self.update_cache_range(cache_budget, base_image_size);
     }
 
@@ -179,7 +188,15 @@ impl Document {
                     } => Some((pdf_path.clone(), *page_index)),
                     _ => None,
                 };
-                prefetch.request_load(idx, files[idx].path.clone(), pdf_page);
+                let archive_entry = match &files[idx].source {
+                    FileSource::ArchiveEntry {
+                        archive,
+                        entry,
+                        on_demand: true,
+                    } => Some((archive.clone(), entry.clone())),
+                    _ => None,
+                };
+                prefetch.request_load(idx, files[idx].path.clone(), pdf_page, archive_entry);
             }
         }
     }
@@ -235,57 +252,115 @@ impl Document {
 
     /// アーカイブを開く（単一アーカイブ）
     fn open_archive(&mut self, archive_path: &Path) -> Result<()> {
-        self.open_archives(&[archive_path.to_path_buf()])
+        self.open_containers(&[archive_path.to_path_buf()])
     }
 
-    /// 複数アーカイブをまとめて開く
-    pub fn open_archives(&mut self, archive_paths: &[PathBuf]) -> Result<()> {
+    /// PDFファイルを開く（単一PDF）
+    fn open_pdf(&mut self, pdf_path: &Path) -> Result<()> {
+        self.open_containers(&[pdf_path.to_path_buf()])
+    }
+
+    /// 複数コンテナ（アーカイブ/PDF混在）をまとめて開く
+    pub fn open_containers(&mut self, paths: &[PathBuf]) -> Result<()> {
         self.cleanup_archive_temp();
         self.invalidate_cache();
         self.file_list.clear();
 
         let mut all_empty = true;
-        for archive_path in archive_paths {
-            // ユニークなtempディレクトリを作成
-            let temp_dir = std::env::temp_dir().join(format!(
-                "gv3_archive_{}_{}",
-                std::process::id(),
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis()
-            ));
-            std::fs::create_dir_all(&temp_dir)?;
-
-            // 画像を一括展開
-            let entries = self
-                .archive_manager
-                .extract_images(archive_path, &temp_dir)?;
-            if entries.is_empty() {
-                let _ = std::fs::remove_dir_all(&temp_dir);
-                continue;
-            }
-
-            all_empty = false;
-            self.archive_temp_dirs.push(temp_dir);
-            self.current_archives.push(archive_path.clone());
-
-            // マッピング結果から直接FileListに追加（sourceにアーカイブ情報を設定）
-            for (temp_path, entry_name) in &entries {
-                if let Ok(mut info) = crate::file_info::FileInfo::from_path(temp_path) {
-                    info.source = FileSource::ArchiveEntry {
-                        archive: archive_path.clone(),
-                        entry: entry_name.clone(),
+        for path in paths {
+            if Self::is_pdf(path) {
+                // PDFページを追加
+                let page_count = crate::pdf_renderer::get_pdf_page_count_safe(path)?;
+                if page_count == 0 {
+                    continue;
+                }
+                all_empty = false;
+                for i in 0..page_count {
+                    let info = crate::file_info::FileInfo {
+                        path: path.clone(),
+                        source: FileSource::PdfPage {
+                            pdf_path: path.clone(),
+                            page_index: i,
+                        },
+                        file_name: format!("Page {:03}", i + 1),
+                        file_size: 0,
+                        modified: std::time::SystemTime::now(),
+                        marked: false,
+                        load_failed: false,
                     };
-                    // ソート用のfile_nameはエントリパスのファイル名部分を使う
-                    info.file_name = crate::archive::extract_filename(entry_name).to_string();
                     self.file_list.push(info);
+                }
+                self.current_containers.push(path.clone());
+            } else if self.archive_manager.supports_on_demand(path) {
+                // オンデマンド（ZIP）: ファイル全体をメモリに読み込み
+                let buffer = std::fs::read(path)
+                    .with_context(|| format!("アーカイブ読み込み失敗: {}", path.display()))?;
+                let entries = self
+                    .archive_manager
+                    .list_images_from_buffer(&buffer, path)?;
+                if entries.is_empty() {
+                    continue;
+                }
+                all_empty = false;
+                for entry in &entries {
+                    let info = crate::file_info::FileInfo {
+                        path: path.clone(), // アーカイブパス自体（PDFと同じパターン）
+                        source: FileSource::ArchiveEntry {
+                            archive: path.clone(),
+                            entry: entry.entry_name.clone(),
+                            on_demand: true,
+                        },
+                        file_name: entry.file_name.clone(),
+                        file_size: entry.file_size,
+                        modified: std::time::SystemTime::now(),
+                        marked: false,
+                        load_failed: false,
+                    };
+                    self.file_list.push(info);
+                }
+                self.zip_buffers
+                    .write()
+                    .unwrap()
+                    .insert(path.clone(), buffer);
+                self.current_containers.push(path.clone());
+            } else {
+                // 非オンデマンド（RAR/7z/Susie）: 既存のtemp展開ロジック
+                let temp_dir = std::env::temp_dir().join(format!(
+                    "gv3_archive_{}_{}",
+                    std::process::id(),
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis()
+                ));
+                std::fs::create_dir_all(&temp_dir)?;
+
+                let entries = self.archive_manager.extract_images(path, &temp_dir)?;
+                if entries.is_empty() {
+                    let _ = std::fs::remove_dir_all(&temp_dir);
+                    continue;
+                }
+
+                all_empty = false;
+                self.archive_temp_dirs.push(temp_dir);
+                self.current_containers.push(path.clone());
+
+                for (temp_path, entry_name) in &entries {
+                    if let Ok(mut info) = crate::file_info::FileInfo::from_path(temp_path) {
+                        info.source = FileSource::ArchiveEntry {
+                            archive: path.clone(),
+                            entry: entry_name.clone(),
+                            on_demand: false,
+                        };
+                        info.file_name = crate::archive::extract_filename(entry_name).to_string();
+                        self.file_list.push(info);
+                    }
                 }
             }
         }
 
         if all_empty {
-            anyhow::bail!("アーカイブ内に画像ファイルがありません");
+            anyhow::bail!("コンテナ内に画像ファイルがありません");
         }
 
         self.file_list.sort_current();
@@ -297,40 +372,6 @@ impl Document {
         self.load_current()
     }
 
-    /// PDFファイルを開く（遅延レンダリング方式）
-    fn open_pdf(&mut self, pdf_path: &Path) -> Result<()> {
-        self.cleanup_archive_temp();
-        self.invalidate_cache();
-        self.file_list.clear();
-
-        let page_count = crate::pdf_renderer::get_pdf_page_count_safe(pdf_path)?;
-        if page_count == 0 {
-            anyhow::bail!("PDFにページがありません");
-        }
-
-        // 各ページをFileInfoエントリとして登録（実ファイルは不要）
-        for i in 0..page_count {
-            let info = crate::file_info::FileInfo {
-                path: pdf_path.to_path_buf(),
-                source: FileSource::PdfPage {
-                    pdf_path: pdf_path.to_path_buf(),
-                    page_index: i,
-                },
-                file_name: format!("Page {:03}", i + 1),
-                file_size: 0,
-                modified: std::time::SystemTime::now(),
-                marked: false,
-                load_failed: false,
-            };
-            self.file_list.push(info);
-        }
-
-        // ページ順が自然順なのでソート不要
-        self.file_list.navigate_first();
-        let _ = self.event_sender.send(DocumentEvent::FileListChanged);
-        self.load_current()
-    }
-
     /// PDFファイルかどうか判定する
     fn is_pdf(path: &Path) -> bool {
         path.extension()
@@ -338,14 +379,15 @@ impl Document {
             .is_some_and(|e| e.eq_ignore_ascii_case("pdf"))
     }
 
-    /// アーカイブ用tempディレクトリをクリーンアップする
+    /// アーカイブ用tempディレクトリとZIPバッファをクリーンアップする
     fn cleanup_archive_temp(&mut self) {
         for temp_dir in self.archive_temp_dirs.drain(..) {
             // ワーカーのin-flight fs::readがファイルを掴んでいる可能性があるため、
             // 削除失敗は無視する（ユニークdir名なので次回openに影響しない）
             let _ = std::fs::remove_dir_all(&temp_dir);
         }
-        self.current_archives.clear();
+        self.current_containers.clear();
+        self.zip_buffers.write().unwrap().clear();
     }
 
     /// フォルダを開く（先頭画像を表示）
@@ -419,9 +461,9 @@ impl Document {
             // PDFページ: STAデッドロック回避のためMTAスレッドで実行
             crate::pdf_renderer::render_pdf_page_safe(pdf_path, *page_index)
         } else {
-            // 通常ファイル: fs::read → decode
-            let data = std::fs::read(&path)
-                .with_context(|| format!("ファイル読み込み失敗: {}", path.display()))?;
+            // 通常ファイル/アーカイブエントリ: read_file_data → decode
+            let current = self.file_list.current().unwrap();
+            let data = self.read_file_data(current)?;
             let filename_hint = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             self.decoder.decode(&data, filename_hint)
         };
@@ -460,6 +502,38 @@ impl Document {
         std::fs::canonicalize(path).with_context(|| format!("パス解決失敗: {}", path.display()))
     }
 
+    /// FileInfoからファイルデータを読み出す（オンデマンドアーカイブ対応）
+    fn read_file_data(&self, info: &crate::file_info::FileInfo) -> Result<Vec<u8>> {
+        match &info.source {
+            FileSource::ArchiveEntry {
+                archive,
+                entry,
+                on_demand: true,
+            } => {
+                // キャッシュされたZIPバッファから読み出し（Stored最適化付き）
+                let buffers = self.zip_buffers.read().unwrap();
+                if let Some(buffer) = buffers.get(archive) {
+                    crate::archive::zip::ZipHandler::read_entry_from_buffer(buffer, entry)
+                } else {
+                    // キャッシュミス（通常発生しない）: ファイルから直接読み出し
+                    drop(buffers);
+                    self.archive_manager.read_entry(archive, entry)
+                }
+            }
+            _ => std::fs::read(&info.path)
+                .with_context(|| format!("ファイル読み込み失敗: {}", info.path.display())),
+        }
+    }
+
+    /// 現在のファイルのデータを読み出す（app.rsのファイル操作用）
+    pub fn read_file_data_current(&self) -> Result<Vec<u8>> {
+        let current = self
+            .file_list
+            .current()
+            .ok_or_else(|| anyhow::anyhow!("ファイルが選択されていません"))?;
+        self.read_file_data(current)
+    }
+
     /// 現在のデコード済み画像への参照
     pub fn current_image(&self) -> Option<&DecodedImage> {
         self.current_image.as_ref()
@@ -476,14 +550,20 @@ impl Document {
     }
 
     /// パスがアーカイブファイルか判定する
+    #[allow(dead_code)]
     pub fn is_archive(&self, path: &Path) -> bool {
         self.archive_manager.is_archive(path)
     }
 
-    /// 現在開いているアーカイブのパス一覧
+    /// パスがコンテナ（アーカイブまたはPDF）か判定する
+    pub fn is_container(&self, path: &Path) -> bool {
+        self.archive_manager.is_archive(path) || Self::is_pdf(path)
+    }
+
+    /// 現在開いているコンテナ（アーカイブ/PDF）のパス一覧
     #[allow(dead_code)]
-    pub fn current_archives(&self) -> &[PathBuf] {
-        &self.current_archives
+    pub fn current_containers(&self) -> &[PathBuf] {
+        &self.current_containers
     }
 
     /// 現在のファイルの論理ソース
@@ -612,83 +692,43 @@ impl Document {
 
     /// ブックマークデータからファイルリストを復元する
     pub fn load_bookmark_data(&mut self, data: crate::bookmark::BookmarkData) -> Result<()> {
-        // PDFエントリがあればPDFモードで復元
-        let has_pdf = data
-            .entries
-            .iter()
-            .any(|s| matches!(s, FileSource::PdfPage { .. }));
+        let has_containers = data.entries.iter().any(|s| {
+            matches!(
+                s,
+                FileSource::PdfPage { .. } | FileSource::ArchiveEntry { .. }
+            )
+        });
 
-        if has_pdf {
-            // 最初のPDFパスを取得
-            let pdf_path = data
-                .entries
-                .iter()
-                .find_map(|s| {
-                    if let FileSource::PdfPage { pdf_path, .. } = s {
-                        Some(pdf_path.clone())
-                    } else {
-                        None
-                    }
-                })
-                .ok_or_else(|| anyhow::anyhow!("PDFパスが見つかりません"))?;
-
-            if !pdf_path.exists() {
-                anyhow::bail!("PDFファイルが見つかりません: {}", pdf_path.display());
-            }
-
-            self.open_pdf(&pdf_path)?;
-
-            // ブックマークのindex位置にナビゲート
-            let target_idx = data.index.min(self.file_list.len().saturating_sub(1));
-            self.file_list.navigate_to(target_idx);
-            let _ = self.load_current();
-            return Ok(());
-        }
-
-        // アーカイブエントリが1つでもあればアーカイブモードで復元
-        let has_archives = data
-            .entries
-            .iter()
-            .any(|s| matches!(s, FileSource::ArchiveEntry { .. }));
-
-        if has_archives {
-            // ユニークなアーカイブパスを出現順に収集
-            let mut archive_paths: Vec<PathBuf> = Vec::new();
+        if has_containers {
+            // コンテナモード: ユニークなコンテナパスを収集
+            let mut container_paths: Vec<PathBuf> = Vec::new();
             for source in &data.entries {
-                if let FileSource::ArchiveEntry { archive, .. } = source
-                    && archive.exists()
-                    && self.archive_manager.is_archive(archive)
-                    && !archive_paths.contains(archive)
+                let path = match source {
+                    FileSource::PdfPage { pdf_path, .. } => Some(pdf_path),
+                    FileSource::ArchiveEntry { archive, .. } => Some(archive),
+                    _ => None,
+                };
+                if let Some(p) = path
+                    && p.exists()
+                    && !container_paths.contains(p)
                 {
-                    archive_paths.push(archive.clone());
+                    container_paths.push(p.clone());
                 }
             }
 
-            if archive_paths.is_empty() {
-                anyhow::bail!("ブックマーク内のアーカイブが見つかりません");
+            if container_paths.is_empty() {
+                anyhow::bail!("ブックマーク内のコンテナが見つかりません");
             }
 
-            self.open_archives(&archive_paths)?;
+            self.open_containers(&container_paths)?;
 
-            // ブックマークのindex位置に対応するエントリで位置を特定
+            // 位置復元: source同一性で検索（PDF/Archive両対応）
             if let Some(target_source) = data.entries.get(data.index) {
                 let target_idx = self
                     .file_list
                     .files()
                     .iter()
-                    .position(|f| match (target_source, &f.source) {
-                        (
-                            FileSource::ArchiveEntry {
-                                archive: a1,
-                                entry: e1,
-                            },
-                            FileSource::ArchiveEntry {
-                                archive: a2,
-                                entry: e2,
-                            },
-                        ) => a1 == a2 && e1 == e2,
-                        _ => false,
-                    })
+                    .position(|f| FileList::source_matches(&f.source, target_source))
                     .unwrap_or_else(|| data.index.min(self.file_list.len().saturating_sub(1)));
                 self.file_list.navigate_to(target_idx);
                 let _ = self.load_current();
@@ -741,9 +781,12 @@ impl Document {
             };
         }
 
-        let path = current.path.clone();
-        let data = std::fs::read(&path)?;
-        let filename_hint = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let data = self.read_file_data(current)?;
+        let filename_hint = current
+            .path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
         self.decoder.metadata(&data, filename_hint)
     }
 

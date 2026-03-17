@@ -209,10 +209,10 @@ impl AppWindow {
         // 初期ファイルがあれば開く
         if !initial_files.is_empty() {
             let result = if initial_files.len() > 1
-                && initial_files.iter().all(|p| app.document.is_archive(p))
+                && initial_files.iter().all(|p| app.document.is_container(p))
             {
-                // 全てアーカイブなら複数アーカイブをまとめて開く
-                app.document.open_archives(initial_files)
+                // 全てコンテナなら複数コンテナをまとめて開く
+                app.document.open_containers(initial_files)
             } else if initial_files[0].is_dir() {
                 app.document.open_folder(&initial_files[0])
             } else {
@@ -844,16 +844,36 @@ impl AppWindow {
                 }
             }
             Action::CopyFile => {
-                if let Some(path) = self.document.current_path().map(|p| p.to_path_buf()) {
-                    let default_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("image");
+                if let Some(current) = self.document.file_list().current() {
+                    let default_name = &current.file_name;
                     if let Ok(Some(dest)) = crate::file_ops::save_file_dialog(
                         self.hwnd,
                         default_name,
                         "すべてのファイル",
                         "*.*",
-                    ) && let Err(e) = std::fs::copy(&path, &dest)
-                    {
-                        eprintln!("ファイルコピー失敗: {e}");
+                    ) {
+                        if matches!(
+                            current.source,
+                            crate::file_info::FileSource::ArchiveEntry {
+                                on_demand: true,
+                                ..
+                            }
+                        ) {
+                            // オンデマンド: アーカイブから読み出して書き出し
+                            match self.document.read_file_data_current() {
+                                Ok(data) => {
+                                    if let Err(e) = std::fs::write(&dest, &data) {
+                                        eprintln!("ファイルコピー失敗: {e}");
+                                    }
+                                }
+                                Err(e) => eprintln!("ファイルコピー失敗: {e}"),
+                            }
+                        } else {
+                            // 通常ファイル/temp展開済み/PDF: 既存のfs::copy
+                            if let Err(e) = std::fs::copy(&current.path, &dest) {
+                                eprintln!("ファイルコピー失敗: {e}");
+                            }
+                        }
                     }
                 }
             }
@@ -1414,12 +1434,12 @@ Susieプラグイン (.sph/.spi) で拡張可能";
             return;
         }
 
-        let result = if paths.len() > 1 && paths.iter().all(|p| self.document.is_archive(p)) {
-            // 全てアーカイブなら複数アーカイブをまとめて開く
-            self.document.open_archives(&paths)
+        let result = if paths.len() > 1 && paths.iter().all(|p| self.document.is_container(p)) {
+            // 全てコンテナ（アーカイブ/PDF）なら複数コンテナをまとめて開く
+            self.document.open_containers(&paths)
         } else if paths.len() > 1 {
             // 混在: 通知して最初のファイルのみ開く
-            let msg = "複数ファイルを開く場合はアーカイブのみ対応しています\0";
+            let msg = "複数ファイルを開く場合はアーカイブ/PDFのみ対応しています\0";
             let title = "ぐらびゅ3\0";
             let wide_msg: Vec<u16> = msg.encode_utf16().collect();
             let wide_title: Vec<u16> = title.encode_utf16().collect();

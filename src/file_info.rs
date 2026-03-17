@@ -11,7 +11,12 @@ pub enum FileSource {
     /// 通常のファイルシステム上のファイル
     File(PathBuf),
     /// アーカイブ内のエントリ
-    ArchiveEntry { archive: PathBuf, entry: String },
+    ArchiveEntry {
+        archive: PathBuf,
+        entry: String,
+        /// trueならオンデマンド読み出し、falseならtemp展開済み
+        on_demand: bool,
+    },
     /// PDFのページ
     PdfPage { pdf_path: PathBuf, page_index: u32 },
 }
@@ -21,7 +26,7 @@ impl FileSource {
     pub fn display_path(&self) -> String {
         match self {
             FileSource::File(path) => path.display().to_string(),
-            FileSource::ArchiveEntry { archive, entry } => {
+            FileSource::ArchiveEntry { archive, entry, .. } => {
                 format!("{} > {}", archive.display(), entry)
             }
             FileSource::PdfPage {
@@ -135,6 +140,7 @@ mod tests {
         let source = FileSource::ArchiveEntry {
             archive: PathBuf::from(r"C:\archive.zip"),
             entry: "folder/image.png".to_string(),
+            on_demand: false,
         };
         assert_eq!(source.display_path(), r"C:\archive.zip > folder/image.png");
         assert!(source.is_archive_entry());
@@ -163,6 +169,7 @@ mod tests {
         let archive_source = FileSource::ArchiveEntry {
             archive: PathBuf::from(r"C:\archive.zip"),
             entry: "img.png".to_string(),
+            on_demand: false,
         };
         assert!(archive_source.is_contained());
     }

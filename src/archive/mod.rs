@@ -1,7 +1,7 @@
 mod rar;
 mod sevenz;
 pub mod susie;
-mod zip;
+pub mod zip;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -13,6 +13,16 @@ use crate::extension_registry::ExtensionRegistry;
 /// アーカイブ展開結果: (展開先tempパス, アーカイブ内エントリパス)
 pub type ExtractedEntry = (PathBuf, String);
 
+/// オンデマンド読み出し用のアーカイブ内画像エントリ情報
+pub struct ArchiveImageEntry {
+    /// アーカイブ内パス（例: "subfolder/image.png"）
+    pub entry_name: String,
+    /// フラット化したファイル名（ソート用）
+    pub file_name: String,
+    /// 非圧縮サイズ
+    pub file_size: u64,
+}
+
 /// アーカイブハンドラのトレイト
 /// 各フォーマットのハンドラが実装する
 pub trait ArchiveHandler: Send + Sync {
@@ -22,6 +32,22 @@ pub trait ArchiveHandler: Send + Sync {
     /// 戻り値: (展開先tempパス, アーカイブ内エントリパス) のペア一覧
     fn extract_images(&self, archive_path: &Path, target_dir: &Path)
     -> Result<Vec<ExtractedEntry>>;
+
+    /// オンデマンド読み出しに対応しているかどうか
+    fn supports_on_demand(&self) -> bool {
+        false
+    }
+
+    /// アーカイブ内の画像エントリ一覧を取得する（データ読み込みなし）
+    #[allow(dead_code)]
+    fn list_images(&self, _archive_path: &Path) -> Result<Vec<ArchiveImageEntry>> {
+        bail!("オンデマンド読み出し未対応")
+    }
+
+    /// アーカイブから指定エントリのデータを読み出す
+    fn read_entry(&self, _archive_path: &Path, _entry_name: &str) -> Result<Vec<u8>> {
+        bail!("オンデマンド読み出し未対応")
+    }
 }
 
 /// アーカイブハンドラのディスパッチャ
@@ -74,6 +100,86 @@ impl ArchiveManager {
         }
 
         bail!("未対応のアーカイブ形式: {}", archive_path.display());
+    }
+
+    /// パスに対応するハンドラがオンデマンド読み出しに対応しているか判定する
+    pub fn supports_on_demand(&self, archive_path: &Path) -> bool {
+        let ext = archive_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| format!(".{}", e.to_lowercase()))
+            .unwrap_or_default();
+        self.handlers
+            .iter()
+            .any(|h| h.supported_extensions().contains(&ext) && h.supports_on_demand())
+    }
+
+    /// アーカイブ内の画像エントリ一覧を取得する（オンデマンド用）
+    #[allow(dead_code)]
+    pub fn list_images(&self, archive_path: &Path) -> Result<Vec<ArchiveImageEntry>> {
+        let ext = archive_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| format!(".{}", e.to_lowercase()))
+            .unwrap_or_default();
+        for handler in &self.handlers {
+            if handler.supported_extensions().contains(&ext) {
+                return handler.list_images(archive_path);
+            }
+        }
+        bail!("未対応のアーカイブ形式: {}", archive_path.display());
+    }
+
+    /// アーカイブから指定エントリのデータを読み出す（オンデマンド用）
+    pub fn read_entry(&self, archive_path: &Path, entry_name: &str) -> Result<Vec<u8>> {
+        let ext = archive_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| format!(".{}", e.to_lowercase()))
+            .unwrap_or_default();
+        for handler in &self.handlers {
+            if handler.supported_extensions().contains(&ext) {
+                return handler.read_entry(archive_path, entry_name);
+            }
+        }
+        bail!("未対応のアーカイブ形式: {}", archive_path.display());
+    }
+
+    /// インメモリバッファからエントリ一覧を取得する（ZIPキャッシュ用）
+    pub fn list_images_from_buffer(
+        &self,
+        buffer: &[u8],
+        archive_path: &Path,
+    ) -> Result<Vec<ArchiveImageEntry>> {
+        let ext = archive_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| format!(".{}", e.to_lowercase()))
+            .unwrap_or_default();
+        // ZIPのみバッファベースをサポート
+        if ext == ".zip" || ext == ".cbz" {
+            return zip::ZipHandler::list_images_from_buffer(buffer, &self.registry);
+        }
+        bail!("バッファベース読み出し未対応: {}", archive_path.display());
+    }
+
+    /// インメモリバッファからエントリを読み出す（ZIPキャッシュ用、Stored最適化付き）
+    #[allow(dead_code)]
+    pub fn read_entry_from_buffer(
+        &self,
+        buffer: &[u8],
+        entry_name: &str,
+        archive_path: &Path,
+    ) -> Result<Vec<u8>> {
+        let ext = archive_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| format!(".{}", e.to_lowercase()))
+            .unwrap_or_default();
+        if ext == ".zip" || ext == ".cbz" {
+            return zip::ZipHandler::read_entry_from_buffer(buffer, entry_name);
+        }
+        bail!("バッファベース読み出し未対応: {}", archive_path.display());
     }
 }
 
