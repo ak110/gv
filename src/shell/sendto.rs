@@ -8,6 +8,8 @@ use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance, IPersi
 use windows::Win32::UI::Shell::{FOLDERID_SendTo, IShellLinkW, SHGetKnownFolderPath, ShellLink};
 use windows::core::Interface;
 
+use crate::util::to_wide;
+
 const LNK_NAME: &str = "ぐらびゅ3.lnk";
 
 /// 「送る」にショートカットを登録する
@@ -22,25 +24,16 @@ pub fn register() -> Result<()> {
             .context("IShellLink作成失敗")?;
 
         // ショートカットのターゲットを設定
-        let wide_exe: Vec<u16> = exe
-            .to_string_lossy()
-            .encode_utf16()
-            .chain(std::iter::once(0))
-            .collect();
+        let wide_exe = to_wide(&exe.to_string_lossy());
         shell_link.SetPath(windows::core::PCWSTR(wide_exe.as_ptr()))?;
 
         // 説明
-        let desc = "ぐらびゅ3で開く";
-        let wide_desc: Vec<u16> = desc.encode_utf16().chain(std::iter::once(0)).collect();
+        let wide_desc = to_wide("ぐらびゅ3で開く");
         shell_link.SetDescription(windows::core::PCWSTR(wide_desc.as_ptr()))?;
 
         // IPersistFileで保存
         let persist_file: IPersistFile = shell_link.cast()?;
-        let wide_lnk: Vec<u16> = lnk_path
-            .to_string_lossy()
-            .encode_utf16()
-            .chain(std::iter::once(0))
-            .collect();
+        let wide_lnk = to_wide(&lnk_path.to_string_lossy());
         persist_file.Save(windows::core::PCWSTR(wide_lnk.as_ptr()), true)?;
     }
 

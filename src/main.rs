@@ -19,6 +19,7 @@ mod susie;
 mod temp_cleanup;
 mod ui;
 mod updater;
+mod util;
 
 use std::path::PathBuf;
 

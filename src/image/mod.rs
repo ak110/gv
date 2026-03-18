@@ -12,7 +12,6 @@ pub struct DecodedImage {
 
 impl DecodedImage {
     /// メモリ使用量（バイト）
-    #[allow(dead_code)]
     pub fn memory_size(&self) -> usize {
         self.data.len()
     }

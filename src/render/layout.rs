@@ -1,6 +1,5 @@
 /// 表示モード
 #[derive(Debug, Clone, Copy, PartialEq)]
-#[allow(dead_code)]
 pub enum DisplayMode {
     /// ウィンドウに収まるよう縮小（拡大はしない）
     AutoShrink,

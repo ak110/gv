@@ -16,13 +16,10 @@ fn exe_path() -> Result<String> {
     Ok(path.to_string_lossy().into_owned())
 }
 
-/// ワイド文字列（null終端）を作成するヘルパー
-fn to_wide(s: &str) -> Vec<u16> {
-    s.encode_utf16().chain(std::iter::once(0)).collect()
-}
+use crate::util::to_wide;
 
 /// レジストリキーを再帰的に削除する
-fn delete_key_tree(hkey: HKEY, subkey: &str) -> Result<()> {
+pub(super) fn delete_key_tree(hkey: HKEY, subkey: &str) -> Result<()> {
     let result = unsafe { RegDeleteTreeW(hkey, windows::core::PCWSTR(to_wide(subkey).as_ptr())) };
     if result != ERROR_SUCCESS && result != windows::Win32::Foundation::ERROR_FILE_NOT_FOUND {
         anyhow::bail!("レジストリキー削除失敗: {subkey} (error: {result:?})");
@@ -31,7 +28,7 @@ fn delete_key_tree(hkey: HKEY, subkey: &str) -> Result<()> {
 }
 
 /// レジストリキーを作成してデフォルト値を設定する
-fn set_key_value(root: HKEY, subkey: &str, value: &str) -> Result<()> {
+pub(super) fn set_key_value(root: HKEY, subkey: &str, value: &str) -> Result<()> {
     let wide_key = to_wide(subkey);
     let wide_val = to_wide(value);
 

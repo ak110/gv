@@ -11,12 +11,13 @@ use windows::Win32::System::Memory::{
 use windows::Win32::System::Ole::CF_DIB;
 
 use crate::image::DecodedImage;
+use crate::util::to_wide;
 
 const CF_UNICODETEXT: u32 = 13;
 
 /// テキストをクリップボードにコピーする
 pub fn copy_text_to_clipboard(hwnd: HWND, text: &str) -> Result<()> {
-    let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+    let wide = to_wide(text);
     let byte_len = wide.len() * 2;
 
     unsafe {

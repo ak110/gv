@@ -181,9 +181,7 @@ unsafe fn append_popup(menu_bar: HMENU, popup: HMENU, label: &str) {
     }
 }
 
-fn to_wide(s: &str) -> Vec<u16> {
-    s.encode_utf16().chain(std::iter::once(0)).collect()
-}
+use crate::util::to_wide;
 
 /// インデックスからActionを復元する（Action enumの discriminant を利用）
 fn action_from_index(index: u16) -> Option<Action> {

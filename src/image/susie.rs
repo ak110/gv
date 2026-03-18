@@ -9,6 +9,7 @@ use super::{DecodedImage, ImageDecoder, ImageMetadata};
 pub struct SusieImageDecoder {
     plugin: SharedPlugin,
     /// キャッシュした拡張子リスト
+    #[allow(dead_code)]
     extensions: Vec<String>,
 }
 

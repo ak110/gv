@@ -11,32 +11,53 @@ use windows::Win32::UI::Shell::{
     FOS_PICKFOLDERS, IFileOpenDialog, IFileSaveDialog, SHFILEOPSTRUCTW, SHFileOperationW,
 };
 
-/// ごみ箱経由でファイルを削除する
-pub fn delete_to_recycle_bin(hwnd: HWND, paths: &[&Path]) -> Result<bool> {
-    if paths.is_empty() {
-        return Ok(false);
-    }
+use crate::util::to_wide;
 
-    let from = build_multi_path_string(paths);
-
+/// SHFileOperationWの共通ラッパー
+/// 成功時はtrue、ユーザーキャンセル時はfalseを返す
+fn sh_file_operation(
+    hwnd: HWND,
+    func: u32,
+    from: &[u16],
+    to: Option<&[u16]>,
+    flags: u16,
+    error_msg: &str,
+) -> Result<bool> {
     let mut op = SHFILEOPSTRUCTW {
         hwnd,
-        wFunc: FO_DELETE,
+        wFunc: func,
         pFrom: windows::core::PCWSTR(from.as_ptr()),
-        pTo: windows::core::PCWSTR::null(),
-        fFlags: FOF_ALLOWUNDO.0 as u16,
+        pTo: to
+            .map(|t| windows::core::PCWSTR(t.as_ptr()))
+            .unwrap_or(windows::core::PCWSTR::null()),
+        fFlags: flags,
         ..Default::default()
     };
 
     let result = unsafe { SHFileOperationW(&mut op) };
     if result != 0 {
-        // ユーザーキャンセルの場合
         if op.fAnyOperationsAborted.as_bool() {
             return Ok(false);
         }
-        anyhow::bail!("ファイル削除に失敗しました (code: {result})");
+        anyhow::bail!("{error_msg} (code: 0x{result:04X})");
     }
     Ok(!op.fAnyOperationsAborted.as_bool())
+}
+
+/// ごみ箱経由でファイルを削除する
+pub fn delete_to_recycle_bin(hwnd: HWND, paths: &[&Path]) -> Result<bool> {
+    if paths.is_empty() {
+        return Ok(false);
+    }
+    let from = build_multi_path_string(paths);
+    sh_file_operation(
+        hwnd,
+        FO_DELETE,
+        &from,
+        None,
+        FOF_ALLOWUNDO.0 as u16,
+        "ファイル削除に失敗しました",
+    )
 }
 
 /// ファイルを移動する（SHFileOperationW）
@@ -45,30 +66,16 @@ pub fn move_files(hwnd: HWND, paths: &[&Path], dest: &Path) -> Result<bool> {
     if paths.is_empty() {
         return Ok(false);
     }
-
     let from = build_multi_path_string(paths);
     let to = build_single_path_string(dest);
-
-    let mut op = SHFILEOPSTRUCTW {
+    sh_file_operation(
         hwnd,
-        wFunc: FO_MOVE,
-        pFrom: windows::core::PCWSTR(from.as_ptr()),
-        pTo: windows::core::PCWSTR(to.as_ptr()),
-        fFlags: FOF_ALLOWUNDO.0 as u16,
-        ..Default::default()
-    };
-
-    let result = unsafe { SHFileOperationW(&mut op) };
-    if result != 0 {
-        if op.fAnyOperationsAborted.as_bool() {
-            return Ok(false);
-        }
-        anyhow::bail!(
-            "ファイル移動に失敗しました (code: 0x{result:04X})\n  dest: {}",
-            dest.display()
-        );
-    }
-    Ok(!op.fAnyOperationsAborted.as_bool())
+        FO_MOVE,
+        &from,
+        Some(&to),
+        FOF_ALLOWUNDO.0 as u16,
+        &format!("ファイル移動に失敗しました\n  dest: {}", dest.display()),
+    )
 }
 
 /// ファイルをコピーする（SHFileOperationW）
@@ -76,27 +83,16 @@ pub fn copy_files(hwnd: HWND, paths: &[&Path], dest: &Path) -> Result<bool> {
     if paths.is_empty() {
         return Ok(false);
     }
-
     let from = build_multi_path_string(paths);
     let to = build_single_path_string(dest);
-
-    let mut op = SHFILEOPSTRUCTW {
+    sh_file_operation(
         hwnd,
-        wFunc: FO_COPY,
-        pFrom: windows::core::PCWSTR(from.as_ptr()),
-        pTo: windows::core::PCWSTR(to.as_ptr()),
-        fFlags: FOF_ALLOWUNDO.0 as u16,
-        ..Default::default()
-    };
-
-    let result = unsafe { SHFileOperationW(&mut op) };
-    if result != 0 {
-        if op.fAnyOperationsAborted.as_bool() {
-            return Ok(false);
-        }
-        anyhow::bail!("ファイルコピーに失敗しました (code: {result})");
-    }
-    Ok(!op.fAnyOperationsAborted.as_bool())
+        FO_COPY,
+        &from,
+        Some(&to),
+        FOF_ALLOWUNDO.0 as u16,
+        "ファイルコピーに失敗しました",
+    )
 }
 
 /// ファイル選択ダイアログ（IFileOpenDialog）
@@ -175,7 +171,7 @@ pub fn select_folder_dialog(
         let options = dialog.GetOptions()?;
         dialog.SetOptions(options | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST | FOS_PICKFOLDERS)?;
 
-        let title_wide: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
+        let title_wide = to_wide(title);
         dialog.SetTitle(windows::core::PCWSTR(title_wide.as_ptr()))?;
 
         // 初期ディレクトリ設定
@@ -224,11 +220,11 @@ pub fn save_file_dialog(
 
         // タイトル・OKボタンラベルのカスタマイズ
         if let Some(t) = title {
-            let wide: Vec<u16> = t.encode_utf16().chain(std::iter::once(0)).collect();
+            let wide = to_wide(t);
             dialog.SetTitle(windows::core::PCWSTR(wide.as_ptr()))?;
         }
         if let Some(label) = ok_button_label {
-            let wide: Vec<u16> = label.encode_utf16().chain(std::iter::once(0)).collect();
+            let wide = to_wide(label);
             dialog.SetOkButtonLabel(windows::core::PCWSTR(wide.as_ptr()))?;
         }
 
@@ -240,14 +236,8 @@ pub fn save_file_dialog(
         }
 
         // フィルタ設定
-        let fname: Vec<u16> = filter_name
-            .encode_utf16()
-            .chain(std::iter::once(0))
-            .collect();
-        let fspec: Vec<u16> = filter_ext
-            .encode_utf16()
-            .chain(std::iter::once(0))
-            .collect();
+        let fname = to_wide(filter_name);
+        let fspec = to_wide(filter_ext);
         let filters = [windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC {
             pszName: windows::core::PCWSTR(fname.as_ptr()),
             pszSpec: windows::core::PCWSTR(fspec.as_ptr()),
@@ -255,10 +245,7 @@ pub fn save_file_dialog(
         dialog.SetFileTypes(&filters)?;
 
         // デフォルトファイル名
-        let name_wide: Vec<u16> = default_name
-            .encode_utf16()
-            .chain(std::iter::once(0))
-            .collect();
+        let name_wide = to_wide(default_name);
         dialog.SetFileName(windows::core::PCWSTR(name_wide.as_ptr()))?;
 
         match dialog.Show(Some(hwnd)) {
@@ -332,29 +319,19 @@ pub fn open_bookmark_dialog(hwnd: HWND) -> Result<Option<PathBuf>> {
 pub fn move_single_file(hwnd: HWND, src: &Path, dest: &Path) -> Result<bool> {
     let from = build_single_path_string(src);
     let to = build_single_path_string(dest);
-
-    let mut op = SHFILEOPSTRUCTW {
+    // FOF_MULTIDESTFILES: pToをディレクトリではなくファイルパスとして解釈させる
+    sh_file_operation(
         hwnd,
-        wFunc: FO_MOVE,
-        pFrom: windows::core::PCWSTR(from.as_ptr()),
-        pTo: windows::core::PCWSTR(to.as_ptr()),
-        // FOF_MULTIDESTFILES: pToをディレクトリではなくファイルパスとして解釈させる
-        fFlags: (FOF_ALLOWUNDO.0 | FOF_MULTIDESTFILES.0) as u16,
-        ..Default::default()
-    };
-
-    let result = unsafe { SHFileOperationW(&mut op) };
-    if result != 0 {
-        if op.fAnyOperationsAborted.as_bool() {
-            return Ok(false);
-        }
-        anyhow::bail!(
-            "ファイル移動に失敗しました (code: 0x{result:04X})\n  src: {}\n  dest: {}",
+        FO_MOVE,
+        &from,
+        Some(&to),
+        (FOF_ALLOWUNDO.0 | FOF_MULTIDESTFILES.0) as u16,
+        &format!(
+            "ファイル移動に失敗しました\n  src: {}\n  dest: {}",
             src.display(),
             dest.display()
-        );
-    }
-    Ok(!op.fAnyOperationsAborted.as_bool())
+        ),
+    )
 }
 
 /// SHCreateItemFromParsingNameでIShellItemを取得するヘルパー

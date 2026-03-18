@@ -74,7 +74,6 @@ pub fn get_window_data<T>(hwnd: HWND) -> Option<&'static mut T> {
 }
 
 /// クライアント領域のサイズを取得
-#[allow(dead_code)]
 pub fn get_client_size(hwnd: HWND) -> (u32, u32) {
     unsafe {
         let mut rc = std::mem::zeroed();

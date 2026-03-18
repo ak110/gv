@@ -25,7 +25,6 @@ pub enum SusiePluginType {
 pub struct SusiePlugin {
     pub plugin_type: SusiePluginType,
     /// プラグインDLLのパス（画像情報表示等で使用）
-    #[allow(dead_code)]
     pub path: std::path::PathBuf,
     get_plugin_info: GetPluginInfoFn,
     is_supported: IsSupportedFn,
