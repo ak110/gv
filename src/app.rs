@@ -18,6 +18,7 @@ use crate::extension_registry::ExtensionRegistry;
 use crate::image::{DecoderChain, StandardDecoder};
 use crate::render::D2DRenderer;
 use crate::render::layout::DisplayMode;
+use crate::selection::{HandleKind, HitTestResult, Selection};
 use crate::susie::SusieManager;
 use crate::ui::cursor_hider::{CursorHider, TIMER_ID_CURSOR_HIDE};
 use crate::ui::file_list_panel::FileListPanel;
@@ -57,6 +58,8 @@ pub struct AppWindow {
     cached_indices: HashSet<usize>,
     // 等幅フォント（ダイアログ・ファイルリスト用）
     monospace_font: MonospaceFont,
+    // 矩形選択
+    selection: Selection,
 }
 
 impl AppWindow {
@@ -171,6 +174,7 @@ impl AppWindow {
             file_list_panel,
             cached_indices: HashSet::new(),
             monospace_font,
+            selection: Selection::new(),
         });
 
         // GWLP_USERDATAにポインタを格納（WndProcからアクセスするため）
@@ -312,11 +316,21 @@ impl AppWindow {
         let title = if let Some(source) = self.document.current_source() {
             let display = source.display_path();
             let fl = self.document.file_list();
-            if let Some(idx) = fl.current_index() {
-                format!("{display} [{}/{}] - ぐらびゅ3\0", idx + 1, fl.len())
+            let page_info = if let Some(idx) = fl.current_index() {
+                format!(" [{}/{}]", idx + 1, fl.len())
             } else {
-                format!("{display} - ぐらびゅ3\0")
-            }
+                String::new()
+            };
+            // 選択情報をタイトルに追加
+            let sel_info = if let Some(rect) = self.selection.current_rect() {
+                format!(
+                    " 選択: ({}, {}) {}×{}",
+                    rect.x, rect.y, rect.width, rect.height
+                )
+            } else {
+                String::new()
+            };
+            format!("{display}{page_info}{sel_info} - ぐらびゅ3\0")
         } else {
             "ぐらびゅ3\0".to_string()
         };
@@ -460,6 +474,18 @@ impl AppWindow {
                     return LRESULT(0);
                 }
                 WM_KEYDOWN | WM_SYSKEYDOWN => {
+                    // Escキー: ドラッグ操作中は選択をキャンセル（key_configより優先）
+                    if wparam.0 as u16 == 0x1B && app.selection.is_dragging() {
+                        app.selection.deselect();
+                        unsafe {
+                            windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture()
+                                .unwrap_or_default();
+                        }
+                        app.invalidate();
+                        app.update_title();
+                        return LRESULT(0);
+                    }
+
                     let chord = InputChord::Key {
                         vk: wparam.0 as u16,
                         modifiers: Self::current_modifiers(),
@@ -495,6 +521,14 @@ impl AppWindow {
                     }
                     return LRESULT(0);
                 }
+                WM_LBUTTONDOWN => {
+                    app.on_lbutton_down(lparam);
+                    return LRESULT(0);
+                }
+                WM_LBUTTONUP => {
+                    app.on_lbutton_up();
+                    return LRESULT(0);
+                }
                 WM_LBUTTONDBLCLK => {
                     let chord = InputChord::Mouse {
                         button: MouseButton::LeftDoubleClick,
@@ -517,7 +551,14 @@ impl AppWindow {
                     if app.fullscreen.is_fullscreen() {
                         app.cursor_hider.on_mouse_move(hwnd);
                     }
+                    app.on_mouse_move(lparam);
                     return LRESULT(0);
+                }
+                WM_SETCURSOR => {
+                    // 選択状態に応じてカーソルを変更
+                    if app.on_set_cursor() {
+                        return LRESULT(1);
+                    }
                 }
                 WM_TIMER => {
                     if wparam.0 == TIMER_ID_CURSOR_HIDE {
@@ -543,6 +584,14 @@ impl AppWindow {
                             )
                         };
                         if sel.0 >= 0 {
+                            if !app.guard_unsaved_edit() {
+                                // キャンセル時は選択位置を復元
+                                if let Some(idx) = app.document.file_list().current_index() {
+                                    app.file_list_panel.set_selection(idx);
+                                }
+                                return LRESULT(0);
+                            }
+                            app.selection.deselect();
                             app.document.navigate_to(sel.0 as usize);
                             app.process_document_events();
                         }
@@ -584,7 +633,9 @@ impl AppWindow {
     }
 
     fn on_paint(&mut self) {
-        self.renderer.draw(self.document.current_image());
+        let sel_rect = self.selection.current_rect();
+        self.renderer
+            .draw(self.document.current_image(), sel_rect.as_ref());
         // WM_PAINTの無限ループを防ぐためにValidateRectを呼ぶ
         unsafe {
             let _ = ValidateRect(Some(self.hwnd), None);
@@ -612,42 +663,82 @@ impl AppWindow {
         match action {
             // --- ナビゲーション ---
             Action::NavigateBack => {
+                if !self.guard_unsaved_edit() {
+                    return;
+                }
+                self.selection.deselect();
                 self.document.navigate_relative(-1);
                 self.process_document_events();
             }
             Action::NavigateForward => {
+                if !self.guard_unsaved_edit() {
+                    return;
+                }
+                self.selection.deselect();
                 self.document.navigate_relative(1);
                 self.process_document_events();
             }
             Action::Navigate1Back => {
+                if !self.guard_unsaved_edit() {
+                    return;
+                }
+                self.selection.deselect();
                 self.document.navigate_relative(-1);
                 self.process_document_events();
             }
             Action::Navigate1Forward => {
+                if !self.guard_unsaved_edit() {
+                    return;
+                }
+                self.selection.deselect();
                 self.document.navigate_relative(1);
                 self.process_document_events();
             }
             Action::Navigate5Back => {
+                if !self.guard_unsaved_edit() {
+                    return;
+                }
+                self.selection.deselect();
                 self.document.navigate_relative(-5);
                 self.process_document_events();
             }
             Action::Navigate5Forward => {
+                if !self.guard_unsaved_edit() {
+                    return;
+                }
+                self.selection.deselect();
                 self.document.navigate_relative(5);
                 self.process_document_events();
             }
             Action::Navigate50Back => {
+                if !self.guard_unsaved_edit() {
+                    return;
+                }
+                self.selection.deselect();
                 self.document.navigate_relative(-50);
                 self.process_document_events();
             }
             Action::Navigate50Forward => {
+                if !self.guard_unsaved_edit() {
+                    return;
+                }
+                self.selection.deselect();
                 self.document.navigate_relative(50);
                 self.process_document_events();
             }
             Action::NavigateFirst => {
+                if !self.guard_unsaved_edit() {
+                    return;
+                }
+                self.selection.deselect();
                 self.document.navigate_first();
                 self.process_document_events();
             }
             Action::NavigateLast => {
+                if !self.guard_unsaved_edit() {
+                    return;
+                }
+                self.selection.deselect();
                 self.document.navigate_last();
                 self.process_document_events();
             }
@@ -759,10 +850,18 @@ impl AppWindow {
                 }
             }
             Action::NavigatePrevMark => {
+                if !self.guard_unsaved_edit() {
+                    return;
+                }
+                self.selection.deselect();
                 self.document.navigate_prev_mark();
                 self.process_document_events();
             }
             Action::NavigateNextMark => {
+                if !self.guard_unsaved_edit() {
+                    return;
+                }
+                self.selection.deselect();
                 self.document.navigate_next_mark();
                 self.process_document_events();
             }
@@ -777,16 +876,28 @@ impl AppWindow {
 
             // --- フォルダナビゲーション ---
             Action::NavigatePrevFolder => {
+                if !self.guard_unsaved_edit() {
+                    return;
+                }
+                self.selection.deselect();
                 self.document.navigate_prev_folder();
                 self.process_document_events();
             }
             Action::NavigateNextFolder => {
+                if !self.guard_unsaved_edit() {
+                    return;
+                }
+                self.selection.deselect();
                 self.document.navigate_next_folder();
                 self.process_document_events();
             }
 
             // --- ファイル操作 ---
             Action::OpenFile => {
+                if !self.guard_unsaved_edit() {
+                    return;
+                }
+                self.selection.deselect();
                 let initial_dir = self
                     .document
                     .current_source()
@@ -802,6 +913,10 @@ impl AppWindow {
                 }
             }
             Action::OpenFolder => {
+                if !self.guard_unsaved_edit() {
+                    return;
+                }
+                self.selection.deselect();
                 let initial_dir = self
                     .document
                     .current_source()
@@ -1014,6 +1129,10 @@ impl AppWindow {
                 }
             }
             Action::Reload => {
+                if !self.guard_unsaved_edit() {
+                    return;
+                }
+                self.selection.deselect();
                 self.document.reload();
                 self.process_document_events();
             }
@@ -1050,6 +1169,10 @@ impl AppWindow {
                 }
             }
             Action::PasteImage => {
+                if !self.guard_unsaved_edit() {
+                    return;
+                }
+                self.selection.deselect();
                 match crate::clipboard::paste_image_from_clipboard(self.hwnd) {
                     Ok(Some(image)) => {
                         // 一時ファイルに保存してから開く
@@ -1105,9 +1228,13 @@ impl AppWindow {
                 }
             }
             Action::CloseAll => {
+                if !self.guard_unsaved_edit() {
+                    return;
+                }
+                self.selection.deselect();
                 self.document.close_all();
                 self.process_document_events();
-                self.update_title(); // close_all()はNavigationChangedを発行しないため明示的に更新
+                self.update_title();
             }
             Action::OpenContainingFolder => {
                 if let Some(source) = self.document.current_source() {
@@ -1154,6 +1281,24 @@ impl AppWindow {
                 self.show_image_info();
             }
 
+            // --- 編集 ---
+            Action::DeselectSelection => {
+                self.selection.deselect();
+                self.invalidate();
+                self.update_title();
+            }
+            Action::Crop => {
+                if let Some(sel_rect) = self.selection.current_rect()
+                    && let Some(img) = self.document.current_image()
+                {
+                    let cropped = crate::filter::transform::crop(img, &sel_rect);
+                    self.selection.deselect();
+                    self.document.apply_edit(cropped);
+                    self.process_document_events();
+                    self.update_title();
+                }
+            }
+
             // --- ブックマーク ---
             Action::BookmarkSave => {
                 let idx = self.document.file_list().current_index();
@@ -1164,6 +1309,10 @@ impl AppWindow {
                 }
             }
             Action::BookmarkLoad => {
+                if !self.guard_unsaved_edit() {
+                    return;
+                }
+                self.selection.deselect();
                 match crate::bookmark::load_bookmark(self.hwnd) {
                     Ok(Some(data)) => {
                         if let Err(e) = self.document.load_bookmark_data(data) {
@@ -1177,15 +1326,27 @@ impl AppWindow {
             }
             // --- ページ指定ナビゲーション ---
             Action::NavigateToPage => {
+                if !self.guard_unsaved_edit() {
+                    return;
+                }
+                self.selection.deselect();
                 self.navigate_to_page_dialog();
             }
 
             // --- ソートナビゲーション ---
             Action::SortNavigateBack => {
+                if !self.guard_unsaved_edit() {
+                    return;
+                }
+                self.selection.deselect();
                 self.document.sort_navigate_back();
                 self.process_document_events();
             }
             Action::SortNavigateForward => {
+                if !self.guard_unsaved_edit() {
+                    return;
+                }
+                self.selection.deselect();
                 self.document.sort_navigate_forward();
                 self.process_document_events();
             }
@@ -1474,7 +1635,151 @@ Susieプラグイン (.sph/.spi) で拡張可能";
         }
     }
 
+    /// マウス左ボタン押下: 選択ドラッグ開始
+    fn on_lbutton_down(&mut self, lparam: LPARAM) {
+        let Some(draw_rect) = self.renderer.last_draw_rect().copied() else {
+            return;
+        };
+        let Some(img) = self.document.current_image() else {
+            return;
+        };
+
+        let sx = (lparam.0 & 0xFFFF) as i16 as f32;
+        let sy = ((lparam.0 >> 16) & 0xFFFF) as i16 as f32;
+
+        self.selection
+            .on_mouse_down(sx, sy, &draw_rect, img.width, img.height);
+
+        if self.selection.is_dragging() {
+            // マウスキャプチャ（ウィンドウ外でもドラッグイベントを受け取る）
+            unsafe {
+                windows::Win32::UI::Input::KeyboardAndMouse::SetCapture(self.hwnd);
+            }
+            self.invalidate();
+            self.update_title();
+        }
+    }
+
+    /// マウス移動: ドラッグ中の矩形更新
+    fn on_mouse_move(&mut self, lparam: LPARAM) {
+        if !self.selection.is_dragging() {
+            return;
+        }
+        let Some(draw_rect) = self.renderer.last_draw_rect().copied() else {
+            return;
+        };
+        let Some(img) = self.document.current_image() else {
+            return;
+        };
+
+        let sx = (lparam.0 & 0xFFFF) as i16 as f32;
+        let sy = ((lparam.0 >> 16) & 0xFFFF) as i16 as f32;
+
+        self.selection
+            .on_mouse_move(sx, sy, &draw_rect, img.width, img.height);
+        self.invalidate();
+        self.update_title();
+    }
+
+    /// マウス左ボタンリリース: ドラッグ終了
+    fn on_lbutton_up(&mut self) {
+        if !self.selection.is_dragging() {
+            return;
+        }
+        let Some(img) = self.document.current_image() else {
+            return;
+        };
+
+        unsafe {
+            windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture().unwrap_or_default();
+        }
+        self.selection.on_mouse_up(img.width, img.height);
+        self.invalidate();
+        self.update_title();
+    }
+
+    /// WM_SETCURSOR: 選択ハンドル上でカーソルを変更
+    /// trueを返した場合はDefWindowProcを呼ばない
+    fn on_set_cursor(&self) -> bool {
+        if !self.selection.is_selected() {
+            return false;
+        }
+        let Some(draw_rect) = self.renderer.last_draw_rect() else {
+            return false;
+        };
+        let Some(img) = self.document.current_image() else {
+            return false;
+        };
+
+        // 現在のマウス位置を取得
+        let mut pt = windows::Win32::Foundation::POINT::default();
+        unsafe {
+            let _ = windows::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut pt);
+            let _ = windows::Win32::Graphics::Gdi::ScreenToClient(self.hwnd, &mut pt);
+        }
+        let sx = pt.x as f32;
+        let sy = pt.y as f32;
+
+        let hit = self
+            .selection
+            .hit_test_at(sx, sy, draw_rect, img.width, img.height);
+        let cursor_id = match hit {
+            HitTestResult::Handle(HandleKind::TopLeft | HandleKind::BottomRight) => {
+                Some(IDC_SIZENWSE)
+            }
+            HitTestResult::Handle(HandleKind::TopRight | HandleKind::BottomLeft) => {
+                Some(IDC_SIZENESW)
+            }
+            HitTestResult::Handle(HandleKind::Top | HandleKind::Bottom) => Some(IDC_SIZENS),
+            HitTestResult::Handle(HandleKind::Left | HandleKind::Right) => Some(IDC_SIZEWE),
+            HitTestResult::Inside => Some(IDC_SIZEALL),
+            _ => None,
+        };
+
+        if let Some(id) = cursor_id {
+            unsafe {
+                let _ = SetCursor(LoadCursorW(None, id).ok());
+            }
+            return true;
+        }
+
+        false
+    }
+
+    /// 未保存の編集がある場合に確認ダイアログを表示する
+    /// trueを返した場合は操作を続行してよい
+    fn guard_unsaved_edit(&mut self) -> bool {
+        if !self.document.has_unsaved_edit() {
+            return true;
+        }
+        let msg = "編集中の画像は保存されていません。破棄しますか？\0";
+        let title = "ぐらびゅ3\0";
+        let wide_msg: Vec<u16> = msg.encode_utf16().collect();
+        let wide_title: Vec<u16> = title.encode_utf16().collect();
+        let answer = unsafe {
+            MessageBoxW(
+                Some(self.hwnd),
+                windows::core::PCWSTR(wide_msg.as_ptr()),
+                windows::core::PCWSTR(wide_title.as_ptr()),
+                MB_YESNO | MB_ICONQUESTION,
+            )
+        };
+        if answer == IDYES {
+            self.document.discard_editing_session();
+            self.selection.deselect();
+            true
+        } else {
+            false
+        }
+    }
+
     fn on_drop_files(&mut self, hdrop: HDROP) {
+        if !self.guard_unsaved_edit() {
+            unsafe { DragFinish(hdrop) };
+            return;
+        }
+        self.selection.deselect();
+
         // ドロップされた全ファイルを収集
         let file_count = unsafe { DragQueryFileW(hdrop, 0xFFFFFFFF, None) } as usize;
         let mut paths = Vec::new();

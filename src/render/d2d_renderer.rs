@@ -17,6 +17,7 @@ use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
 use super::layout::{DrawRect, Layout};
 use crate::config::DisplayConfig;
 use crate::image::DecodedImage;
+use crate::selection::{self, HANDLE_DRAW_SIZE, PixelRect};
 
 /// αチャネル背景モード
 #[derive(Debug, Clone, Copy, PartialEq, Default, serde::Deserialize)]
@@ -52,6 +53,8 @@ pub struct D2DRenderer {
     checker_brush: Option<ID2D1BitmapBrush>,
     /// 描画領域の左オフセット（ファイルリストパネル分）
     draw_offset_x: f32,
+    /// 最後に描画した画像の描画矩形（選択の座標変換用）
+    last_draw_rect: Option<DrawRect>,
 }
 
 // 背景色: ダークグレー (#333333)
@@ -82,6 +85,7 @@ impl D2DRenderer {
                 alpha_bg,
                 checker_brush: None,
                 draw_offset_x: 0.0,
+                last_draw_rect: None,
             })
         }
     }
@@ -121,7 +125,8 @@ impl D2DRenderer {
     }
 
     /// 画像を描画する。imageがNoneなら背景のみ。
-    pub fn draw(&mut self, image: Option<&DecodedImage>) {
+    /// `selection_rect`: 選択矩形がある場合はオーバーレイ描画する
+    pub fn draw(&mut self, image: Option<&DecodedImage>, selection_rect: Option<&PixelRect>) {
         unsafe {
             self.render_target.BeginDraw();
 
@@ -153,6 +158,9 @@ impl D2DRenderer {
                 // オフセットを加算して実際の描画位置に変換
                 draw_rect.x += self.draw_offset_x;
 
+                // last_draw_rectを更新（選択の座標変換用）
+                self.last_draw_rect = Some(draw_rect);
+
                 // αチャネル背景を画像領域に描画
                 self.draw_alpha_background(&draw_rect);
 
@@ -162,6 +170,13 @@ impl D2DRenderer {
                 if let Ok(bitmap) = self.get_prescaled_bitmap(img, target_w, target_h) {
                     self.draw_bitmap(&bitmap, &draw_rect);
                 }
+
+                // 選択矩形オーバーレイ
+                if let Some(sel_rect) = selection_rect {
+                    self.draw_selection_overlay(sel_rect, &draw_rect, img.width, img.height);
+                }
+            } else {
+                self.last_draw_rect = None;
             }
 
             if has_clip {
@@ -437,6 +452,84 @@ impl D2DRenderer {
     /// 描画領域の左オフセットを設定（ファイルリストパネル幅）
     pub fn set_draw_offset(&mut self, offset_x: f32) {
         self.draw_offset_x = offset_x;
+    }
+
+    /// 最後に描画した画像の描画矩形を返す（選択の座標変換用）
+    pub fn last_draw_rect(&self) -> Option<&DrawRect> {
+        self.last_draw_rect.as_ref()
+    }
+
+    /// 選択矩形のオーバーレイを描画する（白+黒の2本線 + ハンドル）
+    unsafe fn draw_selection_overlay(
+        &self,
+        sel_rect: &PixelRect,
+        draw_rect: &DrawRect,
+        img_width: u32,
+        img_height: u32,
+    ) {
+        unsafe {
+            // 選択矩形のスクリーン座標を計算
+            let (left, top) = selection::image_to_screen(
+                sel_rect.x, sel_rect.y, draw_rect, img_width, img_height,
+            );
+            let (right, bottom) = selection::image_to_screen(
+                sel_rect.right(),
+                sel_rect.bottom(),
+                draw_rect,
+                img_width,
+                img_height,
+            );
+
+            let rect_outer = D2D_RECT_F {
+                left,
+                top,
+                right,
+                bottom,
+            };
+
+            // 黒線（外側）
+            if let Ok(black_brush) = self.render_target.CreateSolidColorBrush(
+                &D2D1_COLOR_F {
+                    r: 0.0,
+                    g: 0.0,
+                    b: 0.0,
+                    a: 0.8,
+                },
+                None,
+            ) {
+                self.render_target
+                    .DrawRectangle(&rect_outer, &black_brush, 2.0, None);
+            }
+
+            // 白線（内側、破線風に見える）
+            if let Ok(white_brush) = self.render_target.CreateSolidColorBrush(
+                &D2D1_COLOR_F {
+                    r: 1.0,
+                    g: 1.0,
+                    b: 1.0,
+                    a: 0.9,
+                },
+                None,
+            ) {
+                self.render_target
+                    .DrawRectangle(&rect_outer, &white_brush, 1.0, None);
+
+                // 8箇所のリサイズハンドルを描画
+                let handles = selection::handle_positions(sel_rect);
+                let hs = HANDLE_DRAW_SIZE;
+                for (_kind, hx, hy) in &handles {
+                    let (sx, sy) =
+                        selection::image_to_screen(*hx, *hy, draw_rect, img_width, img_height);
+                    let handle_rect = D2D_RECT_F {
+                        left: sx - hs,
+                        top: sy - hs,
+                        right: sx + hs,
+                        bottom: sy + hs,
+                    };
+                    self.render_target.FillRectangle(&handle_rect, &white_brush);
+                }
+            }
+        }
     }
 }
 

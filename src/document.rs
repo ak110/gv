@@ -7,6 +7,7 @@ use anyhow::{Context as _, Result};
 use crossbeam_channel::Sender;
 
 use crate::archive::ArchiveManager;
+use crate::editing::EditingSession;
 use crate::extension_registry::ExtensionRegistry;
 use crate::file_info::FileSource;
 use crate::file_list::FileList;
@@ -65,6 +66,8 @@ pub struct Document {
     current_containers: Vec<PathBuf>,
     /// ZIPファイルのバッファキャッシュ（オンデマンド読み出し用、先読みスレッドと共有）
     zip_buffers: Arc<RwLock<HashMap<PathBuf, ZipBuffer>>>,
+    /// 編集セッション（編集中のみSome）
+    editing_session: Option<EditingSession>,
 }
 
 impl Document {
@@ -87,6 +90,7 @@ impl Document {
             archive_temp_dirs: Vec::new(),
             current_containers: Vec::new(),
             zip_buffers: Arc::new(RwLock::new(HashMap::new())),
+            editing_session: None,
         }
     }
 
@@ -860,6 +864,46 @@ impl Document {
     pub fn is_cached(&self, index: usize) -> bool {
         self.cache.contains(index)
             || (self.file_list.current_index() == Some(index) && self.current_image.is_some())
+    }
+
+    // --- 編集セッション ---
+
+    /// 未保存の編集があるかどうか
+    pub fn has_unsaved_edit(&self) -> bool {
+        self.editing_session
+            .as_ref()
+            .is_some_and(|s| s.has_unsaved_changes())
+    }
+
+    /// 編集セッションを開始する（まだ開始していない場合）
+    /// 現在の画像をバックアップとして保持する
+    fn ensure_editing_session(&mut self) {
+        if self.editing_session.is_some() {
+            return;
+        }
+        if let Some(img) = &self.current_image {
+            let backup = DecodedImage {
+                data: img.data.clone(),
+                width: img.width,
+                height: img.height,
+            };
+            self.editing_session = Some(EditingSession::new(backup));
+        }
+    }
+
+    /// 編集セッションを破棄する（未保存の変更を捨てる）
+    pub fn discard_editing_session(&mut self) {
+        self.editing_session = None;
+    }
+
+    /// current_imageを編集結果で置き換える
+    pub fn apply_edit(&mut self, new_image: DecodedImage) {
+        self.ensure_editing_session();
+        self.current_image = Some(new_image);
+        if let Some(session) = &mut self.editing_session {
+            session.mark_modified();
+        }
+        let _ = self.event_sender.send(DocumentEvent::ImageReady);
     }
 }
 

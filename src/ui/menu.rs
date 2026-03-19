@@ -58,6 +58,9 @@ pub fn build_menu_bar() -> HMENU {
 
         // 画像(&I)
         let image_menu = create_popup(&[
+            Some((Action::DeselectSelection, "選択範囲を取り消し\tEnter")),
+            Some((Action::Crop, "画像の切り抜き\tCtrl+Shift+X")),
+            None,
             Some((Action::CopyImage, "画像をコピー\tCtrl+C")),
             Some((Action::PasteImage, "クリップボードから貼り付け\tCtrl+V")),
             Some((Action::CopyFileName, "ファイル名をコピー\tCtrl+F")),
@@ -255,6 +258,9 @@ const ALL_ACTIONS: &[Action] = &[
     Action::MarkedMove,
     Action::MarkedCopy,
     Action::MarkedCopyNames,
+    // 編集
+    Action::DeselectSelection,
+    Action::Crop,
     // ブックマーク
     Action::BookmarkSave,
     Action::BookmarkLoad,

@@ -116,6 +116,10 @@ pub enum Action {
     MarkedCopy,
     MarkedCopyNames,
 
+    // --- 編集 ---
+    DeselectSelection,
+    Crop,
+
     // --- ブックマーク ---
     BookmarkSave,
     BookmarkLoad,
@@ -270,6 +274,10 @@ impl KeyConfig {
         bind(&mut m, "Ctrl+Shift+Delete", Action::MarkedDelete);
         bind(&mut m, "Ctrl+Shift+M", Action::MarkedMove);
         bind(&mut m, "Ctrl+Shift+C", Action::MarkedCopy);
+
+        // [edit]
+        bind(&mut m, "Enter", Action::DeselectSelection);
+        bind(&mut m, "Ctrl+Shift+X", Action::Crop);
 
         // [bookmark]
         bind(&mut m, "F9", Action::BookmarkSave);
@@ -507,6 +515,10 @@ fn field_to_action(field: &str) -> Option<Action> {
         "marked_move" => Action::MarkedMove,
         "marked_copy" => Action::MarkedCopy,
         "marked_copy_names" => Action::MarkedCopyNames,
+
+        // 編集
+        "deselect_selection" => Action::DeselectSelection,
+        "crop" => Action::Crop,
 
         // ブックマーク
         "bookmark_save" => Action::BookmarkSave,
