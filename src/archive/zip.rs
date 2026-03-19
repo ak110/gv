@@ -27,7 +27,7 @@ impl ZipHandler {
     ) -> Result<Vec<super::ArchiveImageEntry>> {
         let cursor = std::io::Cursor::new(buffer);
         let archive = zip::ZipArchive::new(cursor).context("ZIPバッファの読み取りに失敗")?;
-        Self::list_images_from_archive(archive, registry)
+        Ok(Self::list_images_from_archive(archive, registry))
     }
 
     /// インメモリバッファからエントリを読み出す（Stored最適化付き）
@@ -59,19 +59,18 @@ impl ZipHandler {
             .with_context(|| format!("アーカイブを開けません: {}", archive_path.display()))?;
         let archive = zip::ZipArchive::new(file)
             .with_context(|| format!("ZIP読み取り失敗: {}", archive_path.display()))?;
-        Self::list_images_from_archive(archive, &self.registry)
+        Ok(Self::list_images_from_archive(archive, &self.registry))
     }
 
     /// ZipArchiveからエントリ一覧を取得する共通実装
     fn list_images_from_archive<R: std::io::Read + std::io::Seek>(
         mut archive: zip::ZipArchive<R>,
         registry: &ExtensionRegistry,
-    ) -> Result<Vec<super::ArchiveImageEntry>> {
+    ) -> Vec<super::ArchiveImageEntry> {
         let mut results = Vec::new();
         for i in 0..archive.len() {
-            let entry = match archive.by_index_raw(i) {
-                Ok(e) => e,
-                Err(_) => continue,
+            let Ok(entry) = archive.by_index_raw(i) else {
+                continue;
             };
             if entry.is_dir() {
                 continue;
@@ -91,7 +90,7 @@ impl ZipHandler {
                 file_size,
             });
         }
-        Ok(results)
+        results
     }
 }
 
@@ -130,9 +129,8 @@ impl ArchiveHandler for ZipHandler {
         let mut results = Vec::new();
 
         for i in 0..archive.len() {
-            let mut entry = match archive.by_index(i) {
-                Ok(e) => e,
-                Err(_) => continue,
+            let Ok(mut entry) = archive.by_index(i) else {
+                continue;
             };
 
             // ディレクトリエントリはスキップ

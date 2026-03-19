@@ -96,7 +96,7 @@ impl D2DRenderer {
     ) -> Result<ID2D1HwndRenderTarget> {
         unsafe {
             let mut rc = std::mem::zeroed();
-            GetClientRect(hwnd, &mut rc)?;
+            GetClientRect(hwnd, std::ptr::from_mut(&mut rc))?;
 
             let size = D2D_SIZE_U {
                 width: (rc.right - rc.left) as u32,
@@ -111,7 +111,10 @@ impl D2DRenderer {
             };
 
             factory
-                .CreateHwndRenderTarget(&rt_props, &hwnd_props)
+                .CreateHwndRenderTarget(
+                    std::ptr::from_ref(&rt_props),
+                    std::ptr::from_ref(&hwnd_props),
+                )
                 .context("HwndRenderTarget作成失敗")
         }
     }
@@ -120,7 +123,7 @@ impl D2DRenderer {
     pub fn resize(&mut self, width: u32, height: u32) {
         let size = D2D_SIZE_U { width, height };
         unsafe {
-            let _ = self.render_target.Resize(&size);
+            let _ = self.render_target.Resize(std::ptr::from_ref(&size));
         }
     }
 
@@ -142,8 +145,10 @@ impl D2DRenderer {
                     right: size.width,
                     bottom: size.height,
                 };
-                self.render_target
-                    .PushAxisAlignedClip(&clip, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+                self.render_target.PushAxisAlignedClip(
+                    std::ptr::from_ref(&clip),
+                    D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                );
             }
 
             // クリップ設定後にクリア（パネル領域は保護される）
@@ -307,9 +312,9 @@ impl D2DRenderer {
             self.render_target
                 .CreateBitmap(
                     size,
-                    Some(bgra_data.as_ptr() as *const _),
+                    Some(bgra_data.as_ptr().cast::<core::ffi::c_void>()),
                     pitch,
-                    &bitmap_props,
+                    std::ptr::from_ref(&bitmap_props),
                 )
                 .context("D2Dビットマップ作成失敗")
         }
@@ -336,7 +341,8 @@ impl D2DRenderer {
                         },
                         None,
                     ) {
-                        self.render_target.FillRectangle(&dest, &brush);
+                        self.render_target
+                            .FillRectangle(std::ptr::from_ref(&dest), &brush);
                     }
                 }
                 AlphaBackground::Black => {
@@ -349,13 +355,15 @@ impl D2DRenderer {
                         },
                         None,
                     ) {
-                        self.render_target.FillRectangle(&dest, &brush);
+                        self.render_target
+                            .FillRectangle(std::ptr::from_ref(&dest), &brush);
                     }
                 }
                 AlphaBackground::Checker => {
                     self.ensure_checker_brush();
                     if let Some(ref brush) = self.checker_brush {
-                        self.render_target.FillRectangle(&dest, brush);
+                        self.render_target
+                            .FillRectangle(std::ptr::from_ref(&dest), brush);
                     }
                 }
             }
@@ -407,9 +415,9 @@ impl D2DRenderer {
                 .render_target
                 .CreateBitmap(
                     size,
-                    Some(pixels.as_ptr() as *const _),
+                    Some(pixels.as_ptr().cast::<core::ffi::c_void>()),
                     TILE_SIZE * 4,
-                    &bitmap_props,
+                    std::ptr::from_ref(&bitmap_props),
                 )
                 .context("チェッカータイルビットマップ作成失敗")?;
 
@@ -419,7 +427,7 @@ impl D2DRenderer {
                 interpolationMode: D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
             };
             self.render_target
-                .CreateBitmapBrush(&tile_bitmap, Some(&brush_props), None)
+                .CreateBitmapBrush(&tile_bitmap, Some(std::ptr::from_ref(&brush_props)), None)
                 .context("チェッカーブラシ作成失敗")
         }
     }
@@ -434,7 +442,7 @@ impl D2DRenderer {
             };
             self.render_target.DrawBitmap(
                 bitmap,
-                Some(&dest),
+                Some(std::ptr::from_ref(&dest)),
                 1.0,
                 D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
                 None,
@@ -497,7 +505,8 @@ impl D2DRenderer {
                     right: sx + half,
                     bottom: draw_rect.y + draw_rect.height,
                 };
-                self.render_target.FillRectangle(&rect, &brush);
+                self.render_target
+                    .FillRectangle(std::ptr::from_ref(&rect), &brush);
             }
 
             // 水平線（細い矩形で描画）
@@ -509,7 +518,8 @@ impl D2DRenderer {
                     right: draw_rect.x + draw_rect.width,
                     bottom: sy + half,
                 };
-                self.render_target.FillRectangle(&rect, &brush);
+                self.render_target
+                    .FillRectangle(std::ptr::from_ref(&rect), &brush);
             }
         }
     }
@@ -552,8 +562,12 @@ impl D2DRenderer {
                 },
                 None,
             ) {
-                self.render_target
-                    .DrawRectangle(&rect_outer, &black_brush, 2.0, None);
+                self.render_target.DrawRectangle(
+                    std::ptr::from_ref(&rect_outer),
+                    &black_brush,
+                    2.0,
+                    None,
+                );
             }
 
             // 白線（内側、破線風に見える）
@@ -566,8 +580,12 @@ impl D2DRenderer {
                 },
                 None,
             ) {
-                self.render_target
-                    .DrawRectangle(&rect_outer, &white_brush, 1.0, None);
+                self.render_target.DrawRectangle(
+                    std::ptr::from_ref(&rect_outer),
+                    &white_brush,
+                    1.0,
+                    None,
+                );
 
                 // 8箇所のリサイズハンドルを描画
                 let handles = selection::handle_positions(sel_rect);
@@ -581,7 +599,8 @@ impl D2DRenderer {
                         right: sx + hs,
                         bottom: sy + hs,
                     };
-                    self.render_target.FillRectangle(&handle_rect, &white_brush);
+                    self.render_target
+                        .FillRectangle(std::ptr::from_ref(&handle_rect), &white_brush);
                 }
             }
         }

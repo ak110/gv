@@ -324,16 +324,15 @@ impl Document {
                 self.current_containers.push(path.clone());
             } else if self.archive_manager.supports_on_demand(path) {
                 // オンデマンド（ZIP）: mmapで読み込み（OSがページフォルト駆動で必要部分のみロード）
-                let buffer = match File::open(path).and_then(|f| unsafe { memmap2::Mmap::map(&f) })
+                let buffer = if let Ok(mmap) =
+                    File::open(path).and_then(|f| unsafe { memmap2::Mmap::map(&f) })
                 {
-                    Ok(mmap) => ZipBuffer::Mmap(mmap),
-                    Err(_) => {
-                        // mmapフォールバック: ヒープに読み込み
-                        let data = std::fs::read(path).with_context(|| {
-                            format!("アーカイブ読み込み失敗: {}", path.display())
-                        })?;
-                        ZipBuffer::Memory(data)
-                    }
+                    ZipBuffer::Mmap(mmap)
+                } else {
+                    // mmapフォールバック: ヒープに読み込み
+                    let data = std::fs::read(path)
+                        .with_context(|| format!("アーカイブ読み込み失敗: {}", path.display()))?;
+                    ZipBuffer::Memory(data)
                 };
                 let entries = self
                     .archive_manager
@@ -787,7 +786,7 @@ impl Document {
                 let path = match source {
                     FileSource::PdfPage { pdf_path, .. } => Some(pdf_path),
                     FileSource::ArchiveEntry { archive, .. } => Some(archive),
-                    _ => None,
+                    FileSource::File(_) => None,
                 };
                 if let Some(p) = path
                     && p.exists()
@@ -884,7 +883,7 @@ impl Document {
     pub fn has_unsaved_edit(&self) -> bool {
         self.editing_session
             .as_ref()
-            .is_some_and(|s| s.has_unsaved_changes())
+            .is_some_and(EditingSession::has_unsaved_changes)
     }
 
     /// 編集セッションを開始する（まだ開始していない場合）

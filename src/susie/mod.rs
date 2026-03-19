@@ -48,8 +48,8 @@ impl SusieManager {
             let ext = path
                 .extension()
                 .and_then(|e| e.to_str())
-                .map(|e| e.to_lowercase());
-            if !matches!(ext.as_deref(), Some("sph") | Some("spi")) {
+                .map(str::to_lowercase);
+            if !matches!(ext.as_deref(), Some("sph" | "spi")) {
                 continue;
             }
 

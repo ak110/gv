@@ -16,9 +16,8 @@ pub fn cleanup_orphaned_temp_dirs() {
     let temp_dir = std::env::temp_dir();
     let my_pid = std::process::id();
 
-    let entries = match std::fs::read_dir(&temp_dir) {
-        Ok(entries) => entries,
-        Err(_) => return,
+    let Ok(entries) = std::fs::read_dir(&temp_dir) else {
+        return;
     };
 
     for entry in entries.flatten() {

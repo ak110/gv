@@ -51,12 +51,12 @@ pub fn show_info_dialog(parent: HWND, title: &str, text: &str, font: HFONT) {
                 lpszClassName: windows::core::PCWSTR(class_wide.as_ptr()),
                 ..Default::default()
             };
-            RegisterClassExW(&wc);
+            RegisterClassExW(std::ptr::from_ref(&wc));
         });
 
         // ダイアログデータ
         let mut data = DialogData { closed: false };
-        let data_ptr = &mut data as *mut DialogData;
+        let data_ptr = std::ptr::from_mut(&mut data);
 
         // 親ウィンドウの中心にダイアログを配置
         let (x, y) = center_on_parent(parent, DIALOG_WIDTH, DIALOG_HEIGHT);
@@ -157,16 +157,16 @@ pub fn show_info_dialog(parent: HWND, title: &str, text: &str, font: HFONT) {
         let mut msg = MSG::default();
         #[allow(clippy::while_immutable_condition)]
         while !data.closed {
-            let ret = GetMessageW(&mut msg, None, 0, 0);
+            let ret = GetMessageW(std::ptr::from_mut(&mut msg), None, 0, 0);
             if !ret.as_bool() {
                 break;
             }
             // Tabキーナビゲーション対応
-            if IsDialogMessageW(hwnd, &msg).as_bool() {
+            if IsDialogMessageW(hwnd, std::ptr::from_ref(&msg)).as_bool() {
                 continue;
             }
-            let _ = TranslateMessage(&msg);
-            DispatchMessageW(&msg);
+            let _ = TranslateMessage(std::ptr::from_ref(&msg));
+            DispatchMessageW(std::ptr::from_ref(&msg));
         }
         let _ = EnableWindow(parent, true);
         let _ = SetForegroundWindow(parent);
@@ -226,10 +226,10 @@ unsafe fn get_dialog_data(hwnd: HWND) -> Option<&'static mut DialogData> {
 fn center_on_parent(parent: HWND, width: i32, height: i32) -> (i32, i32) {
     let mut rect = windows::Win32::Foundation::RECT::default();
     unsafe {
-        let _ = GetWindowRect(parent, &mut rect);
+        let _ = GetWindowRect(parent, std::ptr::from_mut(&mut rect));
     }
-    let cx = (rect.left + rect.right) / 2 - width / 2;
-    let cy = (rect.top + rect.bottom) / 2 - height / 2;
+    let cx = i32::midpoint(rect.left, rect.right) - width / 2;
+    let cy = i32::midpoint(rect.top, rect.bottom) - height / 2;
     (cx.max(0), cy.max(0))
 }
 

@@ -19,6 +19,7 @@ pub fn test_archive_manager(registry: &Arc<ExtensionRegistry>) -> ArchiveManager
 }
 
 /// テスト用ZIPバッファを生成する
+#[allow(dead_code)]
 pub fn test_zip_buffers() -> Arc<RwLock<HashMap<PathBuf, ZipBuffer>>> {
     Arc::new(RwLock::new(HashMap::new()))
 }

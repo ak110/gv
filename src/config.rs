@@ -226,6 +226,7 @@ impl Config {
 }
 
 #[cfg(test)]
+#[allow(clippy::float_cmp)]
 mod tests {
     use super::*;
 
@@ -382,5 +383,138 @@ default_sort = "bogus"
     fn prefetch_base_image_size() {
         let p = PrefetchConfig::default();
         assert_eq!(p.base_image_size(), 1024 * 1536 * 4);
+    }
+
+    #[test]
+    fn prefetch_base_image_size_custom() {
+        let p = PrefetchConfig {
+            cache_base_width: 1920,
+            cache_base_height: 1080,
+        };
+        assert_eq!(p.base_image_size(), 1920 * 1080 * 4);
+    }
+
+    #[test]
+    fn prefetch_base_image_size_zero() {
+        let p = PrefetchConfig {
+            cache_base_width: 0,
+            cache_base_height: 0,
+        };
+        assert_eq!(p.base_image_size(), 0);
+    }
+
+    #[test]
+    fn invalid_auto_scale_fallback() {
+        let toml_str = r#"
+[display]
+auto_scale = "zoom"
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.display.auto_scale, DisplayModeConfig::Fit);
+    }
+
+    #[test]
+    fn invalid_alpha_background_fallback() {
+        let toml_str = r#"
+[display]
+alpha_background = "red"
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.display.alpha_background, AlphaBackground::Checker);
+    }
+
+    #[test]
+    fn invalid_sort_order_fallback() {
+        let toml_str = r#"
+[list]
+default_sort = "random"
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.list.default_sort, SortOrder::Name);
+    }
+
+    #[test]
+    fn all_valid_auto_scale_values() {
+        for (value, expected) in [
+            ("shrink", DisplayModeConfig::Shrink),
+            ("fit", DisplayModeConfig::Fit),
+            ("enlarge", DisplayModeConfig::Enlarge),
+            ("original", DisplayModeConfig::Original),
+            ("fixed", DisplayModeConfig::Fixed),
+        ] {
+            let toml_str = format!("[display]\nauto_scale = \"{value}\"");
+            let config: Config = toml::from_str(&toml_str).unwrap();
+            assert_eq!(config.display.auto_scale, expected, "auto_scale={value}");
+        }
+    }
+
+    #[test]
+    fn all_valid_alpha_background_values() {
+        for (value, expected) in [
+            ("white", AlphaBackground::White),
+            ("black", AlphaBackground::Black),
+            ("checker", AlphaBackground::Checker),
+        ] {
+            let toml_str = format!("[display]\nalpha_background = \"{value}\"");
+            let config: Config = toml::from_str(&toml_str).unwrap();
+            assert_eq!(
+                config.display.alpha_background, expected,
+                "alpha_background={value}"
+            );
+        }
+    }
+
+    #[test]
+    fn all_valid_sort_order_values() {
+        for (value, expected) in [
+            ("name", SortOrder::Name),
+            ("name_nocase", SortOrder::NameNoCase),
+            ("size", SortOrder::Size),
+            ("date", SortOrder::Date),
+            ("natural", SortOrder::Natural),
+        ] {
+            let toml_str = format!("[list]\ndefault_sort = \"{value}\"");
+            let config: Config = toml::from_str(&toml_str).unwrap();
+            assert_eq!(config.list.default_sort, expected, "default_sort={value}");
+        }
+    }
+
+    #[test]
+    fn display_mode_conversion_enlarge_and_original() {
+        let d = DisplayConfig {
+            auto_scale: DisplayModeConfig::Enlarge,
+            ..Default::default()
+        };
+        assert_eq!(d.to_display_mode(), DisplayMode::AutoEnlarge);
+
+        let d = DisplayConfig {
+            auto_scale: DisplayModeConfig::Original,
+            ..Default::default()
+        };
+        assert_eq!(d.to_display_mode(), DisplayMode::Original);
+    }
+
+    #[test]
+    fn empty_toml_uses_all_defaults() {
+        let config: Config = toml::from_str("").unwrap();
+        let default = Config::default();
+        assert_eq!(config.display.auto_scale, default.display.auto_scale);
+        assert_eq!(config.display.fixed_scale, default.display.fixed_scale);
+        assert_eq!(config.display.margin, default.display.margin);
+        assert_eq!(
+            config.prefetch.cache_base_width,
+            default.prefetch.cache_base_width
+        );
+        assert_eq!(
+            config.prefetch.cache_base_height,
+            default.prefetch.cache_base_height
+        );
+        assert_eq!(config.list.default_sort, default.list.default_sort);
+    }
+
+    #[test]
+    fn load_from_nonexistent_file_returns_error() {
+        let result = Config::load_from(Path::new("nonexistent_file_xyz.toml"));
+        assert!(result.is_err());
     }
 }

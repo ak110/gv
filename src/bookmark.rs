@@ -1,5 +1,6 @@
 //! ブックマーク機能（ファイルリストの保存/復元）
 
+use std::fmt::Write as _;
 use std::path::PathBuf;
 
 use anyhow::{Context as _, Result};
@@ -53,22 +54,22 @@ pub fn save_bookmark(
 
     let mut content = String::new();
     content.push_str("# gv3 bookmark v1\n");
-    content.push_str(&format!("# index: {}\n", current_index.unwrap_or(0)));
+    let _ = writeln!(content, "# index: {}", current_index.unwrap_or(0));
 
     for file in file_list.files() {
         match &file.source {
             FileSource::File(path) => {
-                content.push_str(&format!("file\t{}\n", path.display()));
+                let _ = writeln!(content, "file\t{}", path.display());
             }
             FileSource::ArchiveEntry { archive, entry, .. } => {
                 // on_demandフラグは保存しない（復元時にopen_containersで再判定）
-                content.push_str(&format!("archive\t{}\t{}\n", archive.display(), entry));
+                let _ = writeln!(content, "archive\t{}\t{}", archive.display(), entry);
             }
             FileSource::PdfPage {
                 pdf_path,
                 page_index,
             } => {
-                content.push_str(&format!("pdf\t{}\t{}\n", pdf_path.display(), page_index));
+                let _ = writeln!(content, "pdf\t{}\t{}", pdf_path.display(), page_index);
             }
         }
     }
@@ -89,11 +90,11 @@ pub fn load_bookmark(hwnd: HWND) -> Result<Option<BookmarkData>> {
     let content = std::fs::read_to_string(&path)
         .with_context(|| format!("ブックマーク読み込み失敗: {}", path.display()))?;
 
-    parse_bookmark(&content).map(Some)
+    Ok(Some(parse_bookmark(&content)))
 }
 
 /// ブックマークテキストをパースする
-fn parse_bookmark(content: &str) -> Result<BookmarkData> {
+fn parse_bookmark(content: &str) -> BookmarkData {
     let mut entries = Vec::new();
     let mut index = 0;
 
@@ -147,7 +148,7 @@ fn parse_bookmark(content: &str) -> Result<BookmarkData> {
         index = entries.len() - 1;
     }
 
-    Ok(BookmarkData { entries, index })
+    BookmarkData { entries, index }
 }
 
 #[cfg(test)]
@@ -157,12 +158,12 @@ mod tests {
 
     #[test]
     fn parse_bookmark_normal() {
-        let content = r#"# gv3 bookmark v1
+        let content = r"# gv3 bookmark v1
 # index: 1
 file	C:\images\test.jpg
 file	C:\images\test2.png
-"#;
-        let data = parse_bookmark(content).unwrap();
+";
+        let data = parse_bookmark(content);
         assert_eq!(data.entries.len(), 2);
         assert_eq!(data.index, 1);
         assert!(
@@ -172,12 +173,12 @@ file	C:\images\test2.png
 
     #[test]
     fn parse_bookmark_with_archive() {
-        let content = r#"# gv3 bookmark v1
+        let content = r"# gv3 bookmark v1
 # index: 0
 file	C:\images\test.jpg
 archive	C:\archive.zip	folder/image.png
-"#;
-        let data = parse_bookmark(content).unwrap();
+";
+        let data = parse_bookmark(content);
         assert_eq!(data.entries.len(), 2);
         assert!(matches!(
             &data.entries[1],
@@ -188,13 +189,13 @@ archive	C:\archive.zip	folder/image.png
 
     #[test]
     fn parse_bookmark_with_pdf() {
-        let content = r#"# gv3 bookmark v1
+        let content = r"# gv3 bookmark v1
 # index: 2
 pdf	C:\docs\test.pdf	0
 pdf	C:\docs\test.pdf	1
 pdf	C:\docs\test.pdf	2
-"#;
-        let data = parse_bookmark(content).unwrap();
+";
+        let data = parse_bookmark(content);
         assert_eq!(data.entries.len(), 3);
         assert_eq!(data.index, 2);
         assert!(matches!(
@@ -207,7 +208,155 @@ pdf	C:\docs\test.pdf	2
     #[test]
     fn parse_bookmark_index_clamp() {
         let content = "# index: 999\nfile\ttest.jpg\n";
-        let data = parse_bookmark(content).unwrap();
+        let data = parse_bookmark(content);
         assert_eq!(data.index, 0); // clamped to 0
+    }
+
+    #[test]
+    fn parse_bookmark_empty_content() {
+        let data = parse_bookmark("");
+        assert!(data.entries.is_empty());
+        assert_eq!(data.index, 0);
+    }
+
+    #[test]
+    fn parse_bookmark_header_only_no_entries() {
+        let content = "# gv3 bookmark v1\n# index: 5\n";
+        let data = parse_bookmark(content);
+        assert!(data.entries.is_empty());
+        assert_eq!(data.index, 5); // エントリが空なのでクランプされず、パースされたindex値がそのまま残る
+    }
+
+    #[test]
+    fn parse_bookmark_no_index_comment() {
+        let content = "# gv3 bookmark v1\nfile\ttest.jpg\nfile\ttest2.jpg\n";
+        let data = parse_bookmark(content);
+        assert_eq!(data.entries.len(), 2);
+        assert_eq!(data.index, 0); // デフォルト0
+    }
+
+    #[test]
+    fn parse_bookmark_invalid_index_value() {
+        // index行のパースに失敗 → デフォルト0のまま
+        let content = "# index: abc\nfile\ttest.jpg\n";
+        let data = parse_bookmark(content);
+        assert_eq!(data.index, 0);
+        assert_eq!(data.entries.len(), 1);
+    }
+
+    #[test]
+    fn parse_bookmark_negative_index() {
+        let content = "# index: -1\nfile\ttest.jpg\n";
+        let data = parse_bookmark(content);
+        assert_eq!(data.index, 0); // usize::parseに失敗 → デフォルト0
+    }
+
+    #[test]
+    fn parse_bookmark_blank_lines_ignored() {
+        let content = "# gv3 bookmark v1\n\n\nfile\ttest.jpg\n\nfile\ttest2.jpg\n\n";
+        let data = parse_bookmark(content);
+        assert_eq!(data.entries.len(), 2);
+    }
+
+    #[test]
+    fn parse_bookmark_whitespace_lines_ignored() {
+        let content = "   \n\tfile\ta.jpg\n   \n";
+        let data = parse_bookmark(content);
+        // "file\ta.jpg" はtrim後に正しくパースされるはず…
+        // ただし "\tfile\ta.jpg" をtrimすると "file\ta.jpg" になり、
+        // splitn(3, '\t') → ["file", "a.jpg"] にマッチ
+        assert_eq!(data.entries.len(), 1);
+        assert!(matches!(&data.entries[0], FileSource::File(p) if p == Path::new("a.jpg")));
+    }
+
+    #[test]
+    fn parse_bookmark_unknown_type_falls_back_to_file() {
+        // 未知のタイプ名は後方互換でFileとして扱われる
+        let content = "unknown\tpath\textra\n";
+        let data = parse_bookmark(content);
+        assert_eq!(data.entries.len(), 1);
+        // 後方互換: タブ区切りでない行 or マッチしない行はそのままFileとして扱う
+        assert!(matches!(&data.entries[0], FileSource::File(_)));
+    }
+
+    #[test]
+    fn parse_bookmark_bare_path_without_type() {
+        // タブ区切りでない行 → 後方互換でそのままファイルパスとして扱う
+        let content = r"C:\images\photo.jpg";
+        let data = parse_bookmark(content);
+        assert_eq!(data.entries.len(), 1);
+        assert!(
+            matches!(&data.entries[0], FileSource::File(p) if p == Path::new(r"C:\images\photo.jpg"))
+        );
+    }
+
+    #[test]
+    fn parse_bookmark_pdf_invalid_page_index() {
+        // page_indexがu32にパースできない → エントリはスキップされる
+        let content = "pdf\tC:\\test.pdf\tabc\n";
+        let data = parse_bookmark(content);
+        assert!(data.entries.is_empty());
+    }
+
+    #[test]
+    fn parse_bookmark_pdf_negative_page_index() {
+        let content = "pdf\tC:\\test.pdf\t-1\n";
+        let data = parse_bookmark(content);
+        assert!(data.entries.is_empty()); // u32パース失敗
+    }
+
+    #[test]
+    fn parse_bookmark_archive_on_demand_is_false() {
+        let content = "archive\tC:\\test.zip\timg.png\n";
+        let data = parse_bookmark(content);
+        assert_eq!(data.entries.len(), 1);
+        assert!(matches!(
+            &data.entries[0],
+            FileSource::ArchiveEntry { on_demand, .. } if !on_demand
+        ));
+    }
+
+    #[test]
+    fn parse_bookmark_mixed_entry_types() {
+        let content = r"# gv3 bookmark v1
+# index: 2
+file	C:\images\a.jpg
+archive	C:\archive.zip	inner/b.png
+pdf	C:\docs\doc.pdf	3
+file	C:\images\c.bmp
+";
+        let data = parse_bookmark(content);
+        assert_eq!(data.entries.len(), 4);
+        assert_eq!(data.index, 2);
+        assert!(matches!(&data.entries[0], FileSource::File(_)));
+        assert!(matches!(&data.entries[1], FileSource::ArchiveEntry { .. }));
+        assert!(matches!(
+            &data.entries[2],
+            FileSource::PdfPage { page_index, .. } if *page_index == 3
+        ));
+        assert!(matches!(&data.entries[3], FileSource::File(_)));
+    }
+
+    #[test]
+    fn parse_bookmark_index_clamp_exact_boundary() {
+        // index == entries.len() → len-1にクランプ
+        let content = "# index: 3\nfile\ta.jpg\nfile\tb.jpg\nfile\tc.jpg\n";
+        let data = parse_bookmark(content);
+        assert_eq!(data.entries.len(), 3);
+        assert_eq!(data.index, 2); // 3 >= 3 なのでクランプ
+    }
+
+    #[test]
+    fn parse_bookmark_index_within_range() {
+        let content = "# index: 2\nfile\ta.jpg\nfile\tb.jpg\nfile\tc.jpg\n";
+        let data = parse_bookmark(content);
+        assert_eq!(data.index, 2); // 範囲内なのでそのまま
+    }
+
+    #[test]
+    fn parse_bookmark_comment_lines_ignored() {
+        let content = "# gv3 bookmark v1\n# some comment\n# another\nfile\ta.jpg\n";
+        let data = parse_bookmark(content);
+        assert_eq!(data.entries.len(), 1);
     }
 }

@@ -43,7 +43,7 @@ impl FullscreenState {
             self.saved_style = WINDOW_STYLE(GetWindowLongPtrW(hwnd, GWL_STYLE) as u32);
             self.saved_ex_style = WINDOW_EX_STYLE(GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32);
             self.saved_placement.length = std::mem::size_of::<WINDOWPLACEMENT>() as u32;
-            let _ = GetWindowPlacement(hwnd, &mut self.saved_placement);
+            let _ = GetWindowPlacement(hwnd, std::ptr::from_mut(&mut self.saved_placement));
 
             // ウィンドウ枠を外してポップアップスタイルに変更
             let new_style = WINDOW_STYLE(
@@ -57,7 +57,7 @@ impl FullscreenState {
                 cbSize: std::mem::size_of::<MONITORINFO>() as u32,
                 ..Default::default()
             };
-            if GetMonitorInfoW(monitor, &mut mi).as_bool() {
+            if GetMonitorInfoW(monitor, std::ptr::from_mut(&mut mi)).as_bool() {
                 let rc = mi.rcMonitor;
                 let _ = SetWindowPos(
                     hwnd,
@@ -97,7 +97,7 @@ impl FullscreenState {
             );
 
             // ウィンドウ位置・サイズを復元
-            let _ = SetWindowPlacement(hwnd, &self.saved_placement);
+            let _ = SetWindowPlacement(hwnd, std::ptr::from_ref(&self.saved_placement));
 
             self.is_fullscreen = false;
         }

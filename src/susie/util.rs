@@ -93,7 +93,9 @@ pub fn dib_to_rgba(bmi_ptr: *const u8, bits_ptr: *const u8) -> Result<DecodedIma
     }
 
     // BITMAPINFOHEADERを読み取り
-    let bih = unsafe { &*(bmi_ptr as *const BitmapInfoHeader) };
+    // BITMAPINFOHEADERは先頭に配置されるため、アライメントは保証されている
+    #[allow(clippy::cast_ptr_alignment)]
+    let bih = unsafe { &*bmi_ptr.cast::<BitmapInfoHeader>() };
     let width = bih.bi_width;
     let height = bih.bi_height; // 正: bottom-up, 負: top-down
     let bit_count = bih.bi_bit_count;
@@ -223,6 +225,7 @@ pub fn dib_to_rgba(bmi_ptr: *const u8, bits_ptr: *const u8) -> Result<DecodedIma
 
 /// BITMAPINFOHEADER (40 bytes)
 #[repr(C)]
+#[allow(clippy::struct_field_names)] // Windows APIの構造体名に合わせている
 struct BitmapInfoHeader {
     bi_size: u32,
     bi_width: i32,
@@ -296,7 +299,7 @@ mod tests {
         };
         let bih_bytes = unsafe {
             std::slice::from_raw_parts(
-                &bih as *const _ as *const u8,
+                std::ptr::from_ref(&bih).cast::<u8>(),
                 std::mem::size_of::<BitmapInfoHeader>(),
             )
         };

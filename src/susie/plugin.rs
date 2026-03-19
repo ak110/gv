@@ -171,8 +171,8 @@ impl SusiePlugin {
                 data.as_ptr(),
                 data.len() as isize,
                 1, // メモリイメージモード
-                &mut h_bm_info,
-                &mut h_bm,
+                std::ptr::from_mut(&mut h_bm_info),
+                std::ptr::from_mut(&mut h_bm),
                 0,
                 0,
             )
@@ -213,7 +213,7 @@ impl SusiePlugin {
                 ansi_path.as_ptr(),
                 0, // 未使用
                 0, // flag=0: ファイル名
-                &mut h_inf,
+                std::ptr::from_mut(&mut h_inf),
             )
         };
 
@@ -234,8 +234,8 @@ impl SusiePlugin {
             let mut entries = Vec::new();
             let mut offset = 0usize;
             loop {
-                let entry_ptr = unsafe { (ptr as *const u8).add(offset) };
-                let entry = unsafe { &*(entry_ptr as *const ArchiveFileInfo) };
+                let entry_ptr = unsafe { ptr.cast::<u8>().add(offset) };
+                let entry = unsafe { &*entry_ptr.cast::<ArchiveFileInfo>() };
                 if entry.is_terminator() {
                     break;
                 }
@@ -269,7 +269,7 @@ impl SusiePlugin {
             get_file(
                 ansi_path.as_ptr(),
                 position as isize,
-                &mut h_dest as *mut isize as *mut u8,
+                std::ptr::from_mut(&mut h_dest).cast::<u8>(),
                 0x0100, // メモリ出力
                 0,
                 0,

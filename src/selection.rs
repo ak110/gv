@@ -137,9 +137,9 @@ impl Selection {
                     PixelRect::from_two_points(*start_px, *start_py, *current_px, *current_py);
                 if rect.is_valid() { Some(rect) } else { None }
             }
-            SelectionState::Selected { rect } => Some(*rect),
-            SelectionState::Resizing { rect, .. } => Some(*rect),
-            SelectionState::Moving { rect, .. } => Some(*rect),
+            SelectionState::Selected { rect }
+            | SelectionState::Resizing { rect, .. }
+            | SelectionState::Moving { rect, .. } => Some(*rect),
         }
     }
 
@@ -293,15 +293,7 @@ impl Selection {
                     self.state = SelectionState::None;
                 }
             }
-            SelectionState::Resizing { rect, .. } => {
-                let rect = rect.clamped(img_width, img_height);
-                if rect.is_valid() {
-                    self.state = SelectionState::Selected { rect };
-                } else {
-                    self.state = SelectionState::None;
-                }
-            }
-            SelectionState::Moving { rect, .. } => {
+            SelectionState::Resizing { rect, .. } | SelectionState::Moving { rect, .. } => {
                 let rect = rect.clamped(img_width, img_height);
                 if rect.is_valid() {
                     self.state = SelectionState::Selected { rect };
@@ -607,6 +599,196 @@ mod tests {
         assert_eq!(resized.y, 15);
         assert_eq!(resized.width, 45);
         assert_eq!(resized.height, 45);
+    }
+
+    // --- apply_resize: 全8方向ハンドルのテスト ---
+
+    #[test]
+    fn apply_resize_top() {
+        let rect = PixelRect {
+            x: 10,
+            y: 10,
+            width: 50,
+            height: 50,
+        };
+        let resized = apply_resize(rect, HandleKind::Top, 0, -5);
+        // Topハンドル: yが上に5移動、高さが5増加、x/widthは不変
+        assert_eq!(resized.x, 10);
+        assert_eq!(resized.y, 5);
+        assert_eq!(resized.width, 50);
+        assert_eq!(resized.height, 55);
+    }
+
+    #[test]
+    fn apply_resize_top_right() {
+        let rect = PixelRect {
+            x: 10,
+            y: 10,
+            width: 50,
+            height: 50,
+        };
+        let resized = apply_resize(rect, HandleKind::TopRight, 10, -5);
+        // TopRight: 幅が10増加、yが5上に移動し高さ5増加
+        assert_eq!(resized.x, 10);
+        assert_eq!(resized.y, 5);
+        assert_eq!(resized.width, 60);
+        assert_eq!(resized.height, 55);
+    }
+
+    #[test]
+    fn apply_resize_left() {
+        let rect = PixelRect {
+            x: 10,
+            y: 10,
+            width: 50,
+            height: 50,
+        };
+        let resized = apply_resize(rect, HandleKind::Left, -5, 0);
+        // Left: xが5左に移動、幅が5増加、y/heightは不変
+        assert_eq!(resized.x, 5);
+        assert_eq!(resized.y, 10);
+        assert_eq!(resized.width, 55);
+        assert_eq!(resized.height, 50);
+    }
+
+    #[test]
+    fn apply_resize_right() {
+        let rect = PixelRect {
+            x: 10,
+            y: 10,
+            width: 50,
+            height: 50,
+        };
+        let resized = apply_resize(rect, HandleKind::Right, 15, 0);
+        // Right: 幅が15増加、x/y/heightは不変
+        assert_eq!(resized.x, 10);
+        assert_eq!(resized.y, 10);
+        assert_eq!(resized.width, 65);
+        assert_eq!(resized.height, 50);
+    }
+
+    #[test]
+    fn apply_resize_bottom_left() {
+        let rect = PixelRect {
+            x: 10,
+            y: 10,
+            width: 50,
+            height: 50,
+        };
+        let resized = apply_resize(rect, HandleKind::BottomLeft, -5, 10);
+        // BottomLeft: xが5左に移動、幅が5増加、高さが10増加
+        assert_eq!(resized.x, 5);
+        assert_eq!(resized.y, 10);
+        assert_eq!(resized.width, 55);
+        assert_eq!(resized.height, 60);
+    }
+
+    #[test]
+    fn apply_resize_bottom() {
+        let rect = PixelRect {
+            x: 10,
+            y: 10,
+            width: 50,
+            height: 50,
+        };
+        let resized = apply_resize(rect, HandleKind::Bottom, 0, 10);
+        // Bottom: 高さが10増加、x/y/widthは不変
+        assert_eq!(resized.x, 10);
+        assert_eq!(resized.y, 10);
+        assert_eq!(resized.width, 50);
+        assert_eq!(resized.height, 60);
+    }
+
+    // --- 反転防止（最小サイズ1）のテスト ---
+
+    #[test]
+    fn apply_resize_clamps_to_minimum_size() {
+        let rect = PixelRect {
+            x: 10,
+            y: 10,
+            width: 5,
+            height: 5,
+        };
+        // 幅・高さがマイナスになるほど大きなdxで縮小を試みる
+        let resized = apply_resize(rect, HandleKind::Right, -100, 0);
+        assert_eq!(resized.width, 1); // 最小1にクランプ
+        assert_eq!(resized.height, 5);
+
+        let resized = apply_resize(rect, HandleKind::Bottom, 0, -100);
+        assert_eq!(resized.width, 5);
+        assert_eq!(resized.height, 1); // 最小1にクランプ
+    }
+
+    #[test]
+    fn apply_resize_top_left_clamps_both_axes() {
+        let rect = PixelRect {
+            x: 10,
+            y: 10,
+            width: 5,
+            height: 5,
+        };
+        // TopLeftで幅・高さ両方が反転するほどのdx, dy
+        let resized = apply_resize(rect, HandleKind::TopLeft, 100, 100);
+        assert_eq!(resized.width, 1);
+        assert_eq!(resized.height, 1);
+    }
+
+    // --- ゼロサイズ矩形の正規化テスト ---
+
+    #[test]
+    fn zero_size_rect_from_same_point() {
+        // 同一点からの矩形は幅・高さ0
+        let rect = PixelRect::from_two_points(50, 50, 50, 50);
+        assert_eq!(rect.width, 0);
+        assert_eq!(rect.height, 0);
+        assert!(!rect.is_valid()); // 面積0は無効
+    }
+
+    #[test]
+    fn zero_width_rect_is_invalid() {
+        // 幅だけ0の矩形
+        let rect = PixelRect::from_two_points(50, 10, 50, 60);
+        assert_eq!(rect.width, 0);
+        assert_eq!(rect.height, 50);
+        assert!(!rect.is_valid());
+    }
+
+    #[test]
+    fn zero_height_rect_is_invalid() {
+        // 高さだけ0の矩形
+        let rect = PixelRect::from_two_points(10, 50, 60, 50);
+        assert_eq!(rect.width, 50);
+        assert_eq!(rect.height, 0);
+        assert!(!rect.is_valid());
+    }
+
+    #[test]
+    fn zero_size_drawing_releases_to_none() {
+        // ゼロサイズのドラッグ操作はmouse_upでNoneに戻る
+        let dr = test_draw_rect();
+        let mut sel = Selection::new();
+
+        // 同一点でドラッグ
+        sel.on_mouse_down(110.0, 110.0, &dr, 100, 100);
+        // 移動しない（same point）
+        sel.on_mouse_up(100, 100);
+
+        assert!(!sel.is_selected());
+        assert!(sel.current_rect().is_none());
+    }
+
+    #[test]
+    fn screen_to_image_zero_size_draw_rect() {
+        // draw_rectのwidth/heightが0の場合は(0,0)を返す
+        let dr = DrawRect {
+            x: 10.0,
+            y: 10.0,
+            width: 0.0,
+            height: 0.0,
+        };
+        let (px, py) = screen_to_image(50.0, 50.0, &dr, 100, 100);
+        assert_eq!(px, 0);
+        assert_eq!(py, 0);
     }
 
     #[test]

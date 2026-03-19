@@ -26,14 +26,14 @@ fn sh_file_operation(
         hwnd,
         wFunc: func,
         pFrom: windows::core::PCWSTR(from.as_ptr()),
-        pTo: to
-            .map(|t| windows::core::PCWSTR(t.as_ptr()))
-            .unwrap_or(windows::core::PCWSTR::null()),
+        pTo: to.map_or(windows::core::PCWSTR::null(), |t| {
+            windows::core::PCWSTR(t.as_ptr())
+        }),
         fFlags: flags,
         ..Default::default()
     };
 
-    let result = unsafe { SHFileOperationW(&mut op) };
+    let result = unsafe { SHFileOperationW(std::ptr::from_mut(&mut op)) };
     if result != 0 {
         if op.fAnyOperationsAborted.as_bool() {
             return Ok(false);

@@ -5,7 +5,9 @@
 
 use anyhow::{Context as _, Result};
 use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance, IPersistFile};
-use windows::Win32::UI::Shell::{FOLDERID_SendTo, IShellLinkW, SHGetKnownFolderPath, ShellLink};
+use windows::Win32::UI::Shell::{
+    FOLDERID_SendTo, IShellLinkW, KNOWN_FOLDER_FLAG, SHGetKnownFolderPath, ShellLink,
+};
 use windows::core::Interface;
 
 use crate::util::to_wide;
@@ -54,10 +56,12 @@ pub fn unregister() -> Result<()> {
 /// SendToフォルダのパスを取得する
 fn get_sendto_path() -> Result<std::path::PathBuf> {
     unsafe {
-        let pwstr = SHGetKnownFolderPath(&FOLDERID_SendTo, Default::default(), None)
+        let pwstr = SHGetKnownFolderPath(&FOLDERID_SendTo, KNOWN_FOLDER_FLAG::default(), None)
             .context("SendToフォルダ取得失敗")?;
         let path = pwstr.to_string().context("SendToパス変換失敗")?;
-        windows::Win32::System::Com::CoTaskMemFree(Some(pwstr.0 as *const _));
+        windows::Win32::System::Com::CoTaskMemFree(Some(
+            pwstr.0.cast_const().cast::<core::ffi::c_void>(),
+        ));
         Ok(std::path::PathBuf::from(path))
     }
 }

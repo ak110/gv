@@ -34,8 +34,13 @@ pub(super) fn set_key_value(root: HKEY, subkey: &str, value: &str) -> Result<()>
 
     // RegCreateKeyWでキーを作成（存在すれば開く）
     let mut hkey = HKEY::default();
-    let result =
-        unsafe { RegCreateKeyW(root, windows::core::PCWSTR(wide_key.as_ptr()), &mut hkey) };
+    let result = unsafe {
+        RegCreateKeyW(
+            root,
+            windows::core::PCWSTR(wide_key.as_ptr()),
+            std::ptr::from_mut(&mut hkey),
+        )
+    };
     if result != ERROR_SUCCESS {
         anyhow::bail!("レジストリキー作成失敗: {subkey}");
     }
@@ -48,7 +53,7 @@ pub(super) fn set_key_value(root: HKEY, subkey: &str, value: &str) -> Result<()>
             None,
             REG_SZ,
             Some(std::slice::from_raw_parts(
-                wide_val.as_ptr() as *const u8,
+                wide_val.as_ptr().cast::<u8>(),
                 wide_val.len() * 2,
             )),
         )
@@ -73,7 +78,7 @@ fn add_open_with_progid(extension: &str, progid: &str) -> Result<()> {
         RegCreateKeyW(
             HKEY_CURRENT_USER,
             windows::core::PCWSTR(wide_key.as_ptr()),
-            &mut hkey,
+            std::ptr::from_mut(&mut hkey),
         )
     };
     if result != ERROR_SUCCESS {
@@ -100,7 +105,7 @@ fn add_open_with_progid(extension: &str, progid: &str) -> Result<()> {
 }
 
 /// 拡張子のOpenWithProgidsからProgIDを削除する
-fn remove_open_with_progid(extension: &str, progid: &str) -> Result<()> {
+fn remove_open_with_progid(extension: &str, progid: &str) {
     let subkey = format!(r"Software\Classes\{extension}\OpenWithProgids");
 
     let mut hkey = HKEY::default();
@@ -110,18 +115,17 @@ fn remove_open_with_progid(extension: &str, progid: &str) -> Result<()> {
             windows::core::PCWSTR(to_wide(&subkey).as_ptr()),
             None,
             KEY_SET_VALUE,
-            &mut hkey,
+            std::ptr::from_mut(&mut hkey),
         )
     };
     if result != ERROR_SUCCESS {
-        return Ok(()); // キーがなければ何もしない
+        return; // キーがなければ何もしない
     }
 
     let _ = unsafe { RegDeleteValueW(hkey, windows::core::PCWSTR(to_wide(progid).as_ptr())) };
     unsafe {
         let _ = RegCloseKey(hkey);
     }
-    Ok(())
 }
 
 /// 画像拡張子リスト
@@ -219,12 +223,12 @@ pub fn unregister() -> Result<()> {
 
     // 各拡張子のOpenWithProgidsからProgIDを削除
     for ext in IMAGE_EXTENSIONS {
-        remove_open_with_progid(ext, IMAGE_PROGID)?;
+        remove_open_with_progid(ext, IMAGE_PROGID);
     }
     for ext in ARCHIVE_EXTENSIONS {
-        remove_open_with_progid(ext, ARCHIVE_PROGID)?;
+        remove_open_with_progid(ext, ARCHIVE_PROGID);
     }
-    remove_open_with_progid(BOOKMARK_EXTENSION, BOOKMARK_PROGID)?;
+    remove_open_with_progid(BOOKMARK_EXTENSION, BOOKMARK_PROGID);
 
     Ok(())
 }

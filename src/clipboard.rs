@@ -30,11 +30,11 @@ pub fn copy_text_to_clipboard(hwnd: HWND, text: &str) -> Result<()> {
             let _ = CloseClipboard();
             bail!("GlobalLock失敗");
         }
-        std::ptr::copy_nonoverlapping(wide.as_ptr() as *const u8, ptr as *mut u8, byte_len);
+        std::ptr::copy_nonoverlapping(wide.as_ptr().cast::<u8>(), ptr.cast::<u8>(), byte_len);
         let _ = GlobalUnlock(hmem);
 
         // SetClipboardDataに渡すHANDLEはGlobalAllocの戻り値をそのまま使う
-        let handle = windows::Win32::Foundation::HANDLE(hmem.0 as *mut _);
+        let handle = windows::Win32::Foundation::HANDLE(hmem.0.cast());
         let _ = SetClipboardData(CF_UNICODETEXT, Some(handle));
         let _ = CloseClipboard();
     }
@@ -80,10 +80,10 @@ pub fn copy_image_to_clipboard(hwnd: HWND, image: &DecodedImage) -> Result<()> {
             let _ = CloseClipboard();
             bail!("GlobalLock失敗");
         }
-        std::ptr::copy_nonoverlapping(dib.as_ptr(), ptr as *mut u8, total_size);
+        std::ptr::copy_nonoverlapping(dib.as_ptr(), ptr.cast::<u8>(), total_size);
         let _ = GlobalUnlock(hmem);
 
-        let handle = windows::Win32::Foundation::HANDLE(hmem.0 as *mut _);
+        let handle = windows::Win32::Foundation::HANDLE(hmem.0.cast());
         let _ = SetClipboardData(CF_DIB.0 as u32, Some(handle));
         let _ = CloseClipboard();
     }
@@ -96,16 +96,13 @@ pub fn paste_image_from_clipboard(hwnd: HWND) -> Result<Option<DecodedImage>> {
         OpenClipboard(Some(hwnd)).context("クリップボードを開けません")?;
 
         let handle = GetClipboardData(CF_DIB.0 as u32);
-        let handle = match handle {
-            Ok(h) => h,
-            Err(_) => {
-                let _ = CloseClipboard();
-                return Ok(None);
-            }
+        let Ok(handle) = handle else {
+            let _ = CloseClipboard();
+            return Ok(None);
         };
 
         // HANDLEをHGLOBALとして扱う
-        let hglobal = windows::Win32::Foundation::HGLOBAL(handle.0 as *mut _);
+        let hglobal = windows::Win32::Foundation::HGLOBAL(handle.0.cast());
         let ptr = GlobalLock(hglobal);
         if ptr.is_null() {
             let _ = CloseClipboard();
@@ -119,11 +116,11 @@ pub fn paste_image_from_clipboard(hwnd: HWND) -> Result<Option<DecodedImage>> {
             bail!("DIBデータが不正（サイズ不足）");
         }
 
-        let header = ptr as *const u8;
-        let width = i32::from_le_bytes(std::ptr::read_unaligned(header.add(4) as *const [u8; 4]));
-        let height = i32::from_le_bytes(std::ptr::read_unaligned(header.add(8) as *const [u8; 4]));
+        let header: *const u8 = ptr.cast();
+        let width = i32::from_le_bytes(std::ptr::read_unaligned(header.add(4).cast::<[u8; 4]>()));
+        let height = i32::from_le_bytes(std::ptr::read_unaligned(header.add(8).cast::<[u8; 4]>()));
         let bit_count =
-            u16::from_le_bytes(std::ptr::read_unaligned(header.add(14) as *const [u8; 2]));
+            u16::from_le_bytes(std::ptr::read_unaligned(header.add(14).cast::<[u8; 2]>()));
 
         let abs_height = height.unsigned_abs();
         let top_down = height < 0;
@@ -134,9 +131,9 @@ pub fn paste_image_from_clipboard(hwnd: HWND) -> Result<Option<DecodedImage>> {
             bail!("未対応のDIBビット深度: {bit_count}");
         }
 
-        let bi_size = u32::from_le_bytes(std::ptr::read_unaligned(header as *const [u8; 4]));
+        let bi_size = u32::from_le_bytes(std::ptr::read_unaligned(header.cast::<[u8; 4]>()));
         let bi_compression =
-            u32::from_le_bytes(std::ptr::read_unaligned(header.add(16) as *const [u8; 4]));
+            u32::from_le_bytes(std::ptr::read_unaligned(header.add(16).cast::<[u8; 4]>()));
 
         if bi_size < 40 {
             let _ = GlobalUnlock(hglobal);

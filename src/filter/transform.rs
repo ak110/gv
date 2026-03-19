@@ -385,8 +385,9 @@ mod tests {
         assert_eq!(rotated.width, img.width);
         assert_eq!(rotated.height, img.height);
         // 内部ピクセルも概ね一致（バイリニア補間で端は除外）
-        let center_src = ((1 * 4 + 1) * 4) as usize;
-        let center_dst = ((1 * rotated.width as usize + 1) * 4) as usize;
+        // ピクセル(row=1, col=1)のバイトオフセット
+        let center_src = (4 + 1) * 4;
+        let center_dst = (rotated.width as usize + 1) * 4;
         for ch in 0..4 {
             assert!(
                 (rotated.data[center_dst + ch] as i32 - img.data[center_src + ch] as i32).abs()

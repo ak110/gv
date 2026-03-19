@@ -15,12 +15,12 @@ impl ExtensionRegistry {
             ".cur",
         ]
         .iter()
-        .map(|s| s.to_string())
+        .map(ToString::to_string)
         .collect();
 
         let archive_extensions = [".zip", ".cbz", ".rar", ".cbr", ".7z"]
             .iter()
-            .map(|s| s.to_string())
+            .map(ToString::to_string)
             .collect();
 
         Self {

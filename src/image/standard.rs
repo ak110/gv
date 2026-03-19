@@ -17,7 +17,7 @@ impl ImageDecoder for StandardDecoder {
     fn supported_extensions(&self) -> Vec<String> {
         [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"]
             .iter()
-            .map(|s| s.to_string())
+            .map(ToString::to_string)
             .collect()
     }
 
@@ -38,9 +38,8 @@ impl ImageDecoder for StandardDecoder {
     }
 
     fn metadata(&self, data: &[u8], _filename_hint: &str) -> anyhow::Result<ImageMetadata> {
-        let format = image::guess_format(data)
-            .map(|f| format!("{:?}", f))
-            .unwrap_or_else(|_| "Unknown".to_string());
+        let format =
+            image::guess_format(data).map_or_else(|_| "Unknown".to_string(), |f| format!("{f:?}"));
 
         // サイズ取得のためにデコード（ヘッダだけ読むAPIが限定的なため）
         let img = image::load_from_memory(data).context("メタデータの取得に失敗")?;

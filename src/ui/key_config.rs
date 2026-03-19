@@ -213,8 +213,8 @@ impl KeyConfig {
     }
 
     /// 入力からアクションを検索
-    pub fn lookup(&self, chord: &InputChord) -> Option<Action> {
-        self.bindings.get(chord).copied()
+    pub fn lookup(&self, chord: InputChord) -> Option<Action> {
+        self.bindings.get(&chord).copied()
     }
 
     /// TOMLテキストからパース
@@ -814,57 +814,57 @@ mod tests {
 
         // ナビゲーション基本
         assert_eq!(
-            config.lookup(&parse_chord("←").unwrap()),
+            config.lookup(parse_chord("←").unwrap()),
             Some(Action::NavigateBack)
         );
         assert_eq!(
-            config.lookup(&parse_chord("→").unwrap()),
+            config.lookup(parse_chord("→").unwrap()),
             Some(Action::NavigateForward)
         );
         assert_eq!(
-            config.lookup(&parse_chord("PageUp").unwrap()),
+            config.lookup(parse_chord("PageUp").unwrap()),
             Some(Action::Navigate5Back)
         );
         assert_eq!(
-            config.lookup(&parse_chord("Ctrl+Home").unwrap()),
+            config.lookup(parse_chord("Ctrl+Home").unwrap()),
             Some(Action::NavigateFirst)
         );
 
         // 表示モード
         assert_eq!(
-            config.lookup(&parse_chord("Num /").unwrap()),
+            config.lookup(parse_chord("Num /").unwrap()),
             Some(Action::DisplayAutoShrink)
         );
         assert_eq!(
-            config.lookup(&parse_chord("A").unwrap()),
+            config.lookup(parse_chord("A").unwrap()),
             Some(Action::CycleAlphaBackground)
         );
 
         // ウィンドウ
         assert_eq!(
-            config.lookup(&parse_chord("Alt+Enter").unwrap()),
+            config.lookup(parse_chord("Alt+Enter").unwrap()),
             Some(Action::ToggleFullscreen)
         );
 
         // ファイル操作
         assert_eq!(
-            config.lookup(&parse_chord("Ctrl+O").unwrap()),
+            config.lookup(parse_chord("Ctrl+O").unwrap()),
             Some(Action::OpenFile)
         );
 
         // マーク
         assert_eq!(
-            config.lookup(&parse_chord("Delete").unwrap()),
+            config.lookup(parse_chord("Delete").unwrap()),
             Some(Action::MarkSet)
         );
 
         // マウス
         assert_eq!(
-            config.lookup(&parse_chord("LeftDoubleClick").unwrap()),
+            config.lookup(parse_chord("LeftDoubleClick").unwrap()),
             Some(Action::ToggleMaximize)
         );
         assert_eq!(
-            config.lookup(&parse_chord("MiddleClick").unwrap()),
+            config.lookup(parse_chord("MiddleClick").unwrap()),
             Some(Action::ShowImageInfo)
         );
     }
@@ -881,20 +881,20 @@ zoom_in = "Ctrl+Num +, Ctrl+WheelDown"
 "#;
         let config = KeyConfig::parse_toml(toml).unwrap();
         assert_eq!(
-            config.lookup(&parse_chord("A").unwrap()),
+            config.lookup(parse_chord("A").unwrap()),
             Some(Action::NavigateBack)
         );
         assert_eq!(
-            config.lookup(&parse_chord("Ctrl+B").unwrap()),
+            config.lookup(parse_chord("Ctrl+B").unwrap()),
             Some(Action::NavigateForward)
         );
         // カンマ区切り
         assert_eq!(
-            config.lookup(&parse_chord("Ctrl+Num +").unwrap()),
+            config.lookup(parse_chord("Ctrl+Num +").unwrap()),
             Some(Action::ZoomIn)
         );
         assert_eq!(
-            config.lookup(&parse_chord("Ctrl+WheelDown").unwrap()),
+            config.lookup(parse_chord("Ctrl+WheelDown").unwrap()),
             Some(Action::ZoomIn)
         );
     }

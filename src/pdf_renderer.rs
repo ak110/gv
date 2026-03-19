@@ -59,11 +59,7 @@ pub fn render_pdf_page(pdf_path: &Path, page_index: u32) -> Result<DecodedImage>
 
     let page_count = doc.PageCount().context("ページ数取得失敗")?;
     if page_index >= page_count {
-        bail!(
-            "ページインデックスが範囲外: {} (総ページ数: {})",
-            page_index,
-            page_count
-        );
+        bail!("ページインデックスが範囲外: {page_index} (総ページ数: {page_count})");
     }
 
     let page = doc.GetPage(page_index).context("ページ取得失敗")?;

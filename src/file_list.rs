@@ -190,12 +190,11 @@ impl FileList {
             return false;
         }
 
-        if target != current {
-            self.current_index = Some(target);
-            true
-        } else {
-            false
+        if target == current {
+            return false;
         }
+        self.current_index = Some(target);
+        true
     }
 
     /// 指定インデックスへ移動
@@ -366,8 +365,8 @@ impl FileList {
 
     /// 最初から現在位置（含む）までのマーク状態を反転する
     pub fn invert_marks_to_here(&mut self) {
-        let end = self.current_index.map(|i| i + 1).unwrap_or(0);
-        for info in self.files[..end].iter_mut() {
+        let end = self.current_index.map_or(0, |i| i + 1);
+        for info in &mut self.files[..end] {
             info.marked = !info.marked;
         }
     }
@@ -513,7 +512,7 @@ impl FileList {
             FileSource::File(_) => GroupKey::Folder(
                 info.path
                     .parent()
-                    .map(|p| p.to_path_buf())
+                    .map(Path::to_path_buf)
                     .unwrap_or_default(),
             ),
         }
@@ -576,9 +575,8 @@ impl FileList {
 
     /// 一時的にソート順で前後移動する（リスト順序は変えない）
     pub fn sorted_navigate(&mut self, direction: isize, sort_order: SortOrder) -> bool {
-        let current = match self.current_index {
-            Some(idx) => idx,
-            None => return false,
+        let Some(current) = self.current_index else {
+            return false;
         };
         if self.files.is_empty() {
             return false;
@@ -600,12 +598,11 @@ impl FileList {
         let new_pos = (pos as isize + direction).rem_euclid(sorted_indices.len() as isize) as usize;
         let target = sorted_indices[new_pos];
 
-        if target != current {
-            self.current_index = Some(target);
-            true
-        } else {
-            false
+        if target == current {
+            return false;
         }
+        self.current_index = Some(target);
+        true
     }
 
     /// ソート順による比較
@@ -1129,6 +1126,148 @@ mod tests {
             .map(|&i| fl.files[i].file_name.as_str())
             .collect();
         assert_eq!(b_names, vec!["b1.png", "b2.png"]);
+    }
+
+    // --- sorted_navigate: 空リストのテスト ---
+
+    #[test]
+    fn sorted_navigate_empty_list() {
+        let mut fl = FileList::new(test_registry());
+        // current_index = None, files = empty
+        assert!(!fl.sorted_navigate(1, SortOrder::Natural));
+        assert!(!fl.sorted_navigate(-1, SortOrder::Name));
+    }
+
+    #[test]
+    fn sorted_navigate_single_element() {
+        let dir = std::env::temp_dir().join("gv3_test_fl_sortnav_single");
+        create_test_files(&dir, &["only.png"]);
+
+        let mut fl = FileList::new(test_registry());
+        fl.populate_from_folder(&dir).unwrap();
+        fl.navigate_to(0);
+
+        // 1要素のリストでは移動先 = 自分なのでfalse
+        assert!(!fl.sorted_navigate(1, SortOrder::Natural));
+        assert!(!fl.sorted_navigate(-1, SortOrder::Natural));
+
+        cleanup(&dir);
+    }
+
+    // --- フォルダナビゲーション: マルチグループ境界テスト ---
+
+    #[test]
+    fn navigate_folder_three_groups() {
+        // 3つのグループ: A(2件), B(1件), C(2件)
+        let registry = test_registry();
+        let mut fl = FileList::new(registry);
+
+        fl.push(make_archive_file_info("archive_a.zip", "a1.png", "a1.png"));
+        fl.push(make_archive_file_info("archive_a.zip", "a2.png", "a2.png"));
+        fl.push(make_archive_file_info("archive_b.zip", "b1.png", "b1.png"));
+        fl.push(make_archive_file_info("archive_c.zip", "c1.png", "c1.png"));
+        fl.push(make_archive_file_info("archive_c.zip", "c2.png", "c2.png"));
+
+        // グループAの2番目から次のフォルダへ
+        fl.navigate_to(1); // a2.png
+        assert!(fl.navigate_next_folder());
+        assert_eq!(fl.current_index(), Some(2)); // b1.png（グループBの先頭）
+
+        // グループBから次のフォルダへ
+        assert!(fl.navigate_next_folder());
+        assert_eq!(fl.current_index(), Some(3)); // c1.png（グループCの先頭）
+
+        // グループCの末尾、次のフォルダはない
+        assert!(!fl.navigate_next_folder());
+
+        // グループCから前のフォルダへ
+        assert!(fl.navigate_prev_folder());
+        assert_eq!(fl.current_index(), Some(2)); // b1.png（グループBの先頭）
+
+        // グループBから前のフォルダへ
+        assert!(fl.navigate_prev_folder());
+        assert_eq!(fl.current_index(), Some(0)); // a1.png（グループAの先頭）
+
+        // グループAの先頭、前のフォルダはない
+        assert!(!fl.navigate_prev_folder());
+    }
+
+    #[test]
+    fn navigate_folder_single_group() {
+        // グループが1つだけの場合
+        let registry = test_registry();
+        let mut fl = FileList::new(registry);
+
+        fl.push(make_archive_file_info("only.zip", "x1.png", "x1.png"));
+        fl.push(make_archive_file_info("only.zip", "x2.png", "x2.png"));
+        fl.navigate_to(0);
+
+        // 前後どちらにもグループがない
+        assert!(!fl.navigate_next_folder());
+        assert!(!fl.navigate_prev_folder());
+    }
+
+    #[test]
+    fn navigate_folder_empty_list() {
+        let mut fl = FileList::new(test_registry());
+        assert!(!fl.navigate_next_folder());
+        assert!(!fl.navigate_prev_folder());
+    }
+
+    #[test]
+    fn navigate_prev_folder_from_middle_of_group() {
+        // グループ内の途中から前のフォルダに移動すると、前グループの先頭に行く
+        let registry = test_registry();
+        let mut fl = FileList::new(registry);
+
+        fl.push(make_archive_file_info("archive_a.zip", "a1.png", "a1.png"));
+        fl.push(make_archive_file_info("archive_a.zip", "a2.png", "a2.png"));
+        fl.push(make_archive_file_info("archive_a.zip", "a3.png", "a3.png"));
+        fl.push(make_archive_file_info("archive_b.zip", "b1.png", "b1.png"));
+        fl.push(make_archive_file_info("archive_b.zip", "b2.png", "b2.png"));
+        fl.push(make_archive_file_info("archive_b.zip", "b3.png", "b3.png"));
+
+        // グループBの途中（b2.png）から前のフォルダへ
+        fl.navigate_to(4); // b2.png
+        assert!(fl.navigate_prev_folder());
+        assert_eq!(fl.current_index(), Some(0)); // a1.png（グループAの先頭）
+    }
+
+    // --- navigate_relative: load_failedスキップのテスト ---
+
+    #[test]
+    fn navigate_relative_skips_failed() {
+        let registry = test_registry();
+        let mut fl = FileList::new(registry);
+
+        fl.push(make_archive_file_info("a.zip", "a.png", "a.png"));
+        fl.push(make_archive_file_info("a.zip", "b.png", "b.png"));
+        fl.push(make_archive_file_info("a.zip", "c.png", "c.png"));
+        fl.navigate_to(0);
+
+        // b.pngをfailed状態にする
+        fl.mark_failed(1);
+
+        // 前進: a→b(failed)→c
+        assert!(fl.navigate_relative(1));
+        assert_eq!(fl.current_index(), Some(2)); // bをスキップしてcに到達
+    }
+
+    #[test]
+    fn navigate_relative_all_failed() {
+        let registry = test_registry();
+        let mut fl = FileList::new(registry);
+
+        fl.push(make_archive_file_info("a.zip", "a.png", "a.png"));
+        fl.push(make_archive_file_info("a.zip", "b.png", "b.png"));
+        fl.navigate_to(0);
+
+        // 全てfailedにする
+        fl.mark_failed(0);
+        fl.mark_failed(1);
+
+        // 移動先がないのでfalse
+        assert!(!fl.navigate_relative(1));
     }
 
     #[test]

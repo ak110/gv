@@ -43,8 +43,12 @@ pub fn check_for_update() -> Result<UpdateInfo> {
         .and_then(|assets| {
             assets.iter().find_map(|a| {
                 let name = a["name"].as_str().unwrap_or("");
-                if name.ends_with(".zip") || name == "gv3.exe" {
-                    a["browser_download_url"].as_str().map(|s| s.to_string())
+                if std::path::Path::new(name)
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"))
+                    || name == "gv3.exe"
+                {
+                    a["browser_download_url"].as_str().map(ToString::to_string)
                 } else {
                     None
                 }
@@ -80,7 +84,10 @@ pub fn perform_update(info: &UpdateInfo) -> Result<bool> {
     download_file(&info.download_url, &download_path)?;
 
     // ZIP展開またはそのまま使用
-    let extracted = if info.download_url.ends_with(".zip") {
+    let extracted = if std::path::Path::new(&info.download_url)
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"))
+    {
         extract_files_from_zip(&download_path, &temp_dir)?
     } else {
         // 直接exeの場合
@@ -289,17 +296,14 @@ fn launch_batch(batch_path: &std::path::Path) -> Result<()> {
         .creation_flags(CREATE_BREAKAWAY_FROM_JOB)
         .spawn();
 
-    match result {
-        Ok(_) => Ok(()),
-        Err(_) => {
-            // ブレイクアウェイ不可の場合はフラグなしで起動
-            std::process::Command::new("cmd.exe")
-                .args(["/k", &batch_path.display().to_string()])
-                .spawn()
-                .context("バッチスクリプト起動失敗")?;
-            Ok(())
-        }
+    if result.is_err() {
+        // ブレイクアウェイ不可の場合はフラグなしで起動
+        std::process::Command::new("cmd.exe")
+            .args(["/k", &batch_path.display().to_string()])
+            .spawn()
+            .context("バッチスクリプト起動失敗")?;
     }
+    Ok(())
 }
 
 /// UTF-8文字列をシステムのANSIコードページ（日本語環境ではCP932）に変換する
@@ -388,7 +392,7 @@ mod tests {
         assert!(parse_version("1.1.0").unwrap() > parse_version("1.0.0").unwrap());
         assert!(parse_version("2.0.0").unwrap() > parse_version("1.9.9").unwrap());
         assert!(parse_version("0.2.0").unwrap() > parse_version("0.1.0").unwrap());
-        assert!(!(parse_version("0.1.0").unwrap() > parse_version("0.1.0").unwrap()));
+        assert!(parse_version("0.1.0").unwrap() <= parse_version("0.1.0").unwrap());
     }
 
     /// CP932バッチのバイト列から、テストに不要な行を無効化する。
@@ -402,8 +406,7 @@ mod tests {
             let line_end = bytes[pos..]
                 .windows(2)
                 .position(|w| w == crlf)
-                .map(|p| pos + p)
-                .unwrap_or(bytes.len());
+                .map_or(bytes.len(), |p| pos + p);
             let line = &bytes[pos..line_end];
 
             if line.starts_with(ascii_prefix) {

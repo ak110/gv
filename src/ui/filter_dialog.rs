@@ -58,7 +58,7 @@ pub fn show_filter_dialog(parent: HWND, title: &str, fields: &[FieldDef]) -> Opt
                 lpszClassName: windows::core::PCWSTR(class_wide.as_ptr()),
                 ..Default::default()
             };
-            RegisterClassExW(&wc);
+            RegisterClassExW(std::ptr::from_ref(&wc));
         });
 
         let dialog_height = MARGIN
@@ -74,7 +74,7 @@ pub fn show_filter_dialog(parent: HWND, title: &str, fields: &[FieldDef]) -> Opt
             field_count: fields.len(),
             closed: false,
         };
-        let data_ptr = &mut data as *mut DialogData;
+        let data_ptr = std::ptr::from_mut(&mut data);
 
         let (x, y) = center_on_parent(parent, DIALOG_WIDTH, dialog_height);
         let class_wide: Vec<u16> = CLASS_NAME.encode_utf16().collect();
@@ -204,15 +204,15 @@ pub fn show_filter_dialog(parent: HWND, title: &str, fields: &[FieldDef]) -> Opt
         let mut msg = MSG::default();
         #[allow(clippy::while_immutable_condition)]
         while !data.closed {
-            let ret = GetMessageW(&mut msg, None, 0, 0);
+            let ret = GetMessageW(std::ptr::from_mut(&mut msg), None, 0, 0);
             if !ret.as_bool() {
                 break;
             }
-            if IsDialogMessageW(hwnd, &msg).as_bool() {
+            if IsDialogMessageW(hwnd, std::ptr::from_ref(&msg)).as_bool() {
                 continue;
             }
-            let _ = TranslateMessage(&msg);
-            DispatchMessageW(&msg);
+            let _ = TranslateMessage(std::ptr::from_ref(&msg));
+            DispatchMessageW(std::ptr::from_ref(&msg));
         }
         let _ = EnableWindow(parent, true);
         let _ = SetForegroundWindow(parent);
@@ -294,9 +294,9 @@ unsafe fn get_dialog_data(hwnd: HWND) -> Option<&'static mut DialogData> {
 fn center_on_parent(parent: HWND, width: i32, height: i32) -> (i32, i32) {
     let mut rect = windows::Win32::Foundation::RECT::default();
     unsafe {
-        let _ = GetWindowRect(parent, &mut rect);
+        let _ = GetWindowRect(parent, std::ptr::from_mut(&mut rect));
     }
-    let cx = (rect.left + rect.right) / 2 - width / 2;
-    let cy = (rect.top + rect.bottom) / 2 - height / 2;
+    let cx = i32::midpoint(rect.left, rect.right) - width / 2;
+    let cy = i32::midpoint(rect.top, rect.bottom) - height / 2;
     (cx.max(0), cy.max(0))
 }

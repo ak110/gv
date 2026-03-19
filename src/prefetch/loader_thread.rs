@@ -382,7 +382,7 @@ mod tests {
         // generation=1のリクエストは確実に処理される
         let has_gen1 = responses.iter().any(|r| match r {
             LoadResponse::Loaded { generation, .. } => *generation == 1,
-            _ => false,
+            LoadResponse::Failed { .. } => false,
         });
         assert!(has_gen1, "generation=1のレスポンスが存在するべき");
 

@@ -47,13 +47,9 @@ description = "cargo fmt (auto-format)"
 run = "cargo fmt"
 
 [tasks.clippy]
-description = "cargo clippy"
-run = "cargo clippy -- -D warnings"
-
-[tasks.clippy-pedantic]
-description = "cargo clippy with pedantic warnings"
+description = "cargo clippy (pedantic込み)"
 run = """
-cargo clippy -- -D warnings -W clippy::pedantic \
+cargo clippy --all-targets -- -D warnings -W clippy::pedantic \
   -A clippy::cast_possible_truncation \
   -A clippy::cast_possible_wrap \
   -A clippy::cast_precision_loss \
@@ -71,7 +67,8 @@ cargo clippy -- -D warnings -W clippy::pedantic \
   -A clippy::needless_pass_by_value \
   -A clippy::similar_names \
   -A clippy::unreadable_literal \
-  -A clippy::items_after_statements
+  -A clippy::items_after_statements \
+  -A clippy::many_single_char_names
 """
 
 [tasks.test]

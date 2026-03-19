@@ -81,7 +81,7 @@ impl ArchiveManager {
         self.handlers
             .iter()
             .find(|h| h.supported_extensions().contains(&ext))
-            .map(|h| h.as_ref())
+            .map(AsRef::as_ref)
             .ok_or_else(|| anyhow::anyhow!("未対応のアーカイブ形式: {}", archive_path.display()))
     }
 
@@ -89,8 +89,7 @@ impl ArchiveManager {
     pub fn is_archive(&self, path: &Path) -> bool {
         path.file_name()
             .and_then(|n| n.to_str())
-            .map(|name| self.registry.is_archive_extension(name))
-            .unwrap_or(false)
+            .is_some_and(|name| self.registry.is_archive_extension(name))
     }
 
     /// 対応ハンドラでアーカイブ内の画像を一括展開する
@@ -106,7 +105,7 @@ impl ArchiveManager {
     /// パスに対応するハンドラがオンデマンド読み出しに対応しているか判定する
     pub fn supports_on_demand(&self, archive_path: &Path) -> bool {
         self.find_handler(archive_path)
-            .is_ok_and(|h| h.supports_on_demand())
+            .is_ok_and(ArchiveHandler::supports_on_demand)
     }
 
     /// アーカイブから指定エントリのデータを読み出す（オンデマンド用）
@@ -211,5 +210,217 @@ mod tests {
         assert_eq!(path.file_name().unwrap().to_str().unwrap(), "dup_2.jpg");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn find_handler_returns_error_for_unsupported_extension() {
+        let reg = Arc::new(ExtensionRegistry::new());
+        let mgr = ArchiveManager::new(reg);
+        let result = mgr.find_handler(Path::new("test.xyz"));
+        assert!(result.is_err());
+        let msg = result.err().unwrap().to_string();
+        assert!(msg.contains("未対応のアーカイブ形式"), "got: {msg}");
+    }
+
+    #[test]
+    fn find_handler_returns_error_for_no_extension() {
+        let reg = Arc::new(ExtensionRegistry::new());
+        let mgr = ArchiveManager::new(reg);
+        let result = mgr.find_handler(Path::new("noext"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn find_handler_succeeds_for_supported_extensions() {
+        let reg = Arc::new(ExtensionRegistry::new());
+        let mgr = ArchiveManager::new(reg);
+        // 各ハンドラの代表拡張子で成功すること
+        assert!(mgr.find_handler(Path::new("a.zip")).is_ok());
+        assert!(mgr.find_handler(Path::new("a.cbz")).is_ok());
+        assert!(mgr.find_handler(Path::new("a.rar")).is_ok());
+        assert!(mgr.find_handler(Path::new("a.cbr")).is_ok());
+        assert!(mgr.find_handler(Path::new("a.7z")).is_ok());
+    }
+
+    #[test]
+    fn normalized_extension_handles_various_cases() {
+        // 大文字を小文字に正規化
+        assert_eq!(
+            ArchiveManager::normalized_extension(Path::new("a.ZIP")),
+            ".zip"
+        );
+        assert_eq!(
+            ArchiveManager::normalized_extension(Path::new("a.Rar")),
+            ".rar"
+        );
+        // 拡張子なし → 空文字列
+        assert_eq!(ArchiveManager::normalized_extension(Path::new("noext")), "");
+        // 通常ケース
+        assert_eq!(
+            ArchiveManager::normalized_extension(Path::new("file.7z")),
+            ".7z"
+        );
+    }
+
+    #[test]
+    fn list_images_from_buffer_empty_zip() {
+        let reg = Arc::new(ExtensionRegistry::new());
+        let mgr = ArchiveManager::new(reg);
+
+        // 空のZIPバッファを作成
+        let buf = {
+            let mut v = Vec::new();
+            let cursor = std::io::Cursor::new(&mut v);
+            let writer = ::zip::ZipWriter::new(cursor);
+            writer.finish().unwrap();
+            v
+        };
+        let entries = mgr
+            .list_images_from_buffer(&buf, Path::new("empty.zip"))
+            .unwrap();
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn list_images_from_buffer_filters_non_images() {
+        let reg = Arc::new(ExtensionRegistry::new());
+        let mgr = ArchiveManager::new(reg);
+
+        // 画像と非画像が混在するZIP
+        let buf = {
+            use std::io::Write;
+            let mut v = Vec::new();
+            let cursor = std::io::Cursor::new(&mut v);
+            let mut writer = ::zip::ZipWriter::new(cursor);
+            let opts = ::zip::write::SimpleFileOptions::default()
+                .compression_method(::zip::CompressionMethod::Stored);
+            writer.start_file("photo.jpg", opts).unwrap();
+            writer.write_all(b"jpeg-data").unwrap();
+            writer.start_file("readme.txt", opts).unwrap();
+            writer.write_all(b"text").unwrap();
+            writer.start_file("doc.pdf", opts).unwrap();
+            writer.write_all(b"pdf").unwrap();
+            writer.start_file("icon.png", opts).unwrap();
+            writer.write_all(b"png-data").unwrap();
+            writer.start_file("data.xml", opts).unwrap();
+            writer.write_all(b"xml").unwrap();
+            writer.finish().unwrap();
+            v
+        };
+        let entries = mgr
+            .list_images_from_buffer(&buf, Path::new("mixed.zip"))
+            .unwrap();
+        // jpg と png のみ通過する
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].file_name, "photo.jpg");
+        assert_eq!(entries[1].file_name, "icon.png");
+    }
+
+    #[test]
+    fn list_images_from_buffer_works_with_cbz_extension() {
+        let reg = Arc::new(ExtensionRegistry::new());
+        let mgr = ArchiveManager::new(reg);
+
+        let buf = {
+            use std::io::Write;
+            let mut v = Vec::new();
+            let cursor = std::io::Cursor::new(&mut v);
+            let mut writer = ::zip::ZipWriter::new(cursor);
+            let opts = ::zip::write::SimpleFileOptions::default()
+                .compression_method(::zip::CompressionMethod::Stored);
+            writer.start_file("page1.png", opts).unwrap();
+            writer.write_all(b"png").unwrap();
+            writer.finish().unwrap();
+            v
+        };
+        // .cbzもZIPとして処理される
+        let entries = mgr
+            .list_images_from_buffer(&buf, Path::new("comic.cbz"))
+            .unwrap();
+        assert_eq!(entries.len(), 1);
+    }
+
+    #[test]
+    fn list_images_from_buffer_rejects_non_zip_extension() {
+        let reg = Arc::new(ExtensionRegistry::new());
+        let mgr = ArchiveManager::new(reg);
+        let result = mgr.list_images_from_buffer(b"", Path::new("test.rar"));
+        assert!(result.is_err());
+        let msg = result.err().unwrap().to_string();
+        assert!(msg.contains("バッファベース読み出し未対応"), "got: {msg}");
+    }
+
+    #[test]
+    fn supports_on_demand_returns_false_for_unsupported() {
+        let reg = Arc::new(ExtensionRegistry::new());
+        let mgr = ArchiveManager::new(reg);
+        // 未対応拡張子 → find_handlerが失敗 → false
+        assert!(!mgr.supports_on_demand(Path::new("test.xyz")));
+    }
+
+    #[test]
+    fn supports_on_demand_for_zip() {
+        let reg = Arc::new(ExtensionRegistry::new());
+        let mgr = ArchiveManager::new(reg);
+        // ZipHandlerのsupports_on_demandはtrueを返す
+        assert!(mgr.supports_on_demand(Path::new("test.zip")));
+    }
+
+    #[test]
+    fn read_entry_fails_for_unsupported_extension() {
+        let reg = Arc::new(ExtensionRegistry::new());
+        let mgr = ArchiveManager::new(reg);
+        let result = mgr.read_entry(Path::new("test.xyz"), "entry.jpg");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn extract_images_fails_for_unsupported_extension() {
+        let reg = Arc::new(ExtensionRegistry::new());
+        let mgr = ArchiveManager::new(reg);
+        let result = mgr.extract_images(Path::new("test.xyz"), Path::new("/tmp"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn resolve_filename_no_extension() {
+        let dir = std::env::temp_dir().join("gv3_test_resolve_noext");
+        let _ = std::fs::create_dir_all(&dir);
+
+        // 拡張子なしファイルの重複解決
+        std::fs::write(dir.join("README"), b"").unwrap();
+        let path = resolve_filename(&dir, "README");
+        assert_eq!(path.file_name().unwrap().to_str().unwrap(), "README_2");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolve_filename_multiple_duplicates() {
+        let dir = std::env::temp_dir().join("gv3_test_resolve_multi");
+        let _ = std::fs::create_dir_all(&dir);
+
+        // 連番の重複解決: _2, _3 と順に増える
+        std::fs::write(dir.join("img.png"), b"").unwrap();
+        std::fs::write(dir.join("img_2.png"), b"").unwrap();
+        let path = resolve_filename(&dir, "img.png");
+        assert_eq!(path.file_name().unwrap().to_str().unwrap(), "img_3.png");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn extract_filename_trailing_separator() {
+        // 末尾が区切り文字の場合 → 空文字列
+        assert_eq!(extract_filename("folder/"), "");
+        assert_eq!(extract_filename("folder\\"), "");
+    }
+
+    #[test]
+    fn is_archive_rejects_path_without_filename() {
+        let reg = Arc::new(ExtensionRegistry::new());
+        let mgr = ArchiveManager::new(reg);
+        // パスの末尾が区切り文字（file_name()がNone）
+        assert!(!mgr.is_archive(Path::new("/")));
     }
 }

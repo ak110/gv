@@ -179,7 +179,7 @@ impl AppWindow {
         });
 
         // GWLP_USERDATAにポインタを格納（WndProcからアクセスするため）
-        window::set_window_data(hwnd, &mut *app as *mut Self);
+        window::set_window_data(hwnd, std::ptr::from_mut(&mut *app));
 
         // 先読みエンジン起動
         // 通知コールバック: ワーカースレッドからPostMessageWでUIスレッドを起こす
@@ -249,7 +249,7 @@ impl AppWindow {
             ..Default::default()
         };
         let available = unsafe {
-            if GlobalMemoryStatusEx(&mut mem_info).is_ok() {
+            if GlobalMemoryStatusEx(std::ptr::from_mut(&mut mem_info)).is_ok() {
                 mem_info.ullAvailPhys as usize
             } else {
                 512 * 1024 * 1024 // フォールバック: 512MB
@@ -444,7 +444,7 @@ impl AppWindow {
                 length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
                 ..Default::default()
             };
-            let _ = GetWindowPlacement(self.hwnd, &mut placement);
+            let _ = GetWindowPlacement(self.hwnd, std::ptr::from_mut(&mut placement));
             if placement.showCmd == SW_MAXIMIZE.0 as u32 {
                 let _ = ShowWindow(self.hwnd, SW_RESTORE);
             } else {
@@ -491,7 +491,7 @@ impl AppWindow {
                         vk: wparam.0 as u16,
                         modifiers: Self::current_modifiers(),
                     };
-                    if let Some(action) = app.key_config.lookup(&chord) {
+                    if let Some(action) = app.key_config.lookup(chord) {
                         app.execute_action(action);
                         return LRESULT(0);
                     }
@@ -513,7 +513,7 @@ impl AppWindow {
                         direction,
                         modifiers: Self::current_modifiers(),
                     };
-                    if let Some(action) = app.key_config.lookup(&chord) {
+                    if let Some(action) = app.key_config.lookup(chord) {
                         app.execute_action(action);
                         // 同期再描画でフレームスキップ防止
                         unsafe {
@@ -534,7 +534,7 @@ impl AppWindow {
                     let chord = InputChord::Mouse {
                         button: MouseButton::LeftDoubleClick,
                     };
-                    if let Some(action) = app.key_config.lookup(&chord) {
+                    if let Some(action) = app.key_config.lookup(chord) {
                         app.execute_action(action);
                     }
                     return LRESULT(0);
@@ -543,7 +543,7 @@ impl AppWindow {
                     let chord = InputChord::Mouse {
                         button: MouseButton::MiddleClick,
                     };
-                    if let Some(action) = app.key_config.lookup(&chord) {
+                    if let Some(action) = app.key_config.lookup(chord) {
                         app.execute_action(action);
                     }
                     return LRESULT(0);
@@ -708,8 +708,8 @@ impl AppWindow {
             Action::Navigate5Forward => self.navigate_with_guard(|d| d.navigate_relative(5)),
             Action::Navigate50Back => self.navigate_with_guard(|d| d.navigate_relative(-50)),
             Action::Navigate50Forward => self.navigate_with_guard(|d| d.navigate_relative(50)),
-            Action::NavigateFirst => self.navigate_with_guard(|d| d.navigate_first()),
-            Action::NavigateLast => self.navigate_with_guard(|d| d.navigate_last()),
+            Action::NavigateFirst => self.navigate_with_guard(Document::navigate_first),
+            Action::NavigateLast => self.navigate_with_guard(Document::navigate_last),
 
             // --- 表示モード ---
             Action::DisplayAutoShrink => {
@@ -817,8 +817,8 @@ impl AppWindow {
                     }
                 }
             }
-            Action::NavigatePrevMark => self.navigate_with_guard(|d| d.navigate_prev_mark()),
-            Action::NavigateNextMark => self.navigate_with_guard(|d| d.navigate_next_mark()),
+            Action::NavigatePrevMark => self.navigate_with_guard(Document::navigate_prev_mark),
+            Action::NavigateNextMark => self.navigate_with_guard(Document::navigate_next_mark),
             Action::RemoveFromList => {
                 self.document.remove_current_from_list();
                 self.process_document_events();
@@ -829,8 +829,8 @@ impl AppWindow {
             }
 
             // --- フォルダナビゲーション ---
-            Action::NavigatePrevFolder => self.navigate_with_guard(|d| d.navigate_prev_folder()),
-            Action::NavigateNextFolder => self.navigate_with_guard(|d| d.navigate_next_folder()),
+            Action::NavigatePrevFolder => self.navigate_with_guard(Document::navigate_prev_folder),
+            Action::NavigateNextFolder => self.navigate_with_guard(Document::navigate_next_folder),
 
             // --- ファイル操作 ---
             Action::OpenFile => {
@@ -842,7 +842,7 @@ impl AppWindow {
                     .document
                     .current_source()
                     .and_then(|s| s.parent_dir())
-                    .map(|p| p.to_path_buf());
+                    .map(Path::to_path_buf);
                 if let Ok(Some(path)) =
                     crate::file_ops::open_file_dialog(self.hwnd, initial_dir.as_deref())
                 {
@@ -861,7 +861,7 @@ impl AppWindow {
                     .document
                     .current_source()
                     .and_then(|s| s.parent_dir())
-                    .map(|p| p.to_path_buf());
+                    .map(Path::to_path_buf);
                 if let Ok(Some(path)) =
                     crate::file_ops::open_folder_dialog(self.hwnd, initial_dir.as_deref())
                 {
@@ -878,7 +878,7 @@ impl AppWindow {
                 {
                     return;
                 }
-                if let Some(path) = self.document.current_path().map(|p| p.to_path_buf())
+                if let Some(path) = self.document.current_path().map(Path::to_path_buf)
                     && let Ok(true) = crate::file_ops::delete_to_recycle_bin(self.hwnd, &[&path])
                 {
                     self.document.remove_current_from_list();
@@ -897,7 +897,7 @@ impl AppWindow {
                     return;
                 }
 
-                let initial_dir = source.parent_dir().map(|p| p.to_path_buf());
+                let initial_dir = source.parent_dir().map(Path::to_path_buf);
                 let default_name = source.default_save_name();
 
                 // ファイルソースに応じてダイアログのラベルを分岐
@@ -956,7 +956,7 @@ impl AppWindow {
             Action::CopyFile => {
                 if let Some(current) = self.document.file_list().current() {
                     let default_name = current.source.default_save_name();
-                    let initial_dir = current.source.parent_dir().map(|p| p.to_path_buf());
+                    let initial_dir = current.source.parent_dir().map(Path::to_path_buf);
                     if let Ok(Some(dest)) = crate::file_ops::save_file_dialog(
                         self.hwnd,
                         &default_name,
@@ -1003,7 +1003,7 @@ impl AppWindow {
                     .iter()
                     .map(|&i| self.document.file_list().files()[i].path.clone())
                     .collect();
-                let path_refs: Vec<&Path> = paths.iter().map(|p| p.as_path()).collect();
+                let path_refs: Vec<&Path> = paths.iter().map(PathBuf::as_path).collect();
                 if let Ok(true) = crate::file_ops::delete_to_recycle_bin(self.hwnd, &path_refs) {
                     self.document.remove_marked_from_list();
                     self.process_document_events();
@@ -1027,13 +1027,13 @@ impl AppWindow {
                 let initial_dir = self.document.file_list().files()[marked[0]]
                     .source
                     .parent_dir()
-                    .map(|p| p.to_path_buf());
+                    .map(Path::to_path_buf);
                 if let Ok(Some(dest)) = crate::file_ops::select_folder_dialog(
                     self.hwnd,
                     "移動先フォルダ",
                     initial_dir.as_deref(),
                 ) {
-                    let path_refs: Vec<&Path> = paths.iter().map(|p| p.as_path()).collect();
+                    let path_refs: Vec<&Path> = paths.iter().map(PathBuf::as_path).collect();
                     if let Ok(true) = crate::file_ops::move_files(self.hwnd, &path_refs, &dest) {
                         // パス更新失敗時は従来通りリストから削除（フォールバック）
                         if let Err(e) = self.document.update_marked_paths(&dest) {
@@ -1056,19 +1056,19 @@ impl AppWindow {
                 let initial_dir = self.document.file_list().files()[marked[0]]
                     .source
                     .parent_dir()
-                    .map(|p| p.to_path_buf());
+                    .map(Path::to_path_buf);
                 if let Ok(Some(dest)) = crate::file_ops::select_folder_dialog(
                     self.hwnd,
                     "コピー先フォルダ",
                     initial_dir.as_deref(),
                 ) {
-                    let path_refs: Vec<&Path> = paths.iter().map(|p| p.as_path()).collect();
+                    let path_refs: Vec<&Path> = paths.iter().map(PathBuf::as_path).collect();
                     if let Err(e) = crate::file_ops::copy_files(self.hwnd, &path_refs, &dest) {
                         self.show_error_title(&format!("ファイルコピー失敗: {e}"));
                     }
                 }
             }
-            Action::Reload => self.navigate_with_guard(|d| d.reload()),
+            Action::Reload => self.navigate_with_guard(Document::reload),
 
             // --- クリップボード ---
             Action::CopyImage => {
@@ -1623,9 +1623,9 @@ impl AppWindow {
             }
 
             // --- ソートナビゲーション ---
-            Action::SortNavigateBack => self.navigate_with_guard(|d| d.sort_navigate_back()),
+            Action::SortNavigateBack => self.navigate_with_guard(Document::sort_navigate_back),
             Action::SortNavigateForward => {
-                self.navigate_with_guard(|d| d.sort_navigate_forward());
+                self.navigate_with_guard(Document::sort_navigate_forward);
             }
 
             // --- シャッフル ---
@@ -1713,16 +1713,10 @@ impl AppWindow {
         let Some(img) = self.document.current_image() else {
             return;
         };
-        let (default_stem, initial_dir) = self
-            .document
-            .current_source()
-            .map(|s| {
-                (
-                    s.default_save_stem(),
-                    s.parent_dir().map(|p| p.to_path_buf()),
-                )
-            })
-            .unwrap_or_else(|| ("image".to_string(), None));
+        let (default_stem, initial_dir) = self.document.current_source().map_or_else(
+            || ("image".to_string(), None),
+            |s| (s.default_save_stem(), s.parent_dir().map(Path::to_path_buf)),
+        );
         let default_name = format!("{default_stem}.{ext}");
 
         let Some(save_path) = crate::file_ops::save_file_dialog(
@@ -1991,8 +1985,12 @@ Susieプラグイン (.sph/.spi) で拡張可能";
         // 現在のマウス位置を取得
         let mut pt = windows::Win32::Foundation::POINT::default();
         unsafe {
-            let _ = windows::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut pt);
-            let _ = windows::Win32::Graphics::Gdi::ScreenToClient(self.hwnd, &mut pt);
+            let _ =
+                windows::Win32::UI::WindowsAndMessaging::GetCursorPos(std::ptr::from_mut(&mut pt));
+            let _ = windows::Win32::Graphics::Gdi::ScreenToClient(
+                self.hwnd,
+                std::ptr::from_mut(&mut pt),
+            );
         }
         let sx = pt.x as f32;
         let sy = pt.y as f32;

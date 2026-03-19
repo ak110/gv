@@ -2,6 +2,9 @@
 name = "gv3"
 version = "1.1.1"
 edition = "2024"
+description = "Windows用の軽量画像ビューアー"
+license = "MIT"
+repository = "https://github.com/ak110/gv3"
 
 [dependencies]
 windows = { version = "0.61", features = [
