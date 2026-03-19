@@ -171,6 +171,12 @@ impl D2DRenderer {
                     self.draw_bitmap(&bitmap, &draw_rect);
                 }
 
+                // ピクセルグリッド（8倍以上で表示）
+                let scale = draw_rect.width / img.width as f32;
+                if scale >= 8.0 {
+                    self.draw_pixel_grid(&draw_rect, img.width, img.height, scale);
+                }
+
                 // 選択矩形オーバーレイ
                 if let Some(sel_rect) = selection_rect {
                     self.draw_selection_overlay(sel_rect, &draw_rect, img.width, img.height);
@@ -457,6 +463,55 @@ impl D2DRenderer {
     /// 最後に描画した画像の描画矩形を返す（選択の座標変換用）
     pub fn last_draw_rect(&self) -> Option<&DrawRect> {
         self.last_draw_rect.as_ref()
+    }
+
+    /// ピクセルグリッドを描画する（拡大時のピクセル境界表示）
+    unsafe fn draw_pixel_grid(
+        &self,
+        draw_rect: &DrawRect,
+        img_width: u32,
+        img_height: u32,
+        scale: f32,
+    ) {
+        unsafe {
+            let Ok(brush) = self.render_target.CreateSolidColorBrush(
+                &D2D1_COLOR_F {
+                    r: 0.5,
+                    g: 0.5,
+                    b: 0.5,
+                    a: 0.3,
+                },
+                None,
+            ) else {
+                return;
+            };
+
+            let half = 0.25;
+
+            // 垂直線（細い矩形で描画）
+            for x in 0..=img_width {
+                let sx = draw_rect.x + x as f32 * scale;
+                let rect = D2D_RECT_F {
+                    left: sx - half,
+                    top: draw_rect.y,
+                    right: sx + half,
+                    bottom: draw_rect.y + draw_rect.height,
+                };
+                self.render_target.FillRectangle(&rect, &brush);
+            }
+
+            // 水平線（細い矩形で描画）
+            for y in 0..=img_height {
+                let sy = draw_rect.y + y as f32 * scale;
+                let rect = D2D_RECT_F {
+                    left: draw_rect.x,
+                    top: sy - half,
+                    right: draw_rect.x + draw_rect.width,
+                    bottom: sy + half,
+                };
+                self.render_target.FillRectangle(&rect, &brush);
+            }
+        }
     }
 
     /// 選択矩形のオーバーレイを描画する（白+黒の2本線 + ハンドル）
