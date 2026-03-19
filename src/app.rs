@@ -1363,6 +1363,80 @@ impl AppWindow {
                 }
             }
 
+            // --- フィルタ（パラメータなし） ---
+            Action::InvertColors => {
+                if let Some(img) = self.document.current_image() {
+                    let sel = self.selection.current_rect();
+                    let result = crate::filter::color::invert_colors(img, sel.as_ref());
+                    self.document.apply_edit(result);
+                    self.process_document_events();
+                }
+            }
+            Action::GrayscaleSimple => {
+                if let Some(img) = self.document.current_image() {
+                    let sel = self.selection.current_rect();
+                    let result = crate::filter::color::grayscale_simple(img, sel.as_ref());
+                    self.document.apply_edit(result);
+                    self.process_document_events();
+                }
+            }
+            Action::GrayscaleStrict => {
+                if let Some(img) = self.document.current_image() {
+                    let sel = self.selection.current_rect();
+                    let result = crate::filter::color::grayscale_strict(img, sel.as_ref());
+                    self.document.apply_edit(result);
+                    self.process_document_events();
+                }
+            }
+            Action::ApplyAlpha => {
+                if let Some(img) = self.document.current_image() {
+                    let sel = self.selection.current_rect();
+                    let result = crate::filter::color::apply_alpha(img, sel.as_ref());
+                    self.document.apply_edit(result);
+                    self.process_document_events();
+                }
+            }
+            Action::Blur => {
+                if let Some(img) = self.document.current_image() {
+                    let sel = self.selection.current_rect();
+                    let result = crate::filter::blur::blur(img, sel.as_ref());
+                    self.document.apply_edit(result);
+                    self.process_document_events();
+                }
+            }
+            Action::BlurStrong => {
+                if let Some(img) = self.document.current_image() {
+                    let sel = self.selection.current_rect();
+                    let result = crate::filter::blur::blur_strong(img, sel.as_ref());
+                    self.document.apply_edit(result);
+                    self.process_document_events();
+                }
+            }
+            Action::Sharpen => {
+                if let Some(img) = self.document.current_image() {
+                    let sel = self.selection.current_rect();
+                    let result = crate::filter::sharpen::sharpen(img, sel.as_ref());
+                    self.document.apply_edit(result);
+                    self.process_document_events();
+                }
+            }
+            Action::SharpenStrong => {
+                if let Some(img) = self.document.current_image() {
+                    let sel = self.selection.current_rect();
+                    let result = crate::filter::sharpen::sharpen_strong(img, sel.as_ref());
+                    self.document.apply_edit(result);
+                    self.process_document_events();
+                }
+            }
+            Action::MedianFilter => {
+                if let Some(img) = self.document.current_image() {
+                    let sel = self.selection.current_rect();
+                    let result = crate::filter::blur::median_filter(img, sel.as_ref());
+                    self.document.apply_edit(result);
+                    self.process_document_events();
+                }
+            }
+
             // --- ブックマーク ---
             Action::BookmarkSave => {
                 let idx = self.document.file_list().current_index();

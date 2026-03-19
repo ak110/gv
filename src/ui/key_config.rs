@@ -127,6 +127,17 @@ pub enum Action {
     RotateArbitrary,
     Resize,
 
+    // --- フィルタ（画像メニュー） ---
+    InvertColors,
+    GrayscaleSimple,
+    GrayscaleStrict,
+    ApplyAlpha,
+    Blur,
+    BlurStrong,
+    Sharpen,
+    SharpenStrong,
+    MedianFilter,
+
     // --- ブックマーク ---
     BookmarkSave,
     BookmarkLoad,
@@ -290,6 +301,10 @@ impl KeyConfig {
         bind(&mut m, "Ctrl+←", Action::Rotate90CCW);
         bind(&mut m, "Ctrl+↓", Action::RotateArbitrary);
         bind(&mut m, "Ctrl+Shift+R", Action::Resize);
+
+        // [filter]
+        bind(&mut m, "Ctrl+I", Action::InvertColors);
+        bind(&mut m, "Ctrl+G", Action::GrayscaleStrict);
 
         // [bookmark]
         bind(&mut m, "F9", Action::BookmarkSave);
@@ -538,6 +553,17 @@ fn field_to_action(field: &str) -> Option<Action> {
         "rotate_90_ccw" => Action::Rotate90CCW,
         "rotate_arbitrary" => Action::RotateArbitrary,
         "resize" => Action::Resize,
+
+        // フィルタ
+        "invert_colors" => Action::InvertColors,
+        "grayscale_simple" => Action::GrayscaleSimple,
+        "grayscale_strict" => Action::GrayscaleStrict,
+        "apply_alpha" => Action::ApplyAlpha,
+        "blur" => Action::Blur,
+        "blur_strong" => Action::BlurStrong,
+        "sharpen" => Action::Sharpen,
+        "sharpen_strong" => Action::SharpenStrong,
+        "median_filter" => Action::MedianFilter,
 
         // ブックマーク
         "bookmark_save" => Action::BookmarkSave,
