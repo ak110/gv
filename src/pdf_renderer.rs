@@ -16,15 +16,10 @@ use crate::image::DecodedImage;
 /// レンダリング解像度スケール（150 DPI / 96 DPI ≈ 1.5625）
 const DPI_SCALE: f64 = 1.5625;
 
-/// `\\?\` プレフィックスを除去する（WinRT APIが受け付けないため）
-fn strip_extended_prefix(path: &Path) -> &str {
-    let s = path.to_str().unwrap_or("");
-    s.strip_prefix(r"\\?\").unwrap_or(s)
-}
-
 /// PDFのページ数を取得する（高速: ページデータはロードしない）
 pub fn get_pdf_page_count(pdf_path: &Path) -> Result<u32> {
-    let path_str = strip_extended_prefix(pdf_path);
+    let clean_path = crate::util::strip_extended_length_prefix(pdf_path);
+    let path_str = clean_path.to_str().unwrap_or("");
     if path_str.is_empty() {
         anyhow::bail!("無効なパス: {}", pdf_path.display());
     }
@@ -45,7 +40,8 @@ pub fn get_pdf_page_count(pdf_path: &Path) -> Result<u32> {
 
 /// 単一PDFページをDecodedImageにレンダリングする（150 DPI）
 pub fn render_pdf_page(pdf_path: &Path, page_index: u32) -> Result<DecodedImage> {
-    let path_str = strip_extended_prefix(pdf_path);
+    let clean_path = crate::util::strip_extended_length_prefix(pdf_path);
+    let path_str = clean_path.to_str().unwrap_or("");
     if path_str.is_empty() {
         anyhow::bail!("無効なパス: {}", pdf_path.display());
     }

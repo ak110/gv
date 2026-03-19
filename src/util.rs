@@ -1,6 +1,23 @@
+use std::path::{Path, PathBuf};
+
 /// &str を null終端UTF-16ワイド文字列に変換する（Win32 API用）
 pub fn to_wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+/// `\\?\` プレフィックスを除去する（Shell API/WinRT APIが非対応のため）
+/// UNCパスの場合: `\\?\UNC\server\share` → `\\server\share`
+/// 通常パスの場合: `\\?\C:\path` → `C:\path`
+pub fn strip_extended_length_prefix(path: &Path) -> PathBuf {
+    let s = path.to_string_lossy();
+    if let Some(unc) = s.strip_prefix(r"\\?\UNC\") {
+        // UNCパス: \\?\UNC\server\share → \\server\share
+        PathBuf::from(format!(r"\\{unc}"))
+    } else if let Some(stripped) = s.strip_prefix(r"\\?\") {
+        PathBuf::from(stripped)
+    } else {
+        path.to_path_buf()
+    }
 }
 
 #[cfg(test)]
@@ -30,5 +47,41 @@ mod tests {
         assert_eq!(result, expected);
         // null終端確認
         assert_eq!(*result.last().unwrap(), 0);
+    }
+
+    #[test]
+    fn strip_prefix_local_path() {
+        let path = Path::new(r"\\?\C:\Users\test\image.png");
+        assert_eq!(
+            strip_extended_length_prefix(path),
+            PathBuf::from(r"C:\Users\test\image.png")
+        );
+    }
+
+    #[test]
+    fn strip_prefix_unc_path() {
+        let path = Path::new(r"\\?\UNC\server\share\image.png");
+        assert_eq!(
+            strip_extended_length_prefix(path),
+            PathBuf::from(r"\\server\share\image.png")
+        );
+    }
+
+    #[test]
+    fn strip_prefix_no_prefix() {
+        let path = Path::new(r"C:\Users\test\image.png");
+        assert_eq!(
+            strip_extended_length_prefix(path),
+            PathBuf::from(r"C:\Users\test\image.png")
+        );
+    }
+
+    #[test]
+    fn strip_prefix_plain_unc() {
+        let path = Path::new(r"\\server\share\image.png");
+        assert_eq!(
+            strip_extended_length_prefix(path),
+            PathBuf::from(r"\\server\share\image.png")
+        );
     }
 }

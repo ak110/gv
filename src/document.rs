@@ -546,13 +546,17 @@ impl Document {
     /// Rustのcanonicalize()は\\?\プレフィックスを付与するが、
     /// SHFileOperationW等のShell APIが非対応のため除去する
     fn canonicalize(path: &Path) -> Result<PathBuf> {
-        let canonical = std::fs::canonicalize(path)
-            .with_context(|| format!("パス解決失敗: {}", path.display()))?;
-        let s = canonical.to_string_lossy();
-        if let Some(stripped) = s.strip_prefix(r"\\?\") {
-            Ok(PathBuf::from(stripped))
-        } else {
-            Ok(canonical)
+        match std::fs::canonicalize(path) {
+            Ok(canonical) => Ok(crate::util::strip_extended_length_prefix(&canonical)),
+            Err(e) => {
+                // UNCパスではcanonicalize()が失敗する場合がある
+                // （ネットワーク遅延、DFS等）。ファイルが存在するならそのまま使う
+                if path.exists() {
+                    Ok(path.to_path_buf())
+                } else {
+                    Err(e).with_context(|| format!("パス解決失敗: {}", path.display()))
+                }
+            }
         }
     }
 

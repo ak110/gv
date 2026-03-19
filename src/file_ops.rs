@@ -1,6 +1,5 @@
 //! Win32 Shell APIによるファイル操作 + ダイアログ
 
-use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result};
@@ -354,7 +353,7 @@ fn create_shell_item(dir: &Path) -> Option<windows::Win32::UI::Shell::IShellItem
 fn build_multi_path_string(paths: &[&Path]) -> Vec<u16> {
     let mut result = Vec::new();
     for path in paths {
-        let path = strip_extended_length_prefix(path);
+        let path = crate::util::strip_extended_length_prefix(path);
         result.extend(path.as_os_str().encode_wide());
         result.push(0); // 各パスの後にNUL
     }
@@ -362,21 +361,9 @@ fn build_multi_path_string(paths: &[&Path]) -> Vec<u16> {
     result
 }
 
-/// extended-length pathプレフィックス（\\?\）を除去する
-/// SHFileOperationWは\\?\形式をサポートしないため、
-/// Rustのcanonicalize()が返すパスを変換する必要がある
-fn strip_extended_length_prefix(path: &Path) -> Cow<'_, Path> {
-    let s = path.to_string_lossy();
-    if let Some(stripped) = s.strip_prefix(r"\\?\") {
-        Cow::Owned(PathBuf::from(stripped))
-    } else {
-        Cow::Borrowed(path)
-    }
-}
-
 /// SHFileOperationW用のダブルNUL終端パス文字列を構築する（単一パス）
 fn build_single_path_string(path: &Path) -> Vec<u16> {
-    let path = strip_extended_length_prefix(path);
+    let path = crate::util::strip_extended_length_prefix(path);
     let mut result: Vec<u16> = path.as_os_str().encode_wide().collect();
     result.push(0);
     result.push(0);
