@@ -182,6 +182,9 @@ pub fn build_menu_bar() -> HMENU {
             Some((Action::ShowHelp, "ヘルプ\tF1")),
             Some((Action::CheckUpdate, "アップデートを確認...")),
             None,
+            Some((Action::RegisterShell, "シェル統合を登録...")),
+            Some((Action::UnregisterShell, "シェル統合を解除...")),
+            None,
             Some((Action::OpenExeFolder, "実行ファイルのフォルダ\tShift+M")),
             Some((
                 Action::OpenBookmarkFolder,
@@ -383,5 +386,7 @@ const ALL_ACTIONS: &[Action] = &[
     Action::OpenTempFolder,
     Action::ShowHelp,
     Action::CheckUpdate,
+    Action::RegisterShell,
+    Action::UnregisterShell,
     Action::Exit,
 ];

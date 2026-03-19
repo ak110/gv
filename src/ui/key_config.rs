@@ -181,6 +181,8 @@ pub enum Action {
     OpenTempFolder,
     ShowHelp,
     CheckUpdate,
+    RegisterShell,
+    UnregisterShell,
     Exit,
 }
 
@@ -644,6 +646,8 @@ fn field_to_action(field: &str) -> Option<Action> {
         "open_temp_folder" => Action::OpenTempFolder,
         "show_help" => Action::ShowHelp,
         "check_update" => Action::CheckUpdate,
+        "register_shell" => Action::RegisterShell,
+        "unregister_shell" => Action::UnregisterShell,
         "exit" => Action::Exit,
 
         _ => return None,

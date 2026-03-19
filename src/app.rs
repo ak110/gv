@@ -1068,10 +1068,9 @@ impl AppWindow {
     fn action_open_exe_folder(&mut self) {
         if let Ok(exe) = std::env::current_exe()
             && let Some(dir) = exe.parent()
+            && let Err(e) = std::process::Command::new("explorer.exe").arg(dir).spawn()
         {
-            if let Err(e) = std::process::Command::new("explorer.exe").arg(dir).spawn() {
-                self.show_error_title(&format!("エクスプローラ起動失敗: {e}"));
-            }
+            self.show_error_title(&format!("エクスプローラ起動失敗: {e}"));
         }
     }
 
@@ -1758,6 +1757,14 @@ impl AppWindow {
                 self.check_for_update();
             }
 
+            // --- シェル統合 ---
+            Action::RegisterShell => {
+                self.action_register_shell();
+            }
+            Action::UnregisterShell => {
+                self.action_unregister_shell();
+            }
+
             // --- 終了 ---
             Action::Exit => unsafe {
                 let _ = DestroyWindow(self.hwnd);
@@ -1972,6 +1979,98 @@ Susieプラグイン (.sph/.spi) で拡張可能";
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+
+    /// シェル統合（ファイル関連付け・コンテキストメニュー・「送る」）を登録
+    fn action_register_shell(&self) {
+        let msg = "ファイル関連付け・コンテキストメニュー・「送る」を登録しますか？\0";
+        let title = "シェル統合\0";
+        let wide_msg: Vec<u16> = msg.encode_utf16().collect();
+        let wide_title: Vec<u16> = title.encode_utf16().collect();
+        let answer = unsafe {
+            MessageBoxW(
+                Some(self.hwnd),
+                windows::core::PCWSTR(wide_msg.as_ptr()),
+                windows::core::PCWSTR(wide_title.as_ptr()),
+                MB_YESNO | MB_ICONQUESTION,
+            )
+        };
+        if answer != IDYES {
+            return;
+        }
+
+        match crate::shell::register_all() {
+            Ok(()) => {
+                let msg = "シェル統合を登録しました。\0";
+                let wide_msg: Vec<u16> = msg.encode_utf16().collect();
+                unsafe {
+                    MessageBoxW(
+                        Some(self.hwnd),
+                        windows::core::PCWSTR(wide_msg.as_ptr()),
+                        windows::core::PCWSTR(wide_title.as_ptr()),
+                        MB_OK | MB_ICONINFORMATION,
+                    );
+                }
+            }
+            Err(e) => {
+                let msg = format!("シェル統合の登録に失敗しました:\n{e}\0");
+                let wide_msg: Vec<u16> = msg.encode_utf16().collect();
+                unsafe {
+                    MessageBoxW(
+                        Some(self.hwnd),
+                        windows::core::PCWSTR(wide_msg.as_ptr()),
+                        windows::core::PCWSTR(wide_title.as_ptr()),
+                        MB_OK | MB_ICONERROR,
+                    );
+                }
+            }
+        }
+    }
+
+    /// シェル統合（ファイル関連付け・コンテキストメニュー・「送る」）を解除
+    fn action_unregister_shell(&self) {
+        let msg = "ファイル関連付け・コンテキストメニュー・「送る」を解除しますか？\0";
+        let title = "シェル統合\0";
+        let wide_msg: Vec<u16> = msg.encode_utf16().collect();
+        let wide_title: Vec<u16> = title.encode_utf16().collect();
+        let answer = unsafe {
+            MessageBoxW(
+                Some(self.hwnd),
+                windows::core::PCWSTR(wide_msg.as_ptr()),
+                windows::core::PCWSTR(wide_title.as_ptr()),
+                MB_YESNO | MB_ICONQUESTION,
+            )
+        };
+        if answer != IDYES {
+            return;
+        }
+
+        match crate::shell::unregister_all() {
+            Ok(()) => {
+                let msg = "シェル統合を解除しました。\0";
+                let wide_msg: Vec<u16> = msg.encode_utf16().collect();
+                unsafe {
+                    MessageBoxW(
+                        Some(self.hwnd),
+                        windows::core::PCWSTR(wide_msg.as_ptr()),
+                        windows::core::PCWSTR(wide_title.as_ptr()),
+                        MB_OK | MB_ICONINFORMATION,
+                    );
+                }
+            }
+            Err(e) => {
+                let msg = format!("シェル統合の解除に失敗しました:\n{e}\0");
+                let wide_msg: Vec<u16> = msg.encode_utf16().collect();
+                unsafe {
+                    MessageBoxW(
+                        Some(self.hwnd),
+                        windows::core::PCWSTR(wide_msg.as_ptr()),
+                        windows::core::PCWSTR(wide_title.as_ptr()),
+                        MB_OK | MB_ICONERROR,
+                    );
                 }
             }
         }
