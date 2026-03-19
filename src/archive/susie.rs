@@ -19,7 +19,10 @@ pub struct SusieArchiveHandler {
 
 impl SusieArchiveHandler {
     pub fn new(plugin: SharedPlugin, registry: Arc<ExtensionRegistry>) -> Self {
-        let extensions = plugin.lock().unwrap().supported_extensions();
+        let extensions = plugin
+            .lock()
+            .expect("Susie plugin lock poisoned")
+            .supported_extensions();
         Self {
             plugin,
             registry,

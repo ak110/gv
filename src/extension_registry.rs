@@ -50,18 +50,6 @@ impl ExtensionRegistry {
         }
     }
 
-    /// ファイル名がコンテナ（アーカイブまたはPDF）拡張子を持つか判定する
-    #[allow(dead_code)]
-    pub fn is_container_extension(&self, filename: &str) -> bool {
-        self.is_archive_extension(filename) || Self::is_pdf_extension(filename)
-    }
-
-    /// ファイル名がPDF拡張子を持つか判定する
-    #[allow(dead_code)]
-    fn is_pdf_extension(filename: &str) -> bool {
-        filename.to_lowercase().ends_with(".pdf")
-    }
-
     /// アーカイブ拡張子を追加登録する
     pub fn register_archive_extensions(&mut self, exts: &[String]) {
         for ext in exts {

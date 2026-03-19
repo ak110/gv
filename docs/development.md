@@ -2,41 +2,37 @@
 
 ## 必要環境
 
-- [rustup](https://rustup.rs/)（Rustツールチェーン）
-- Visual Studio Build Tools（C++ ビルドツール）
 - [mise](https://mise.jdx.dev/)（タスクランナー・ツールバージョン管理）
+- Visual Studio Build Tools（C++ ビルドツール）
+
+## 初回セットアップ
+
+```cmd
+REM Rust, Node.js, pnpm のインストール
+mise install
+
+REM 依存パッケージのインストール + Git hooksの設定
+mise run setup
+```
 
 ## ビルド手順
 
 ```cmd
 REM デバッグビルド
-cargo build
+mise run build
 
 REM リリースビルド（最適化あり）
-cargo build --release
+mise run build-release
 REM → target/release/gv3.exe
 
 REM テスト
-cargo test
+mise run test
 
-REM 静的解析
-cargo clippy
+REM 実行（引数付き）
+mise run run -- image.jpg
 
-REM フォーマット
-cargo fmt
-```
-
-## 初回セットアップ
-
-```cmd
-REM ツールのインストール（Node.js, pnpm）
-mise install
-
-REM ドキュメントlint用の依存パッケージをインストール
-pnpm install
-
-REM Git pre-pushフックを有効化
-git config core.hooksPath .githooks
+REM クリーン
+mise run clean
 ```
 
 ## Lintの実行
@@ -95,18 +91,17 @@ Susieプラグインのロード、設定ファイルのパースなど、バッ
 ## 依存パッケージの更新
 
 ```cmd
-REM Cargo.lock を最新に更新（semver互換範囲内）
-cargo update
+REM semver互換範囲内で更新可能なパッケージを確認
+mise run outdated
+
+REM 実際に更新する場合
+mise run update
 
 REM ビルド・テスト確認
-cargo build && cargo test && cargo clippy
-
-REM メジャーバージョンアップの確認（任意）
-cargo install cargo-outdated
-cargo outdated
+mise run lint-rust
 ```
 
-メジャーバージョンアップがある場合は `Cargo.toml` のバージョン指定を手動で更新する。
+メジャーバージョンアップがある場合は`Cargo.toml`のバージョン指定を手動で更新する。
 
 ## リリース手順
 

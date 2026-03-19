@@ -76,7 +76,7 @@ impl SusieManager {
     /// プラグインが報告する拡張子をExtensionRegistryに登録する
     pub fn register_extensions(&self, registry: &mut ExtensionRegistry) {
         for plugin in &self.plugins {
-            let locked = plugin.lock().unwrap();
+            let locked = plugin.lock().expect("Susie plugin lock poisoned");
             let exts = locked.supported_extensions();
             match locked.plugin_type {
                 SusiePluginType::Image => {
@@ -93,7 +93,9 @@ impl SusieManager {
     pub fn create_image_decoders(&self) -> Vec<Box<dyn ImageDecoder>> {
         self.plugins
             .iter()
-            .filter(|p| p.lock().unwrap().plugin_type == SusiePluginType::Image)
+            .filter(|p| {
+                p.lock().expect("Susie plugin lock poisoned").plugin_type == SusiePluginType::Image
+            })
             .map(|p| {
                 Box::new(super::image::susie::SusieImageDecoder::new(Arc::clone(p)))
                     as Box<dyn ImageDecoder>
@@ -108,7 +110,10 @@ impl SusieManager {
     ) -> Vec<Box<dyn ArchiveHandler>> {
         self.plugins
             .iter()
-            .filter(|p| p.lock().unwrap().plugin_type == SusiePluginType::Archive)
+            .filter(|p| {
+                p.lock().expect("Susie plugin lock poisoned").plugin_type
+                    == SusiePluginType::Archive
+            })
             .map(|p| {
                 Box::new(super::archive::susie::SusieArchiveHandler::new(
                     Arc::clone(p),

@@ -31,7 +31,8 @@ pub struct Layout {
 }
 
 impl Layout {
-    #[allow(dead_code)]
+    /// テスト用デフォルト初期化
+    #[cfg(test)]
     pub fn new() -> Self {
         Self {
             mode: DisplayMode::AutoFit,

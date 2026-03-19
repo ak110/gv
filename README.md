@@ -62,6 +62,10 @@ gv3.exe --unregister
 
 JPEG, PNG, GIF, BMP, WebP
 
+### PDF
+
+Windows.Data.Pdf APIによるPDFレンダリングに対応しています。
+
 ### アーカイブ
 
 ZIP / cbz, RAR / cbr, 7z

@@ -20,6 +20,10 @@ gv3/
 │   ├── bookmark.rs             # ブックマーク保存/復元
 │   ├── clipboard.rs            # Win32クリップボード操作（テキスト・画像）
 │   ├── file_ops.rs             # Shell APIによるファイル操作・ダイアログ
+│   ├── pdf_renderer.rs         # Windows.Data.Pdf によるPDFページレンダリング
+│   ├── updater.rs              # GitHub Releases からの自動更新
+│   ├── temp_cleanup.rs         # 起動時の古い一時ファイル自動削除
+│   ├── util.rs                 # ユーティリティ（to_wide等の共通関数）
 │   │
 │   ├── prefetch/               # 先読みエンジン
 │   │   ├── mod.rs
@@ -48,7 +52,12 @@ gv3/
 │   │   ├── window.rs           # Win32ウィンドウ基本操作
 │   │   ├── fullscreen.rs       # フルスクリーン/全画面切替
 │   │   ├── key_config.rs       # キーバインド設定、アクション定義
-│   │   └── cursor_hider.rs     # フルスクリーン時カーソル自動非表示
+│   │   ├── cursor_hider.rs     # フルスクリーン時カーソル自動非表示
+│   │   ├── font.rs             # フォント管理（等幅フォント等）
+│   │   ├── info_dialog.rs      # 画像情報ダイアログ
+│   │   ├── page_dialog.rs      # ページ指定ジャンプダイアログ
+│   │   ├── file_list_panel.rs  # ファイルリストパネル（ListBox）
+│   │   └── menu.rs             # メニューバー構築・管理
 │   │
 │   ├── susie/                  # Susieプラグインシステム（64bit対応）
 │   │   ├── mod.rs              # SusieManager: プラグイン検出・ロード・管理

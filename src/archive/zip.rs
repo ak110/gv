@@ -52,6 +52,16 @@ impl ZipHandler {
         Ok(data)
     }
 
+    /// ファイルパスからエントリ一覧を取得する
+    #[cfg(test)]
+    pub fn list_images(&self, archive_path: &Path) -> Result<Vec<super::ArchiveImageEntry>> {
+        let file = File::open(archive_path)
+            .with_context(|| format!("アーカイブを開けません: {}", archive_path.display()))?;
+        let archive = zip::ZipArchive::new(file)
+            .with_context(|| format!("ZIP読み取り失敗: {}", archive_path.display()))?;
+        Self::list_images_from_archive(archive, &self.registry)
+    }
+
     /// ZipArchiveからエントリ一覧を取得する共通実装
     fn list_images_from_archive<R: std::io::Read + std::io::Seek>(
         mut archive: zip::ZipArchive<R>,
@@ -92,14 +102,6 @@ impl ArchiveHandler for ZipHandler {
 
     fn supports_on_demand(&self) -> bool {
         true
-    }
-
-    fn list_images(&self, archive_path: &Path) -> Result<Vec<super::ArchiveImageEntry>> {
-        let file = File::open(archive_path)
-            .with_context(|| format!("アーカイブを開けません: {}", archive_path.display()))?;
-        let archive = zip::ZipArchive::new(file)
-            .with_context(|| format!("ZIP読み取り失敗: {}", archive_path.display()))?;
-        Self::list_images_from_archive(archive, &self.registry)
     }
 
     fn read_entry(&self, archive_path: &Path, entry_name: &str) -> Result<Vec<u8>> {

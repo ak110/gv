@@ -51,19 +51,19 @@
 
 ```cmd
 REM 環境構築（初回のみ）
-REM 1. rustup インストール（公式サイト）
+REM 1. mise インストール（https://mise.jdx.dev/）
 REM 2. Visual Studio Build Tools インストール（C++ビルドツールのみ）
 REM 3. VSCode + rust-analyzer 拡張
+mise install
+mise run setup
 
 REM 日常の開発
-cargo build
-cargo run
-cargo run -- image.jpg
-cargo test
-cargo clippy
-cargo fmt
+mise run build
+mise run run -- image.jpg
+mise run test
+mise run lint
 
 REM リリースビルド
-cargo build --release
+mise run build-release
 REM → target/release/gv3.exe
 ```

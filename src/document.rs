@@ -30,16 +30,19 @@ impl AsRef<[u8]> for ZipBuffer {
     }
 }
 
-/// DocumentからUIへの通知イベント
+/// DocumentからUIへの通知イベント（loader_threadから構築され、app.rsで受信される）
 #[derive(Debug)]
-#[allow(dead_code)]
 pub enum DocumentEvent {
     /// 画像のデコード完了、再描画可能
     ImageReady,
     /// ファイルリスト変更
     FileListChanged,
     /// 表示位置変更
-    NavigationChanged { index: usize, count: usize },
+    NavigationChanged {
+        index: usize,
+        #[allow(dead_code)] // イベント情報として保持（将来のステータスバー表示等で使用予定）
+        count: usize,
+    },
     /// エラー通知
     Error(String),
 }
@@ -414,7 +417,10 @@ impl Document {
             let _ = std::fs::remove_dir_all(&temp_dir);
         }
         self.current_containers.clear();
-        self.zip_buffers.write().unwrap().clear();
+        self.zip_buffers
+            .write()
+            .expect("zip_buffers lock poisoned")
+            .clear();
     }
 
     /// フォルダを開く（先頭画像を表示）
@@ -547,7 +553,7 @@ impl Document {
                 on_demand: true,
             } => {
                 // キャッシュされたZIPバッファから読み出し（Stored最適化付き）
-                let buffers = self.zip_buffers.read().unwrap();
+                let buffers = self.zip_buffers.read().expect("zip_buffers lock poisoned");
                 if let Some(buffer) = buffers.get(archive) {
                     crate::archive::zip::ZipHandler::read_entry_from_buffer(buffer.as_ref(), entry)
                 } else {
@@ -585,21 +591,9 @@ impl Document {
         &self.file_list
     }
 
-    /// パスがアーカイブファイルか判定する
-    #[allow(dead_code)]
-    pub fn is_archive(&self, path: &Path) -> bool {
-        self.archive_manager.is_archive(path)
-    }
-
     /// パスがコンテナ（アーカイブまたはPDF）か判定する
     pub fn is_container(&self, path: &Path) -> bool {
         self.archive_manager.is_archive(path) || Self::is_pdf(path)
-    }
-
-    /// 現在開いているコンテナ（アーカイブ/PDF）のパス一覧
-    #[allow(dead_code)]
-    pub fn current_containers(&self) -> &[PathBuf] {
-        &self.current_containers
     }
 
     /// 現在のファイルの論理ソース
@@ -867,16 +861,233 @@ impl Document {
         self.cache.contains(index)
             || (self.file_list.current_index() == Some(index) && self.current_image.is_some())
     }
-
-    /// ファイルリストへの可変参照（app.rsのファイル操作用）
-    #[allow(dead_code)]
-    pub fn file_list_mut(&mut self) -> &mut FileList {
-        &mut self.file_list
-    }
 }
 
 impl Drop for Document {
     fn drop(&mut self) {
         self.cleanup_archive_temp();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    use crate::test_helpers::{create_1x1_white_png, test_document};
+
+    /// テスト用の一時ディレクトリにダミー画像を配置する
+    fn setup_test_dir(name: &str, count: usize) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("gv3_test_document_{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let png_data = create_1x1_white_png();
+        for i in 0..count {
+            let path = dir.join(format!("image_{i:03}.png"));
+            let mut f = std::fs::File::create(&path).unwrap();
+            f.write_all(&png_data).unwrap();
+        }
+        dir
+    }
+
+    fn cleanup_test_dir(dir: &Path) {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn new_initial_state() {
+        let (doc, _rx) = test_document();
+        assert!(doc.current_image().is_none());
+        assert!(doc.current_path().is_none());
+        assert_eq!(doc.file_list().len(), 0);
+        assert_eq!(doc.file_list().current_index(), None);
+    }
+
+    #[test]
+    fn open_folder_populates_list() {
+        let dir = setup_test_dir("open", 3);
+        let (mut doc, _rx) = test_document();
+        doc.open_folder(&dir).unwrap();
+
+        assert_eq!(doc.file_list().len(), 3);
+        assert_eq!(doc.file_list().current_index(), Some(0));
+        assert!(doc.current_image().is_some());
+
+        cleanup_test_dir(&dir);
+    }
+
+    #[test]
+    fn navigate_relative_forward_backward() {
+        let dir = setup_test_dir("nav_rel", 5);
+        let (mut doc, _rx) = test_document();
+        doc.open_folder(&dir).unwrap();
+
+        // 前方移動
+        doc.navigate_relative(1);
+        assert_eq!(doc.file_list().current_index(), Some(1));
+
+        doc.navigate_relative(2);
+        assert_eq!(doc.file_list().current_index(), Some(3));
+
+        // 後方移動
+        doc.navigate_relative(-1);
+        assert_eq!(doc.file_list().current_index(), Some(2));
+
+        // ラップアラウンド: 先頭を超えると末尾へ
+        doc.navigate_first();
+        doc.navigate_relative(-1);
+        assert_eq!(doc.file_list().current_index(), Some(4));
+
+        // ラップアラウンド: 末尾を超えると先頭へ
+        doc.navigate_relative(1);
+        assert_eq!(doc.file_list().current_index(), Some(0));
+
+        cleanup_test_dir(&dir);
+    }
+
+    #[test]
+    fn navigate_first_last() {
+        let dir = setup_test_dir("nav_fl", 5);
+        let (mut doc, _rx) = test_document();
+        doc.open_folder(&dir).unwrap();
+
+        doc.navigate_last();
+        assert_eq!(doc.file_list().current_index(), Some(4));
+
+        doc.navigate_first();
+        assert_eq!(doc.file_list().current_index(), Some(0));
+
+        cleanup_test_dir(&dir);
+    }
+
+    #[test]
+    fn navigate_to_index() {
+        let dir = setup_test_dir("nav_to", 5);
+        let (mut doc, _rx) = test_document();
+        doc.open_folder(&dir).unwrap();
+
+        doc.navigate_to(3);
+        assert_eq!(doc.file_list().current_index(), Some(3));
+
+        // 範囲外は移動しない
+        doc.navigate_to(100);
+        assert_eq!(doc.file_list().current_index(), Some(3));
+
+        cleanup_test_dir(&dir);
+    }
+
+    #[test]
+    fn mark_operations() {
+        let dir = setup_test_dir("mark", 3);
+        let (mut doc, _rx) = test_document();
+        doc.open_folder(&dir).unwrap();
+
+        // 初期状態ではマークなし
+        assert!(!doc.file_list().current().unwrap().marked);
+
+        // mark_currentはマーク後に次へ移動する
+        doc.navigate_first();
+        doc.mark_current();
+        assert_eq!(doc.file_list().current_index(), Some(1));
+        assert!(doc.file_list().files()[0].marked);
+
+        // unmark_currentは現在位置のマークを解除
+        doc.navigate_first();
+        doc.unmark_current();
+        assert!(!doc.file_list().files()[0].marked);
+
+        // invert_all_marks
+        doc.invert_all_marks();
+        let marks: Vec<bool> = doc.file_list().files().iter().map(|f| f.marked).collect();
+        assert_eq!(marks, vec![true, true, true]);
+
+        cleanup_test_dir(&dir);
+    }
+
+    #[test]
+    fn is_pdf_detection() {
+        assert!(Document::is_pdf(Path::new("test.pdf")));
+        assert!(Document::is_pdf(Path::new("test.PDF")));
+        assert!(Document::is_pdf(Path::new("path/to/file.Pdf")));
+        assert!(!Document::is_pdf(Path::new("test.png")));
+        assert!(!Document::is_pdf(Path::new("test.pdf.bak")));
+        assert!(!Document::is_pdf(Path::new("no_extension")));
+    }
+
+    #[test]
+    fn canonicalize_strips_unc_prefix() {
+        // 実在するパスでcanonicalize
+        let dir = setup_test_dir("canon", 1);
+        let path = dir.join("image_000.png");
+        let result = Document::canonicalize(&path).unwrap();
+        // \\?\プレフィックスが除去されていること
+        assert!(!result.to_string_lossy().starts_with(r"\\?\"));
+        // パスが正しいこと
+        assert!(result.exists());
+
+        cleanup_test_dir(&dir);
+    }
+
+    #[test]
+    fn update_cache_range_calculation() {
+        let (mut doc, _rx) = test_document();
+        let base_size = 1024 * 1536 * 4; // ~6MB
+
+        // 小さいメモリ予算: 最小3スロット → forward=2, backward=1
+        doc.update_cache_range(base_size * 3, base_size);
+        assert_eq!(doc.cache_forward, 2);
+        assert_eq!(doc.cache_backward, 1);
+
+        // 大きいメモリ予算: 上限に達する → forward=4, backward=2
+        doc.update_cache_range(base_size * 100, base_size);
+        assert_eq!(doc.cache_forward, 4);
+        assert_eq!(doc.cache_backward, 2);
+    }
+
+    #[test]
+    fn close_all_clears_state() {
+        let dir = setup_test_dir("close", 3);
+        let (mut doc, _rx) = test_document();
+        doc.open_folder(&dir).unwrap();
+        assert!(doc.current_image().is_some());
+
+        doc.close_all();
+        assert!(doc.current_image().is_none());
+        assert_eq!(doc.file_list().len(), 0);
+        assert_eq!(doc.file_list().current_index(), None);
+
+        cleanup_test_dir(&dir);
+    }
+
+    #[test]
+    fn document_events_on_navigation() {
+        let dir = setup_test_dir("events", 3);
+        let (mut doc, rx) = test_document();
+        doc.open_folder(&dir).unwrap();
+
+        // open_folderのイベントをdrain
+        while rx.try_recv().is_ok() {}
+
+        doc.navigate_relative(1);
+
+        // NavigationChanged + ImageReady が送信されるはず
+        let mut got_nav = false;
+        let mut got_ready = false;
+        while let Ok(event) = rx.try_recv() {
+            match event {
+                DocumentEvent::NavigationChanged { index, .. } => {
+                    assert_eq!(index, 1);
+                    got_nav = true;
+                }
+                DocumentEvent::ImageReady => {
+                    got_ready = true;
+                }
+                _ => {}
+            }
+        }
+        assert!(got_nav, "NavigationChangedイベントが送信されなかった");
+        assert!(got_ready, "ImageReadyイベントが送信されなかった");
+
+        cleanup_test_dir(&dir);
     }
 }

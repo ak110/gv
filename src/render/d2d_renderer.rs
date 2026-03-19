@@ -19,10 +19,12 @@ use crate::config::DisplayConfig;
 use crate::image::DecodedImage;
 
 /// αチャネル背景モード
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum AlphaBackground {
     White,
     Black,
+    #[default]
     Checker,
 }
 
@@ -36,7 +38,7 @@ struct PrescaledEntry {
 
 /// Direct2D描画エンジン
 pub struct D2DRenderer {
-    #[allow(dead_code)]
+    #[allow(dead_code)] // COM参照をDrop時まで保持する必要がある
     factory: ID2D1Factory,
     render_target: ID2D1HwndRenderTarget,
     layout: Layout,
@@ -69,7 +71,7 @@ impl D2DRenderer {
             let render_target = Self::create_render_target(&factory, hwnd)?;
             let layout =
                 Layout::from_config(display_config.to_display_mode(), display_config.margin);
-            let alpha_bg = display_config.to_alpha_background();
+            let alpha_bg = display_config.alpha_background;
 
             Ok(Self {
                 factory,
@@ -430,12 +432,6 @@ impl D2DRenderer {
             AlphaBackground::Black => AlphaBackground::Checker,
             AlphaBackground::Checker => AlphaBackground::White,
         };
-    }
-
-    /// αチャネル背景を設定
-    #[allow(dead_code)]
-    pub fn set_alpha_background(&mut self, bg: AlphaBackground) {
-        self.alpha_bg = bg;
     }
 
     /// 描画領域の左オフセットを設定（ファイルリストパネル幅）

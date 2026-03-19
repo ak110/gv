@@ -1,6 +1,38 @@
 [tools]
-node = "22"
-pnpm = "9"
+rust = "stable"
+node = "lts"
+pnpm = "latest"
+
+[tasks.setup]
+description = "Initial project setup (install deps + configure git hooks)"
+run = """
+pnpm install
+git config core.hooksPath .githooks
+"""
+
+[tasks.build]
+description = "cargo build"
+run = "cargo build"
+
+[tasks.build-release]
+description = "cargo build --release"
+run = "cargo build --release"
+
+[tasks.run]
+description = "cargo run"
+run = "cargo run -- {{arg(name=\"args\", var=true)}}"
+
+[tasks.clean]
+description = "cargo clean"
+run = "cargo clean"
+
+[tasks.outdated]
+description = "Check for outdated dependencies"
+run = "cargo update --dry-run"
+
+[tasks.update]
+description = "Update Cargo.lock (semver compatible)"
+run = "cargo update"
 
 [tasks.fmt-check]
 description = "cargo fmt --check"

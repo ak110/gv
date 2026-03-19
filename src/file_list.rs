@@ -35,12 +35,14 @@ impl SimpleRng {
 }
 
 /// ソート順
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SortOrder {
     /// ファイル名順
+    #[default]
     Name,
     /// ファイル名順（大文字小文字区別なし）
+    #[serde(rename = "name_nocase")]
     NameNoCase,
     /// ファイルサイズ順
     Size,

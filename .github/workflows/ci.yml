@@ -15,11 +15,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@v2
       - uses: jdx/mise-action@v3
+      - uses: Swatinem/rust-cache@v2
       - run: mise run lint-rust
 
   docs:

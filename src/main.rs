@@ -21,6 +21,9 @@ mod ui;
 mod updater;
 mod util;
 
+#[cfg(test)]
+mod test_helpers;
+
 use std::path::PathBuf;
 
 use anyhow::Result;

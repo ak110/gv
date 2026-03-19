@@ -7,6 +7,20 @@ use crate::file_list::SortOrder;
 use crate::render::d2d_renderer::AlphaBackground;
 use crate::render::layout::DisplayMode;
 
+/// 設定ファイル上の表示モード（DisplayModeへの中間表現）
+/// Fixed(f32)はデータ付きバリアントのため、serde直接対応は不可。
+/// config側でfixed_scaleと組み合わせてDisplayModeに変換する。
+#[derive(Debug, Clone, Copy, PartialEq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DisplayModeConfig {
+    Shrink,
+    #[default]
+    Fit,
+    Enlarge,
+    Original,
+    Fixed,
+}
+
 /// アプリケーション設定（gv3.toml）
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
@@ -21,14 +35,16 @@ pub struct Config {
 #[derive(Debug, Deserialize)]
 #[serde(default)]
 pub struct DisplayConfig {
-    /// 表示モード: "shrink", "fit", "enlarge", "original", "fixed"
-    pub auto_scale: String,
-    /// 固定倍率（auto_scale = "fixed" のとき使用）
+    /// 表示モード
+    #[serde(deserialize_with = "deserialize_display_mode_config")]
+    pub auto_scale: DisplayModeConfig,
+    /// 固定倍率（auto_scale = Fixed のとき使用）
     pub fixed_scale: f32,
     /// 余白量（ピクセル）
     pub margin: f32,
-    /// α背景: "white", "black", "checker"
-    pub alpha_background: String,
+    /// α背景
+    #[serde(deserialize_with = "deserialize_alpha_background")]
+    pub alpha_background: AlphaBackground,
 }
 
 #[derive(Debug, Deserialize)]
@@ -38,11 +54,12 @@ pub struct PrefetchConfig {
     pub cache_base_height: u32,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct ListConfig {
-    /// デフォルトソート: "name", "name_nocase", "size", "date", "natural"
-    pub default_sort: String,
+    /// デフォルトソート
+    #[serde(deserialize_with = "deserialize_sort_order")]
+    pub default_sort: SortOrder,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -63,15 +80,75 @@ pub struct SusieConfig {
     pub archive_plugins: Vec<String>,
 }
 
+// --- カスタムデシリアライザ（フィールド単位フォールバック + stderr警告） ---
+
+fn deserialize_display_mode_config<'de, D>(deserializer: D) -> Result<DisplayModeConfig, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    match s.as_str() {
+        "shrink" => Ok(DisplayModeConfig::Shrink),
+        "fit" => Ok(DisplayModeConfig::Fit),
+        "enlarge" => Ok(DisplayModeConfig::Enlarge),
+        "original" => Ok(DisplayModeConfig::Original),
+        "fixed" => Ok(DisplayModeConfig::Fixed),
+        unknown => {
+            eprintln!(
+                "警告: auto_scale の値 '{unknown}' は無効です。デフォルト(fit)を使用します。"
+            );
+            Ok(DisplayModeConfig::Fit)
+        }
+    }
+}
+
+fn deserialize_alpha_background<'de, D>(deserializer: D) -> Result<AlphaBackground, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    match s.as_str() {
+        "white" => Ok(AlphaBackground::White),
+        "black" => Ok(AlphaBackground::Black),
+        "checker" => Ok(AlphaBackground::Checker),
+        unknown => {
+            eprintln!(
+                "警告: alpha_background の値 '{unknown}' は無効です。デフォルト(checker)を使用します。"
+            );
+            Ok(AlphaBackground::Checker)
+        }
+    }
+}
+
+fn deserialize_sort_order<'de, D>(deserializer: D) -> Result<SortOrder, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    match s.as_str() {
+        "name" => Ok(SortOrder::Name),
+        "name_nocase" => Ok(SortOrder::NameNoCase),
+        "size" => Ok(SortOrder::Size),
+        "date" => Ok(SortOrder::Date),
+        "natural" => Ok(SortOrder::Natural),
+        unknown => {
+            eprintln!(
+                "警告: default_sort の値 '{unknown}' は無効です。デフォルト(name)を使用します。"
+            );
+            Ok(SortOrder::Name)
+        }
+    }
+}
+
 // --- Default実装 ---
 
 impl Default for DisplayConfig {
     fn default() -> Self {
         Self {
-            auto_scale: "fit".to_string(),
+            auto_scale: DisplayModeConfig::default(),
             fixed_scale: 1.0,
             margin: 64.0,
-            alpha_background: "checker".to_string(),
+            alpha_background: AlphaBackground::default(),
         }
     }
 }
@@ -81,14 +158,6 @@ impl Default for PrefetchConfig {
         Self {
             cache_base_width: 1024,
             cache_base_height: 1536,
-        }
-    }
-}
-
-impl Default for ListConfig {
-    fn default() -> Self {
-        Self {
-            default_sort: "name".to_string(),
         }
     }
 }
@@ -106,40 +175,14 @@ impl Default for SusieConfig {
 // --- 変換ヘルパー ---
 
 impl DisplayConfig {
-    /// 文字列からDisplayModeに変換
+    /// DisplayModeConfigからDisplayModeに変換（Fixed + fixed_scaleの組み合わせが必要なため維持）
     pub fn to_display_mode(&self) -> DisplayMode {
-        match self.auto_scale.as_str() {
-            "shrink" => DisplayMode::AutoShrink,
-            "fit" => DisplayMode::AutoFit,
-            "enlarge" => DisplayMode::AutoEnlarge,
-            "original" => DisplayMode::Original,
-            "fixed" => DisplayMode::Fixed(self.fixed_scale),
-            _ => DisplayMode::AutoShrink,
-        }
-    }
-
-    /// 文字列からAlphaBackgroundに変換
-    pub fn to_alpha_background(&self) -> AlphaBackground {
-        match self.alpha_background.as_str() {
-            "white" => AlphaBackground::White,
-            "black" => AlphaBackground::Black,
-            "checker" => AlphaBackground::Checker,
-            _ => AlphaBackground::Checker,
-        }
-    }
-}
-
-impl ListConfig {
-    /// 文字列からSortOrderに変換
-    #[allow(dead_code)]
-    pub fn to_sort_order(&self) -> SortOrder {
-        match self.default_sort.as_str() {
-            "name" => SortOrder::Name,
-            "name_nocase" => SortOrder::NameNoCase,
-            "size" => SortOrder::Size,
-            "date" => SortOrder::Date,
-            "natural" => SortOrder::Natural,
-            _ => SortOrder::Name,
+        match self.auto_scale {
+            DisplayModeConfig::Shrink => DisplayMode::AutoShrink,
+            DisplayModeConfig::Fit => DisplayMode::AutoFit,
+            DisplayModeConfig::Enlarge => DisplayMode::AutoEnlarge,
+            DisplayModeConfig::Original => DisplayMode::Original,
+            DisplayModeConfig::Fixed => DisplayMode::Fixed(self.fixed_scale),
         }
     }
 }
@@ -158,7 +201,13 @@ impl Config {
         let Some(config_path) = Self::config_path() else {
             return Config::default();
         };
-        Self::load_from(&config_path).unwrap_or_default()
+        match Self::load_from(&config_path) {
+            Ok(config) => config,
+            Err(e) => {
+                eprintln!("警告: 設定ファイルの読み込みに失敗しました: {e}");
+                Config::default()
+            }
+        }
     }
 
     /// 指定パスからConfigを読み込む
@@ -183,13 +232,13 @@ mod tests {
     #[test]
     fn default_config_values() {
         let config = Config::default();
-        assert_eq!(config.display.auto_scale, "fit");
+        assert_eq!(config.display.auto_scale, DisplayModeConfig::Fit);
         assert_eq!(config.display.fixed_scale, 1.0);
         assert_eq!(config.display.margin, 64.0);
-        assert_eq!(config.display.alpha_background, "checker");
+        assert_eq!(config.display.alpha_background, AlphaBackground::Checker);
         assert_eq!(config.prefetch.cache_base_width, 1024);
         assert_eq!(config.prefetch.cache_base_height, 1536);
-        assert_eq!(config.list.default_sort, "name");
+        assert_eq!(config.list.default_sort, SortOrder::Name);
         assert!(!config.window.remember_position);
         assert!(!config.window.remember_size);
         assert!(!config.window.always_on_top);
@@ -223,12 +272,12 @@ image_plugins = ["ifwebp.sph"]
 archive_plugins = ["axlha.sph"]
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
-        assert_eq!(config.display.auto_scale, "fit");
+        assert_eq!(config.display.auto_scale, DisplayModeConfig::Fit);
         assert_eq!(config.display.fixed_scale, 2.0);
         assert_eq!(config.display.margin, 10.0);
-        assert_eq!(config.display.alpha_background, "black");
+        assert_eq!(config.display.alpha_background, AlphaBackground::Black);
         assert_eq!(config.prefetch.cache_base_width, 800);
-        assert_eq!(config.list.default_sort, "natural");
+        assert_eq!(config.list.default_sort, SortOrder::Natural);
         assert!(!config.window.remember_position);
         assert!(config.window.always_on_top);
         assert_eq!(config.susie.plugin_dir, "plugins");
@@ -242,73 +291,49 @@ archive_plugins = ["axlha.sph"]
 auto_scale = "original"
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
-        assert_eq!(config.display.auto_scale, "original");
+        assert_eq!(config.display.auto_scale, DisplayModeConfig::Original);
         // 未指定フィールドはデフォルト
         assert_eq!(config.display.margin, 64.0);
-        assert_eq!(config.list.default_sort, "name");
+        assert_eq!(config.list.default_sort, SortOrder::Name);
     }
 
     #[test]
     fn display_mode_conversion() {
         let d = DisplayConfig {
-            auto_scale: "shrink".into(),
+            auto_scale: DisplayModeConfig::Shrink,
             ..Default::default()
         };
         assert_eq!(d.to_display_mode(), DisplayMode::AutoShrink);
 
         let d = DisplayConfig {
-            auto_scale: "fit".into(),
+            auto_scale: DisplayModeConfig::Fit,
             ..Default::default()
         };
         assert_eq!(d.to_display_mode(), DisplayMode::AutoFit);
 
         let d = DisplayConfig {
-            auto_scale: "fixed".into(),
+            auto_scale: DisplayModeConfig::Fixed,
             fixed_scale: 2.5,
             ..Default::default()
         };
         assert_eq!(d.to_display_mode(), DisplayMode::Fixed(2.5));
-
-        // 不明な値はAutoShrinkフォールバック
-        let d = DisplayConfig {
-            auto_scale: "unknown".into(),
-            ..Default::default()
-        };
-        assert_eq!(d.to_display_mode(), DisplayMode::AutoShrink);
     }
 
     #[test]
-    fn alpha_background_conversion() {
-        let d = DisplayConfig {
-            alpha_background: "white".into(),
-            ..Default::default()
-        };
-        assert_eq!(d.to_alpha_background(), AlphaBackground::White);
+    fn invalid_values_fallback_to_defaults() {
+        // 無効なauto_scaleはFitにフォールバック
+        let toml_str = r#"
+[display]
+auto_scale = "unknown"
+alpha_background = "invalid"
 
-        let d = DisplayConfig {
-            alpha_background: "black".into(),
-            ..Default::default()
-        };
-        assert_eq!(d.to_alpha_background(), AlphaBackground::Black);
-
-        let d = DisplayConfig {
-            alpha_background: "checker".into(),
-            ..Default::default()
-        };
-        assert_eq!(d.to_alpha_background(), AlphaBackground::Checker);
-    }
-
-    #[test]
-    fn sort_order_conversion() {
-        let l = ListConfig {
-            default_sort: "natural".into(),
-        };
-        assert_eq!(l.to_sort_order(), SortOrder::Natural);
-
-        let l = ListConfig {
-            default_sort: "size".into(),
-        };
-        assert_eq!(l.to_sort_order(), SortOrder::Size);
+[list]
+default_sort = "bogus"
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.display.auto_scale, DisplayModeConfig::Fit);
+        assert_eq!(config.display.alpha_background, AlphaBackground::Checker);
+        assert_eq!(config.list.default_sort, SortOrder::Name);
     }
 
     #[test]

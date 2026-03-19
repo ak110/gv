@@ -38,22 +38,6 @@ impl FileSource {
         }
     }
 
-    /// アーカイブパスを返す（アーカイブエントリ/PDFの場合）
-    #[allow(dead_code)]
-    pub fn archive_path(&self) -> Option<&Path> {
-        match self {
-            FileSource::ArchiveEntry { archive, .. } => Some(archive),
-            FileSource::PdfPage { pdf_path, .. } => Some(pdf_path),
-            FileSource::File(_) => None,
-        }
-    }
-
-    /// アーカイブエントリかどうか
-    #[allow(dead_code)]
-    pub fn is_archive_entry(&self) -> bool {
-        matches!(self, FileSource::ArchiveEntry { .. })
-    }
-
     /// コンテナ内のエントリかどうか（アーカイブまたはPDF）
     /// 破壊的ファイル操作（削除・移動等）のガードに使用
     pub fn is_contained(&self) -> bool {
@@ -155,6 +139,23 @@ impl FileInfo {
             marked: false,
             load_failed: false,
         })
+    }
+}
+
+#[cfg(test)]
+impl FileSource {
+    /// アーカイブパスを返す（アーカイブエントリ/PDFの場合）
+    pub fn archive_path(&self) -> Option<&Path> {
+        match self {
+            FileSource::ArchiveEntry { archive, .. } => Some(archive),
+            FileSource::PdfPage { pdf_path, .. } => Some(pdf_path),
+            FileSource::File(_) => None,
+        }
+    }
+
+    /// アーカイブエントリかどうか
+    pub fn is_archive_entry(&self) -> bool {
+        matches!(self, FileSource::ArchiveEntry { .. })
     }
 }
 

@@ -26,8 +26,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Setup tools
+        uses: jdx/mise-action@v3
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -67,8 +67,11 @@ jobs:
       - name: Update Cargo.lock
         run: cargo generate-lockfile
 
+      - name: Run tests
+        run: mise run test
+
       - name: Build release
-        run: cargo build --release
+        run: mise run build-release
 
       - name: Create release archive
         shell: pwsh

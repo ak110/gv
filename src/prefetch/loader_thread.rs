@@ -32,7 +32,7 @@ pub enum LoadResponse {
         generation: u64,
     },
     Failed {
-        #[allow(dead_code)]
+        #[allow(dead_code)] // enum構造体フィールド: ログ出力等で参照可能にする
         index: usize,
         error: String,
         generation: u64,
@@ -206,7 +206,7 @@ fn worker_loop(
                 } else if let Some((archive_path, entry_name)) = archive_entry {
                     // オンデマンドアーカイブエントリ: バッファ→decode
                     let read_result = {
-                        let buffers = zip_buffers.read().unwrap();
+                        let buffers = zip_buffers.read().expect("zip_buffers lock poisoned");
                         if let Some(buffer) = buffers.get(&archive_path) {
                             crate::archive::zip::ZipHandler::read_entry_from_buffer(
                                 buffer.as_ref(),

@@ -8,14 +8,17 @@ use super::{DecodedImage, ImageDecoder, ImageMetadata};
 /// Susie画像プラグインをImageDecoderとして使うアダプタ
 pub struct SusieImageDecoder {
     plugin: SharedPlugin,
-    /// キャッシュした拡張子リスト
-    #[allow(dead_code)]
+    /// キャッシュした拡張子リスト（supported_extensions()から参照）
+    #[allow(dead_code)] // dyn経由のsupported_extensions()呼び出しがないため警告される
     extensions: Vec<String>,
 }
 
 impl SusieImageDecoder {
     pub fn new(plugin: SharedPlugin) -> Self {
-        let extensions = plugin.lock().unwrap().supported_extensions();
+        let extensions = plugin
+            .lock()
+            .expect("Susie plugin lock poisoned")
+            .supported_extensions();
         Self { plugin, extensions }
     }
 }

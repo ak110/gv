@@ -162,16 +162,6 @@ impl FileListPanel {
         self.visible
     }
 
-    /// 表示状態を設定
-    #[allow(dead_code)]
-    pub fn set_visible(&mut self, visible: bool) {
-        self.visible = visible;
-        let cmd = if visible { SW_SHOW } else { SW_HIDE };
-        unsafe {
-            let _ = ShowWindow(self.listbox, cmd);
-        }
-    }
-
     /// 非表示にするがフラグは保持する（フルスクリーン開始時用）
     pub fn hide_preserve_state(&self) {
         unsafe {

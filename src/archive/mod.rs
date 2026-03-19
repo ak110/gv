@@ -38,12 +38,6 @@ pub trait ArchiveHandler: Send + Sync {
         false
     }
 
-    /// アーカイブ内の画像エントリ一覧を取得する（データ読み込みなし）
-    #[allow(dead_code)]
-    fn list_images(&self, _archive_path: &Path) -> Result<Vec<ArchiveImageEntry>> {
-        bail!("オンデマンド読み出し未対応")
-    }
-
     /// アーカイブから指定エントリのデータを読み出す
     fn read_entry(&self, _archive_path: &Path, _entry_name: &str) -> Result<Vec<u8>> {
         bail!("オンデマンド読み出し未対応")
@@ -115,12 +109,6 @@ impl ArchiveManager {
             .is_ok_and(|h| h.supports_on_demand())
     }
 
-    /// アーカイブ内の画像エントリ一覧を取得する（オンデマンド用）
-    #[allow(dead_code)]
-    pub fn list_images(&self, archive_path: &Path) -> Result<Vec<ArchiveImageEntry>> {
-        self.find_handler(archive_path)?.list_images(archive_path)
-    }
-
     /// アーカイブから指定エントリのデータを読み出す（オンデマンド用）
     pub fn read_entry(&self, archive_path: &Path, entry_name: &str) -> Result<Vec<u8>> {
         self.find_handler(archive_path)?
@@ -136,21 +124,6 @@ impl ArchiveManager {
         let ext = Self::normalized_extension(archive_path);
         if ext == ".zip" || ext == ".cbz" {
             return zip::ZipHandler::list_images_from_buffer(buffer, &self.registry);
-        }
-        bail!("バッファベース読み出し未対応: {}", archive_path.display());
-    }
-
-    /// インメモリバッファからエントリを読み出す（ZIPキャッシュ用、Stored最適化付き）
-    #[allow(dead_code)]
-    pub fn read_entry_from_buffer(
-        &self,
-        buffer: &[u8],
-        entry_name: &str,
-        archive_path: &Path,
-    ) -> Result<Vec<u8>> {
-        let ext = Self::normalized_extension(archive_path);
-        if ext == ".zip" || ext == ".cbz" {
-            return zip::ZipHandler::read_entry_from_buffer(buffer, entry_name);
         }
         bail!("バッファベース読み出し未対応: {}", archive_path.display());
     }
