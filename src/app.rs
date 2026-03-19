@@ -1363,6 +1363,178 @@ impl AppWindow {
                 }
             }
 
+            // --- フィルタ（パラメータあり） ---
+            Action::Fill => {
+                if self.document.current_image().is_some() {
+                    use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
+                    let fields = [
+                        FieldDef {
+                            label: "赤 (0-255)",
+                            default: "255".into(),
+                            integer_only: true,
+                        },
+                        FieldDef {
+                            label: "緑 (0-255)",
+                            default: "255".into(),
+                            integer_only: true,
+                        },
+                        FieldDef {
+                            label: "青 (0-255)",
+                            default: "255".into(),
+                            integer_only: true,
+                        },
+                    ];
+                    if let Some(vals) = show_filter_dialog(self.hwnd, "塗り潰す", &fields)
+                        && let Some(img) = self.document.current_image()
+                    {
+                        let r = vals[0].parse::<u8>().unwrap_or(255);
+                        let g = vals[1].parse::<u8>().unwrap_or(255);
+                        let b = vals[2].parse::<u8>().unwrap_or(255);
+                        let sel = self.selection.current_rect();
+                        let result = crate::filter::color::fill(img, sel.as_ref(), r, g, b);
+                        self.document.apply_edit(result);
+                        self.process_document_events();
+                    }
+                }
+            }
+            Action::Levels => {
+                if self.document.current_image().is_some() {
+                    use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
+                    let fields = [
+                        FieldDef {
+                            label: "下限 (0-255)",
+                            default: "0".into(),
+                            integer_only: true,
+                        },
+                        FieldDef {
+                            label: "上限 (0-255)",
+                            default: "255".into(),
+                            integer_only: true,
+                        },
+                    ];
+                    if let Some(vals) = show_filter_dialog(self.hwnd, "レベル補正", &fields)
+                        && let Some(img) = self.document.current_image()
+                    {
+                        let low = vals[0].parse::<u8>().unwrap_or(0);
+                        let high = vals[1].parse::<u8>().unwrap_or(255);
+                        let sel = self.selection.current_rect();
+                        let result =
+                            crate::filter::brightness::levels(img, sel.as_ref(), low, high);
+                        self.document.apply_edit(result);
+                        self.process_document_events();
+                    }
+                }
+            }
+            Action::Gamma => {
+                if self.document.current_image().is_some() {
+                    use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
+                    let fields = [FieldDef {
+                        label: "ガンマ値 (0.1〜10.0)",
+                        default: "1.0".into(),
+                        integer_only: false,
+                    }];
+                    if let Some(vals) = show_filter_dialog(self.hwnd, "ガンマ補正", &fields)
+                        && let Some(img) = self.document.current_image()
+                    {
+                        let gamma = vals[0].parse::<f64>().unwrap_or(1.0).clamp(0.1, 10.0);
+                        let sel = self.selection.current_rect();
+                        let result = crate::filter::brightness::gamma(img, sel.as_ref(), gamma);
+                        self.document.apply_edit(result);
+                        self.process_document_events();
+                    }
+                }
+            }
+            Action::BrightnessContrast => {
+                if self.document.current_image().is_some() {
+                    use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
+                    let fields = [
+                        FieldDef {
+                            label: "明るさ (-128〜128)",
+                            default: "0".into(),
+                            integer_only: false,
+                        },
+                        FieldDef {
+                            label: "コントラスト (-128〜128)",
+                            default: "0".into(),
+                            integer_only: false,
+                        },
+                    ];
+                    if let Some(vals) =
+                        show_filter_dialog(self.hwnd, "明るさとコントラスト", &fields)
+                        && let Some(img) = self.document.current_image()
+                    {
+                        let brightness = vals[0].parse::<i32>().unwrap_or(0).clamp(-128, 128);
+                        let contrast = vals[1].parse::<i32>().unwrap_or(0).clamp(-128, 128);
+                        let sel = self.selection.current_rect();
+                        let result = crate::filter::brightness::brightness_contrast(
+                            img,
+                            sel.as_ref(),
+                            brightness,
+                            contrast,
+                        );
+                        self.document.apply_edit(result);
+                        self.process_document_events();
+                    }
+                }
+            }
+            Action::Mosaic => {
+                if self.document.current_image().is_some() {
+                    use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
+                    let fields = [FieldDef {
+                        label: "ブロックサイズ",
+                        default: "10".into(),
+                        integer_only: true,
+                    }];
+                    if let Some(vals) = show_filter_dialog(self.hwnd, "モザイク", &fields)
+                        && let Some(img) = self.document.current_image()
+                    {
+                        let size = vals[0].parse::<u32>().unwrap_or(10).max(1);
+                        let sel = self.selection.current_rect();
+                        let result = crate::filter::blur::mosaic(img, sel.as_ref(), size);
+                        self.document.apply_edit(result);
+                        self.process_document_events();
+                    }
+                }
+            }
+            Action::GaussianBlur => {
+                if self.document.current_image().is_some() {
+                    use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
+                    let fields = [FieldDef {
+                        label: "半径 (0.1〜10.0)",
+                        default: "2.0".into(),
+                        integer_only: false,
+                    }];
+                    if let Some(vals) = show_filter_dialog(self.hwnd, "ガウスぼかし", &fields)
+                        && let Some(img) = self.document.current_image()
+                    {
+                        let radius = vals[0].parse::<f64>().unwrap_or(2.0).clamp(0.1, 10.0);
+                        let sel = self.selection.current_rect();
+                        let result = crate::filter::blur::gaussian_blur(img, sel.as_ref(), radius);
+                        self.document.apply_edit(result);
+                        self.process_document_events();
+                    }
+                }
+            }
+            Action::UnsharpMask => {
+                if self.document.current_image().is_some() {
+                    use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
+                    let fields = [FieldDef {
+                        label: "半径 (0.1〜10.0)",
+                        default: "2.0".into(),
+                        integer_only: false,
+                    }];
+                    if let Some(vals) = show_filter_dialog(self.hwnd, "アンシャープマスク", &fields)
+                        && let Some(img) = self.document.current_image()
+                    {
+                        let radius = vals[0].parse::<f64>().unwrap_or(2.0).clamp(0.1, 10.0);
+                        let sel = self.selection.current_rect();
+                        let result = crate::filter::blur::unsharp_mask(img, sel.as_ref(), radius);
+                        self.document.apply_edit(result);
+                        self.process_document_events();
+                    }
+                }
+            }
+
             // --- フィルタ（パラメータなし） ---
             Action::InvertColors => {
                 if let Some(img) = self.document.current_image() {

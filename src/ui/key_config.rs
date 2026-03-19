@@ -128,6 +128,13 @@ pub enum Action {
     Resize,
 
     // --- フィルタ（画像メニュー） ---
+    Fill,
+    Levels,
+    Gamma,
+    BrightnessContrast,
+    Mosaic,
+    GaussianBlur,
+    UnsharpMask,
     InvertColors,
     GrayscaleSimple,
     GrayscaleStrict,
@@ -303,6 +310,9 @@ impl KeyConfig {
         bind(&mut m, "Ctrl+Shift+R", Action::Resize);
 
         // [filter]
+        bind(&mut m, "Ctrl+Shift+F", Action::Fill);
+        bind(&mut m, "Ctrl+L", Action::Levels);
+        bind(&mut m, "Ctrl+M", Action::Mosaic);
         bind(&mut m, "Ctrl+I", Action::InvertColors);
         bind(&mut m, "Ctrl+G", Action::GrayscaleStrict);
 
@@ -555,6 +565,13 @@ fn field_to_action(field: &str) -> Option<Action> {
         "resize" => Action::Resize,
 
         // フィルタ
+        "fill" => Action::Fill,
+        "levels" => Action::Levels,
+        "gamma" => Action::Gamma,
+        "brightness_contrast" => Action::BrightnessContrast,
+        "mosaic" => Action::Mosaic,
+        "gaussian_blur" => Action::GaussianBlur,
+        "unsharp_mask" => Action::UnsharpMask,
         "invert_colors" => Action::InvertColors,
         "grayscale_simple" => Action::GrayscaleSimple,
         "grayscale_strict" => Action::GrayscaleStrict,

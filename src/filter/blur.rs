@@ -89,6 +89,103 @@ fn region_bounds(region: Option<&PixelRect>, width: u32, height: u32) -> (i32, i
     }
 }
 
+/// モザイク
+pub fn mosaic(image: &DecodedImage, region: Option<&PixelRect>, block_size: u32) -> DecodedImage {
+    let block = block_size.max(1) as i32;
+    let w = image.width as i32;
+    let mut data = image.data.clone();
+
+    let (x0, y0, x1, y1) = region_bounds(region, image.width, image.height);
+
+    // ブロック単位で処理
+    let mut by = y0;
+    while by < y1 {
+        let mut bx = x0;
+        while bx < x1 {
+            let bx_end = (bx + block).min(x1);
+            let by_end = (by + block).min(y1);
+            let count = ((bx_end - bx) * (by_end - by)) as u32;
+
+            // ブロック内の平均色を計算
+            let mut r_sum = 0u32;
+            let mut g_sum = 0u32;
+            let mut b_sum = 0u32;
+            for py in by..by_end {
+                for px in bx..bx_end {
+                    let offset = ((py * w + px) * 4) as usize;
+                    r_sum += image.data[offset] as u32;
+                    g_sum += image.data[offset + 1] as u32;
+                    b_sum += image.data[offset + 2] as u32;
+                }
+            }
+            let avg_r = (r_sum / count) as u8;
+            let avg_g = (g_sum / count) as u8;
+            let avg_b = (b_sum / count) as u8;
+
+            // ブロック内を平均色で塗り潰す
+            for py in by..by_end {
+                for px in bx..bx_end {
+                    let offset = ((py * w + px) * 4) as usize;
+                    data[offset] = avg_r;
+                    data[offset + 1] = avg_g;
+                    data[offset + 2] = avg_b;
+                }
+            }
+
+            bx += block;
+        }
+        by += block;
+    }
+
+    DecodedImage {
+        data,
+        width: image.width,
+        height: image.height,
+    }
+}
+
+/// ガウスぼかし（近似: 2パスのボックスブラー）
+pub fn gaussian_blur(
+    image: &DecodedImage,
+    region: Option<&PixelRect>,
+    radius: f64,
+) -> DecodedImage {
+    // σ ≈ radius/3 でボックスブラーを3パス（ガウシアンの近似）
+    let r = (radius.max(0.1) * 1.0).round() as i32;
+    let r = r.max(1);
+    let pass1 = box_blur(image, region, r);
+    let pass2 = box_blur(&pass1, region, r);
+    box_blur(&pass2, region, r)
+}
+
+/// アンシャープマスク
+pub fn unsharp_mask(image: &DecodedImage, region: Option<&PixelRect>, radius: f64) -> DecodedImage {
+    let blurred = gaussian_blur(image, region, radius);
+    let w = image.width as i32;
+    let mut data = image.data.clone();
+
+    let (x0, y0, x1, y1) = region_bounds(region, image.width, image.height);
+
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let offset = ((y * w + x) * 4) as usize;
+            for ch in 0..3 {
+                // unsharp: original + (original - blurred)
+                let orig = image.data[offset + ch] as i32;
+                let blur_val = blurred.data[offset + ch] as i32;
+                let v = orig + (orig - blur_val);
+                data[offset + ch] = v.clamp(0, 255) as u8;
+            }
+        }
+    }
+
+    DecodedImage {
+        data,
+        width: image.width,
+        height: image.height,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -62,6 +62,11 @@ pub fn grayscale_strict(image: &DecodedImage, region: Option<&PixelRect>) -> Dec
     })
 }
 
+/// 塗り潰し（指定色で領域を塗り潰す）
+pub fn fill(image: &DecodedImage, region: Option<&PixelRect>, r: u8, g: u8, b: u8) -> DecodedImage {
+    apply_to_region(image, region, |_r, _g, _b, a| [r, g, b, a])
+}
+
 /// αチャンネルをRGBに反映して不透明にする（白背景合成）
 pub fn apply_alpha(image: &DecodedImage, region: Option<&PixelRect>) -> DecodedImage {
     apply_to_region(image, region, |r, g, b, a| {

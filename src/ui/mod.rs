@@ -1,5 +1,6 @@
 pub mod cursor_hider;
 pub mod file_list_panel;
+pub mod filter_dialog;
 pub mod font;
 pub mod fullscreen;
 pub mod info_dialog;
