@@ -145,6 +145,28 @@ pub enum Action {
     SharpenStrong,
     MedianFilter,
 
+    // --- 永続フィルタ ---
+    PFilterToggle,
+    PFilterFlipH,
+    PFilterFlipV,
+    PFilterRotate180,
+    PFilterRotate90CW,
+    PFilterRotate90CCW,
+    PFilterLevels,
+    PFilterGamma,
+    PFilterBrightnessContrast,
+    PFilterGrayscaleSimple,
+    PFilterGrayscaleStrict,
+    PFilterBlur,
+    PFilterBlurStrong,
+    PFilterSharpen,
+    PFilterSharpenStrong,
+    PFilterGaussianBlur,
+    PFilterUnsharpMask,
+    PFilterMedianFilter,
+    PFilterInvertColors,
+    PFilterApplyAlpha,
+
     // --- ブックマーク ---
     BookmarkSave,
     BookmarkLoad,
@@ -315,6 +337,10 @@ impl KeyConfig {
         bind(&mut m, "Ctrl+M", Action::Mosaic);
         bind(&mut m, "Ctrl+I", Action::InvertColors);
         bind(&mut m, "Ctrl+G", Action::GrayscaleStrict);
+
+        // [persistent_filter]
+        bind(&mut m, "Ctrl+Shift+L", Action::PFilterLevels);
+        bind(&mut m, "Ctrl+Shift+G", Action::PFilterGrayscaleSimple);
 
         // [bookmark]
         bind(&mut m, "F9", Action::BookmarkSave);
@@ -581,6 +607,28 @@ fn field_to_action(field: &str) -> Option<Action> {
         "sharpen" => Action::Sharpen,
         "sharpen_strong" => Action::SharpenStrong,
         "median_filter" => Action::MedianFilter,
+
+        // 永続フィルタ
+        "pfilter_toggle" => Action::PFilterToggle,
+        "pfilter_flip_h" => Action::PFilterFlipH,
+        "pfilter_flip_v" => Action::PFilterFlipV,
+        "pfilter_rotate_180" => Action::PFilterRotate180,
+        "pfilter_rotate_90_cw" => Action::PFilterRotate90CW,
+        "pfilter_rotate_90_ccw" => Action::PFilterRotate90CCW,
+        "pfilter_levels" => Action::PFilterLevels,
+        "pfilter_gamma" => Action::PFilterGamma,
+        "pfilter_brightness_contrast" => Action::PFilterBrightnessContrast,
+        "pfilter_grayscale_simple" => Action::PFilterGrayscaleSimple,
+        "pfilter_grayscale_strict" => Action::PFilterGrayscaleStrict,
+        "pfilter_blur" => Action::PFilterBlur,
+        "pfilter_blur_strong" => Action::PFilterBlurStrong,
+        "pfilter_sharpen" => Action::PFilterSharpen,
+        "pfilter_sharpen_strong" => Action::PFilterSharpenStrong,
+        "pfilter_gaussian_blur" => Action::PFilterGaussianBlur,
+        "pfilter_unsharp_mask" => Action::PFilterUnsharpMask,
+        "pfilter_median_filter" => Action::PFilterMedianFilter,
+        "pfilter_invert_colors" => Action::PFilterInvertColors,
+        "pfilter_apply_alpha" => Action::PFilterApplyAlpha,
 
         // ブックマーク
         "bookmark_save" => Action::BookmarkSave,

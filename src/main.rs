@@ -14,6 +14,7 @@ mod file_ops;
 mod filter;
 mod image;
 mod pdf_renderer;
+mod persistent_filter;
 mod prefetch;
 mod render;
 mod selection;

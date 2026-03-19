@@ -1609,6 +1609,216 @@ impl AppWindow {
                 }
             }
 
+            // --- 永続フィルタ ---
+            Action::PFilterToggle => {
+                self.document.persistent_filter_mut().toggle_enabled();
+                self.document.on_persistent_filter_changed();
+                self.process_document_events();
+            }
+            Action::PFilterFlipH => {
+                self.document
+                    .persistent_filter_mut()
+                    .add_operation(crate::persistent_filter::FilterOperation::FlipHorizontal);
+                self.document.on_persistent_filter_changed();
+                self.process_document_events();
+            }
+            Action::PFilterFlipV => {
+                self.document
+                    .persistent_filter_mut()
+                    .add_operation(crate::persistent_filter::FilterOperation::FlipVertical);
+                self.document.on_persistent_filter_changed();
+                self.process_document_events();
+            }
+            Action::PFilterRotate180 => {
+                self.document
+                    .persistent_filter_mut()
+                    .add_operation(crate::persistent_filter::FilterOperation::Rotate180);
+                self.document.on_persistent_filter_changed();
+                self.process_document_events();
+            }
+            Action::PFilterRotate90CW => {
+                self.document
+                    .persistent_filter_mut()
+                    .add_operation(crate::persistent_filter::FilterOperation::Rotate90CW);
+                self.document.on_persistent_filter_changed();
+                self.process_document_events();
+            }
+            Action::PFilterRotate90CCW => {
+                self.document
+                    .persistent_filter_mut()
+                    .add_operation(crate::persistent_filter::FilterOperation::Rotate90CCW);
+                self.document.on_persistent_filter_changed();
+                self.process_document_events();
+            }
+            Action::PFilterLevels => {
+                use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
+                let fields = [
+                    FieldDef {
+                        label: "下限 (0-255)",
+                        default: "0".into(),
+                        integer_only: true,
+                    },
+                    FieldDef {
+                        label: "上限 (0-255)",
+                        default: "255".into(),
+                        integer_only: true,
+                    },
+                ];
+                if let Some(vals) = show_filter_dialog(self.hwnd, "永続レベル補正", &fields)
+                {
+                    let low = vals[0].parse::<u8>().unwrap_or(0);
+                    let high = vals[1].parse::<u8>().unwrap_or(255);
+                    self.document.persistent_filter_mut().add_operation(
+                        crate::persistent_filter::FilterOperation::Levels { low, high },
+                    );
+                    self.document.on_persistent_filter_changed();
+                    self.process_document_events();
+                }
+            }
+            Action::PFilterGamma => {
+                use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
+                let fields = [FieldDef {
+                    label: "ガンマ値 (0.1〜10.0)",
+                    default: "1.0".into(),
+                    integer_only: false,
+                }];
+                if let Some(vals) = show_filter_dialog(self.hwnd, "永続ガンマ補正", &fields)
+                {
+                    let value = vals[0].parse::<f64>().unwrap_or(1.0).clamp(0.1, 10.0);
+                    self.document
+                        .persistent_filter_mut()
+                        .add_operation(crate::persistent_filter::FilterOperation::Gamma { value });
+                    self.document.on_persistent_filter_changed();
+                    self.process_document_events();
+                }
+            }
+            Action::PFilterBrightnessContrast => {
+                use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
+                let fields = [
+                    FieldDef {
+                        label: "明るさ (-128〜128)",
+                        default: "0".into(),
+                        integer_only: false,
+                    },
+                    FieldDef {
+                        label: "コントラスト (-128〜128)",
+                        default: "0".into(),
+                        integer_only: false,
+                    },
+                ];
+                if let Some(vals) =
+                    show_filter_dialog(self.hwnd, "永続明るさとコントラスト", &fields)
+                {
+                    let brightness = vals[0].parse::<i32>().unwrap_or(0).clamp(-128, 128);
+                    let contrast = vals[1].parse::<i32>().unwrap_or(0).clamp(-128, 128);
+                    self.document.persistent_filter_mut().add_operation(
+                        crate::persistent_filter::FilterOperation::BrightnessContrast {
+                            brightness,
+                            contrast,
+                        },
+                    );
+                    self.document.on_persistent_filter_changed();
+                    self.process_document_events();
+                }
+            }
+            Action::PFilterGrayscaleSimple => {
+                self.document
+                    .persistent_filter_mut()
+                    .add_operation(crate::persistent_filter::FilterOperation::GrayscaleSimple);
+                self.document.on_persistent_filter_changed();
+                self.process_document_events();
+            }
+            Action::PFilterGrayscaleStrict => {
+                self.document
+                    .persistent_filter_mut()
+                    .add_operation(crate::persistent_filter::FilterOperation::GrayscaleStrict);
+                self.document.on_persistent_filter_changed();
+                self.process_document_events();
+            }
+            Action::PFilterBlur => {
+                self.document
+                    .persistent_filter_mut()
+                    .add_operation(crate::persistent_filter::FilterOperation::Blur);
+                self.document.on_persistent_filter_changed();
+                self.process_document_events();
+            }
+            Action::PFilterBlurStrong => {
+                self.document
+                    .persistent_filter_mut()
+                    .add_operation(crate::persistent_filter::FilterOperation::BlurStrong);
+                self.document.on_persistent_filter_changed();
+                self.process_document_events();
+            }
+            Action::PFilterSharpen => {
+                self.document
+                    .persistent_filter_mut()
+                    .add_operation(crate::persistent_filter::FilterOperation::Sharpen);
+                self.document.on_persistent_filter_changed();
+                self.process_document_events();
+            }
+            Action::PFilterSharpenStrong => {
+                self.document
+                    .persistent_filter_mut()
+                    .add_operation(crate::persistent_filter::FilterOperation::SharpenStrong);
+                self.document.on_persistent_filter_changed();
+                self.process_document_events();
+            }
+            Action::PFilterGaussianBlur => {
+                use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
+                let fields = [FieldDef {
+                    label: "半径 (0.1〜10.0)",
+                    default: "2.0".into(),
+                    integer_only: false,
+                }];
+                if let Some(vals) = show_filter_dialog(self.hwnd, "永続ガウスぼかし", &fields)
+                {
+                    let radius = vals[0].parse::<f64>().unwrap_or(2.0).clamp(0.1, 10.0);
+                    self.document.persistent_filter_mut().add_operation(
+                        crate::persistent_filter::FilterOperation::GaussianBlur { radius },
+                    );
+                    self.document.on_persistent_filter_changed();
+                    self.process_document_events();
+                }
+            }
+            Action::PFilterUnsharpMask => {
+                use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
+                let fields = [FieldDef {
+                    label: "半径 (0.1〜10.0)",
+                    default: "2.0".into(),
+                    integer_only: false,
+                }];
+                if let Some(vals) = show_filter_dialog(self.hwnd, "永続アンシャープマスク", &fields)
+                {
+                    let radius = vals[0].parse::<f64>().unwrap_or(2.0).clamp(0.1, 10.0);
+                    self.document.persistent_filter_mut().add_operation(
+                        crate::persistent_filter::FilterOperation::UnsharpMask { radius },
+                    );
+                    self.document.on_persistent_filter_changed();
+                    self.process_document_events();
+                }
+            }
+            Action::PFilterMedianFilter => {
+                self.document
+                    .persistent_filter_mut()
+                    .add_operation(crate::persistent_filter::FilterOperation::MedianFilter);
+                self.document.on_persistent_filter_changed();
+                self.process_document_events();
+            }
+            Action::PFilterInvertColors => {
+                self.document
+                    .persistent_filter_mut()
+                    .add_operation(crate::persistent_filter::FilterOperation::InvertColors);
+                self.document.on_persistent_filter_changed();
+                self.process_document_events();
+            }
+            Action::PFilterApplyAlpha => {
+                self.document
+                    .persistent_filter_mut()
+                    .add_operation(crate::persistent_filter::FilterOperation::ApplyAlpha);
+                self.document.on_persistent_filter_changed();
+                self.process_document_events();
+            }
+
             // --- ブックマーク ---
             Action::BookmarkSave => {
                 let idx = self.document.file_list().current_index();

@@ -12,6 +12,7 @@ use crate::extension_registry::ExtensionRegistry;
 use crate::file_info::FileSource;
 use crate::file_list::FileList;
 use crate::image::{DecodedImage, DecoderChain};
+use crate::persistent_filter::PersistentFilter;
 use crate::prefetch::{LoadResponse, PageCache, PrefetchEngine};
 
 /// ZIPファイルのバッファ（mmapまたはメモリ読み込み）
@@ -68,6 +69,8 @@ pub struct Document {
     zip_buffers: Arc<RwLock<HashMap<PathBuf, ZipBuffer>>>,
     /// 編集セッション（編集中のみSome）
     editing_session: Option<EditingSession>,
+    /// 永続フィルタ設定
+    persistent_filter: PersistentFilter,
 }
 
 impl Document {
@@ -91,6 +94,7 @@ impl Document {
             current_containers: Vec::new(),
             zip_buffers: Arc::new(RwLock::new(HashMap::new())),
             editing_session: None,
+            persistent_filter: PersistentFilter::new(),
         }
     }
 
@@ -147,6 +151,8 @@ impl Document {
                     if generation != current_gen {
                         continue;
                     }
+                    // 永続フィルタを先読み結果にも適用
+                    let image = self.persistent_filter.apply(&image).unwrap_or(image);
                     // 現在表示すべきページでまだ画像がない場合、即表示
                     let is_current = self.file_list.current_index() == Some(index)
                         && self.current_image.is_none();
@@ -476,7 +482,7 @@ impl Document {
             return Ok(());
         };
 
-        // 1. キャッシュヒット → 瞬時切替
+        // 1. キャッシュヒット → 瞬時切替（永続フィルタはキャッシュ時に既に適用済み）
         if let Some(image) = self.cache.take(index) {
             self.current_image = Some(image);
             let _ = self.event_sender.send(DocumentEvent::ImageReady);
@@ -507,6 +513,8 @@ impl Document {
 
         match decode_result {
             Ok(image) => {
+                // 永続フィルタを適用（有効な場合のみ）
+                let image = self.persistent_filter.apply(&image).unwrap_or(image);
                 self.current_image = Some(image);
                 let _ = self.event_sender.send(DocumentEvent::ImageReady);
             }
@@ -894,6 +902,23 @@ impl Document {
     /// 編集セッションを破棄する（未保存の変更を捨てる）
     pub fn discard_editing_session(&mut self) {
         self.editing_session = None;
+    }
+
+    /// 永続フィルタへの参照
+    #[allow(dead_code)] // 将来のUI（フィルタ状態表示等）で使用予定
+    pub fn persistent_filter(&self) -> &PersistentFilter {
+        &self.persistent_filter
+    }
+
+    /// 永続フィルタへの可変参照
+    pub fn persistent_filter_mut(&mut self) -> &mut PersistentFilter {
+        &mut self.persistent_filter
+    }
+
+    /// 永続フィルタ設定変更後にキャッシュを全無効化して再読込する
+    pub fn on_persistent_filter_changed(&mut self) {
+        self.invalidate_cache();
+        let _ = self.load_current();
     }
 
     /// current_imageを編集結果で置き換える

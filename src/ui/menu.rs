@@ -106,6 +106,38 @@ pub fn build_menu_bar() -> HMENU {
         ]);
         append_popup(menu_bar, image_menu, "画像(&I)");
 
+        // フィルタ(&T)
+        let filter_menu = create_popup(&[
+            Some((Action::PFilterToggle, "フィルタを有効にする")),
+            None,
+            Some((Action::PFilterFlipH, "左右反転")),
+            Some((Action::PFilterFlipV, "上下反転")),
+            Some((Action::PFilterRotate180, "180度回転")),
+            Some((Action::PFilterRotate90CW, "時計回りに90度回転")),
+            Some((Action::PFilterRotate90CCW, "反時計回りに90度回転")),
+            None,
+            Some((Action::PFilterLevels, "レベル補正\tCtrl+Shift+L")),
+            Some((Action::PFilterGamma, "ガンマ補正")),
+            Some((Action::PFilterBrightnessContrast, "明るさとコントラスト")),
+            Some((
+                Action::PFilterGrayscaleSimple,
+                "簡易グレースケール化\tCtrl+Shift+G",
+            )),
+            Some((Action::PFilterGrayscaleStrict, "厳密グレースケール化")),
+            None,
+            Some((Action::PFilterBlur, "ぼかし")),
+            Some((Action::PFilterBlurStrong, "ぼかし(強)")),
+            Some((Action::PFilterSharpen, "シャープ")),
+            Some((Action::PFilterSharpenStrong, "シャープ(強)")),
+            Some((Action::PFilterGaussianBlur, "ガウスぼかし")),
+            Some((Action::PFilterUnsharpMask, "アンシャープマスク")),
+            Some((Action::PFilterMedianFilter, "メディアンフィルタ")),
+            None,
+            Some((Action::PFilterInvertColors, "色の反転")),
+            Some((Action::PFilterApplyAlpha, "αチャンネルの反映")),
+        ]);
+        append_popup(menu_bar, filter_menu, "フィルタ(&T)");
+
         // リスト(&L)
         let list_menu = create_popup(&[
             Some((Action::NavigateFirst, "最初へ\tCtrl+Home")),
@@ -318,6 +350,27 @@ const ALL_ACTIONS: &[Action] = &[
     Action::Sharpen,
     Action::SharpenStrong,
     Action::MedianFilter,
+    // 永続フィルタ
+    Action::PFilterToggle,
+    Action::PFilterFlipH,
+    Action::PFilterFlipV,
+    Action::PFilterRotate180,
+    Action::PFilterRotate90CW,
+    Action::PFilterRotate90CCW,
+    Action::PFilterLevels,
+    Action::PFilterGamma,
+    Action::PFilterBrightnessContrast,
+    Action::PFilterGrayscaleSimple,
+    Action::PFilterGrayscaleStrict,
+    Action::PFilterBlur,
+    Action::PFilterBlurStrong,
+    Action::PFilterSharpen,
+    Action::PFilterSharpenStrong,
+    Action::PFilterGaussianBlur,
+    Action::PFilterUnsharpMask,
+    Action::PFilterMedianFilter,
+    Action::PFilterInvertColors,
+    Action::PFilterApplyAlpha,
     // ブックマーク
     Action::BookmarkSave,
     Action::BookmarkLoad,
