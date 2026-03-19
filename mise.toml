@@ -6,6 +6,7 @@ pnpm = "latest"
 [tasks.setup]
 description = "Initial project setup (install deps + configure git hooks)"
 run = """
+cargo install cargo-edit
 pnpm install
 git config core.hooksPath .githooks
 """
@@ -26,99 +27,35 @@ run = "cargo run -- {{arg(name=\"args\", var=true)}}"
 description = "cargo clean"
 run = "cargo clean"
 
-[tasks.outdated]
-description = "Check for outdated dependencies"
-run = "cargo update --dry-run"
-
-[tasks.update]
-description = "Update Cargo.lock (semver compatible)"
-run = "cargo update"
-
-[tasks.fmt-check]
-description = "cargo fmt --check"
-run = "cargo fmt --check"
-
 [tasks.check]
 description = "cargo check (fast compile check)"
 run = "cargo check"
 
-[tasks.fmt]
-description = "cargo fmt (auto-format)"
-run = "cargo fmt"
-
-[tasks.clippy]
-description = "cargo clippy (pedantic込み)"
+[tasks.format]
+description = "Auto-fix: fmt + clippy --fix"
 run = """
-cargo clippy --all-targets -- -D warnings -W clippy::pedantic \
-  -A clippy::cast_possible_truncation \
-  -A clippy::cast_possible_wrap \
-  -A clippy::cast_precision_loss \
-  -A clippy::cast_sign_loss \
-  -A clippy::cast_lossless \
-  -A clippy::missing_errors_doc \
-  -A clippy::missing_panics_doc \
-  -A clippy::module_name_repetitions \
-  -A clippy::must_use_candidate \
-  -A clippy::return_self_not_must_use \
-  -A clippy::struct_excessive_bools \
-  -A clippy::too_many_lines \
-  -A clippy::wildcard_imports \
-  -A clippy::doc_markdown \
-  -A clippy::needless_pass_by_value \
-  -A clippy::similar_names \
-  -A clippy::unreadable_literal \
-  -A clippy::items_after_statements \
-  -A clippy::many_single_char_names
+cargo fmt
+cargo clippy --all-targets --fix --allow-dirty --allow-staged -- -D warnings
 """
 
 [tasks.test]
-description = "cargo test"
-run = "cargo test"
+description = "All checks (fmt + clippy + test + doc lint)"
+run = """
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+pnpm run textlint
+pnpm run markdownlint
+pnpm run prettier:check
+"""
 
-[tasks.audit]
-description = "cargo audit (vulnerability scan)"
-run = "cargo audit"
+[tasks.update]
+description = "Update all dependencies (including major versions)"
+run = """
+cargo upgrade
+cargo update
+"""
 
 [tasks.coverage]
 description = "cargo llvm-cov (coverage report)"
 run = "cargo llvm-cov --html"
-
-[tasks.textlint]
-description = "textlint docs"
-run = "pnpm run textlint"
-
-[tasks.markdownlint]
-description = "markdownlint docs"
-run = "pnpm run markdownlint"
-
-[tasks.prettier-check]
-description = "prettier --check"
-run = "pnpm run prettier:check"
-
-[tasks.lint-rust]
-description = "Run all Rust checks"
-depends = ["fmt-check", "clippy", "test"]
-
-[tasks.lint-docs]
-description = "Run all doc checks"
-depends = ["textlint", "markdownlint", "prettier-check"]
-
-[tasks.lint]
-description = "Run all lint checks"
-depends = ["lint-rust", "lint-docs"]
-
-[tasks.textlint-fix]
-description = "textlint --fix"
-run = "pnpm run textlint:fix"
-
-[tasks.markdownlint-fix]
-description = "markdownlint --fix"
-run = "pnpm run markdownlint:fix"
-
-[tasks.prettier-fix]
-description = "prettier --write"
-run = "pnpm run prettier:fix"
-
-[tasks.lint-fix]
-description = "Run all fixable lints"
-depends = ["textlint-fix", "markdownlint-fix", "prettier-fix"]

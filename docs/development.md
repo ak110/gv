@@ -8,56 +8,24 @@
 ## 初回セットアップ
 
 ```cmd
-REM Rust, Node.js, pnpm のインストール
 mise install
-
-REM 依存パッケージのインストール + Git hooksの設定
 mise run setup
 ```
 
-## ビルド手順
+## 主要タスク
 
-```cmd
-REM デバッグビルド
-mise run build
+| コマンド | 内容 |
+|---|---|
+| `mise run build` | デバッグビルド |
+| `mise run build-release` | リリースビルド → `target/release/gv3.exe` |
+| `mise run run -- image.jpg` | 実行 |
+| `mise run format` | 自動整形（fmt + clippy --fix） |
+| `mise run test` | 全チェック（fmt + clippy + test + ドキュメントlint） |
+| `mise run update` | 依存パッケージを最新に更新（メジャーバージョン含む） |
 
-REM リリースビルド（最適化あり）
-mise run build-release
-REM → target/release/gv3.exe
+`git push`時にはpre-pushフックが`mise run test`を自動実行する。
 
-REM テスト
-mise run test
-
-REM 実行（引数付き）
-mise run run -- image.jpg
-
-REM クリーン
-mise run clean
-```
-
-## Lintの実行
-
-```cmd
-REM 全チェック（Rust + ドキュメント）
-mise run lint
-
-REM Rustのみ（fmt, clippy, test）
-mise run lint-rust
-
-REM ドキュメントのみ（textlint, markdownlint, prettier）
-mise run lint-docs
-
-REM 自動修正可能なドキュメントlintを修正
-mise run lint-fix
-```
-
-`git push`時にはpre-pushフックが自動で`mise run lint-rust`を実行する。
-`node_modules`がある場合は`mise run lint-docs`も実行される。
-
-```cmd
-REM フックを無効化する場合
-git config --unset core.hooksPath
-```
+clippyのpedantic lint設定は`Cargo.toml`の`[lints.clippy]`セクションで管理している。
 
 ## キーバインド定義の管理
 
@@ -88,34 +56,17 @@ Susieプラグインのロード、設定ファイルのパースなど、バッ
 可能な限り`Result`で呼び出し元に返し、app.rsのアクションハンドラで
 エラー表示を行う。中間層でエラーを握り潰さない。
 
-## 依存パッケージの更新
-
-```cmd
-REM semver互換範囲内で更新可能なパッケージを確認
-mise run outdated
-
-REM 実際に更新する場合
-mise run update
-
-REM ビルド・テスト確認
-mise run lint-rust
-```
-
-メジャーバージョンアップがある場合は`Cargo.toml`のバージョン指定を手動で更新する。
-
 ## リリース手順
 
 GitHub Actionsの `Release` ワークフローを手動実行してリリースする。
 
-### GitHub CLI から実行
-
 ```cmd
-REM 1. リリース実行（いずれか1つ）
+REM リリース実行（いずれか1つ）
 gh workflow run release.yml --field "bump=バグフィックス"
 gh workflow run release.yml --field "bump=マイナーバージョンアップ"
 gh workflow run release.yml --field "bump=メジャーバージョンアップ"
 
-REM 2. ワークフロー完了を待ち、バージョンバンプコミットを取り込む
+REM ワークフロー完了を待ち、バージョンバンプコミットを取り込む
 for /f %i in ('gh run list --workflow=release.yml -L1 --json databaseId -q ".[0].databaseId"') do (gh run watch %i & git pull)
 ```
 

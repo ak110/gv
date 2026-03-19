@@ -1,9 +1,4 @@
 #!/usr/bin/env bash
-# pre-push hook: push前にlintチェックを実行
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
-
-mise run lint-rust
-if [ -d "node_modules" ]; then
-    mise run lint-docs
-fi
+mise run test

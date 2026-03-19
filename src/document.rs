@@ -359,7 +359,7 @@ impl Document {
                 }
                 self.zip_buffers
                     .write()
-                    .unwrap()
+                    .expect("zip_buffers lock poisoned")
                     .insert(path.clone(), buffer);
                 self.current_containers.push(path.clone());
             } else {
@@ -369,7 +369,7 @@ impl Document {
                     std::process::id(),
                     std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
+                        .expect("system clock before UNIX epoch")
                         .as_millis()
                 ));
                 std::fs::create_dir_all(&temp_dir)?;
@@ -491,7 +491,7 @@ impl Document {
         }
 
         // 2. キャッシュミス → 同期デコード（フォールバック）
-        let current = self.file_list.current().unwrap();
+        let current = self.file_list.current().expect("current_index was Some");
         let path = current.path.clone();
         let source = current.source.clone();
 
@@ -504,7 +504,7 @@ impl Document {
             crate::pdf_renderer::render_pdf_page_safe(pdf_path, *page_index)
         } else {
             // 通常ファイル/アーカイブエントリ: read_file_data → decode
-            let current = self.file_list.current().unwrap();
+            let current = self.file_list.current().expect("current_index was Some");
             let data = self.read_file_data(current)?;
             let filename_hint = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             self.decoder.decode(&data, filename_hint)

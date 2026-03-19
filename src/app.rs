@@ -696,6 +696,756 @@ impl AppWindow {
         self.process_document_events();
     }
 
+    // === アクションハンドラ（execute_action から呼び出される個別メソッド） ===
+
+    fn action_mark_set(&mut self) {
+        // mark_current()は内部でnavigate_relative(1)するのでマーク元indexを先に取得
+        let mark_idx = self.document.file_list().current_index();
+        self.document.mark_current();
+        self.process_document_events();
+        if self.file_list_panel.is_visible()
+            && let Some(idx) = mark_idx
+            && let Some(info) = self.document.file_list().files().get(idx)
+        {
+            let is_cached = self.document.is_cached(idx);
+            self.file_list_panel.update_item(idx, info, is_cached);
+            // update_itemでselectionが崩れるので復元
+            if let Some(cur) = self.document.file_list().current_index() {
+                self.file_list_panel.set_selection(cur);
+            }
+        }
+    }
+
+    fn action_mark_unset(&mut self) {
+        self.document.unmark_current();
+        if self.file_list_panel.is_visible()
+            && let Some(idx) = self.document.file_list().current_index()
+        {
+            let info = &self.document.file_list().files()[idx];
+            let is_cached = self.document.is_cached(idx);
+            self.file_list_panel.update_item(idx, info, is_cached);
+            self.file_list_panel.set_selection(idx);
+        }
+    }
+
+    fn action_mark_invert_all(&mut self) {
+        self.document.invert_all_marks();
+        self.sync_file_list_panel();
+    }
+
+    fn action_mark_invert_to_here(&mut self) {
+        self.document.invert_marks_to_here();
+        self.sync_file_list_panel();
+    }
+
+    fn action_open_file(&mut self) {
+        if !self.guard_unsaved_edit() {
+            return;
+        }
+        self.selection.deselect();
+        let initial_dir = self
+            .document
+            .current_source()
+            .and_then(|s| s.parent_dir())
+            .map(Path::to_path_buf);
+        if let Ok(Some(path)) = crate::file_ops::open_file_dialog(self.hwnd, initial_dir.as_deref())
+        {
+            if let Err(e) = self.document.open(&path) {
+                self.show_error_title(&format!("ファイルを開けませんでした: {e}"));
+            }
+            self.process_document_events();
+        }
+    }
+
+    fn action_open_folder(&mut self) {
+        if !self.guard_unsaved_edit() {
+            return;
+        }
+        self.selection.deselect();
+        let initial_dir = self
+            .document
+            .current_source()
+            .and_then(|s| s.parent_dir())
+            .map(Path::to_path_buf);
+        if let Ok(Some(path)) =
+            crate::file_ops::open_folder_dialog(self.hwnd, initial_dir.as_deref())
+        {
+            if let Err(e) = self.document.open_folder(&path) {
+                self.show_error_title(&format!("フォルダを開けませんでした: {e}"));
+            }
+            self.process_document_events();
+        }
+    }
+
+    fn action_delete_file(&mut self) {
+        // コンテナ内（アーカイブ/PDF）のファイル削除は無効
+        if let Some(source) = self.document.current_source()
+            && source.is_contained()
+        {
+            return;
+        }
+        if let Some(path) = self.document.current_path().map(Path::to_path_buf)
+            && let Ok(true) = crate::file_ops::delete_to_recycle_bin(self.hwnd, &[&path])
+        {
+            self.document.remove_current_from_list();
+            self.process_document_events();
+        }
+    }
+
+    fn action_move_file(&mut self) {
+        let Some(current) = self.document.file_list().current() else {
+            return;
+        };
+        let source = current.source.clone();
+        let path = current.path.clone();
+
+        // PDFページは移動不可
+        if matches!(source, crate::file_info::FileSource::PdfPage { .. }) {
+            return;
+        }
+
+        let initial_dir = source.parent_dir().map(Path::to_path_buf);
+        let default_name = source.default_save_name();
+
+        // ファイルソースに応じてダイアログのラベルを分岐
+        let (dialog_title, dialog_button) = match &source {
+            crate::file_info::FileSource::File(_) => ("ファイルを移動", "移動"),
+            _ => ("ファイルを書き出す", "書き出す"),
+        };
+
+        if let Ok(Some(dest)) = crate::file_ops::save_file_dialog(
+            self.hwnd,
+            &default_name,
+            "すべてのファイル",
+            "*.*",
+            initial_dir.as_deref(),
+            Some(dialog_title),
+            Some(dialog_button),
+        ) {
+            match &source {
+                crate::file_info::FileSource::File(_) => {
+                    // 通常ファイル: SHFileOperationWでUndo対応の移動
+                    match crate::file_ops::move_single_file(self.hwnd, &path, &dest) {
+                        Ok(true) => {
+                            if let Err(e) = self.document.rename_current_in_list(&dest) {
+                                self.show_error_title(&format!("リスト更新失敗: {e}"));
+                            }
+                            self.process_document_events();
+                        }
+                        Ok(false) => {} // ユーザーキャンセル
+                        Err(e) => {
+                            self.show_error_title(&format!("ファイル移動失敗: {e}"));
+                        }
+                    }
+                }
+                crate::file_info::FileSource::ArchiveEntry { on_demand, .. } => {
+                    // アーカイブエントリ: 書き出し（リスト除去なし）
+                    let result = if *on_demand {
+                        self.document.read_file_data_current().and_then(|data| {
+                            std::fs::write(&dest, &data).map_err(anyhow::Error::from)
+                        })
+                    } else {
+                        std::fs::copy(&path, &dest)
+                            .map(|_| ())
+                            .map_err(anyhow::Error::from)
+                    };
+                    if let Err(e) = result {
+                        self.show_error_title(&format!("ファイル書き出し失敗: {e}"));
+                    }
+                }
+                crate::file_info::FileSource::PdfPage { .. } => {
+                    unreachable!(); // 上でガード済み
+                }
+            }
+        }
+    }
+
+    fn action_copy_file(&mut self) {
+        if let Some(current) = self.document.file_list().current() {
+            let default_name = current.source.default_save_name();
+            let initial_dir = current.source.parent_dir().map(Path::to_path_buf);
+            if let Ok(Some(dest)) = crate::file_ops::save_file_dialog(
+                self.hwnd,
+                &default_name,
+                "すべてのファイル",
+                "*.*",
+                initial_dir.as_deref(),
+                Some("ファイルを複製"),
+                Some("複製"),
+            ) {
+                let result = if matches!(
+                    current.source,
+                    crate::file_info::FileSource::ArchiveEntry {
+                        on_demand: true,
+                        ..
+                    }
+                ) {
+                    // オンデマンド: アーカイブから読み出して書き出し
+                    self.document
+                        .read_file_data_current()
+                        .and_then(|data| std::fs::write(&dest, &data).map_err(anyhow::Error::from))
+                } else {
+                    // 通常ファイル/temp展開済み/PDF: 既存のfs::copy
+                    std::fs::copy(&current.path, &dest)
+                        .map(|_| ())
+                        .map_err(anyhow::Error::from)
+                };
+                if let Err(e) = result {
+                    self.show_error_title(&format!("ファイルコピー失敗: {e}"));
+                }
+            }
+        }
+    }
+
+    fn action_marked_delete(&mut self) {
+        // コンテナ内（アーカイブ/PDF）は無効
+        if let Some(source) = self.document.current_source()
+            && source.is_contained()
+        {
+            return;
+        }
+        let paths: Vec<std::path::PathBuf> = self
+            .document
+            .file_list()
+            .marked_indices()
+            .iter()
+            .map(|&i| self.document.file_list().files()[i].path.clone())
+            .collect();
+        let path_refs: Vec<&Path> = paths.iter().map(PathBuf::as_path).collect();
+        if let Ok(true) = crate::file_ops::delete_to_recycle_bin(self.hwnd, &path_refs) {
+            self.document.remove_marked_from_list();
+            self.process_document_events();
+        }
+    }
+
+    fn action_marked_move(&mut self) {
+        if let Some(source) = self.document.current_source()
+            && source.is_contained()
+        {
+            return;
+        }
+        let marked = self.document.file_list().marked_indices();
+        let paths: Vec<std::path::PathBuf> = marked
+            .iter()
+            .map(|&i| self.document.file_list().files()[i].path.clone())
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
+        let initial_dir = self.document.file_list().files()[marked[0]]
+            .source
+            .parent_dir()
+            .map(Path::to_path_buf);
+        if let Ok(Some(dest)) = crate::file_ops::select_folder_dialog(
+            self.hwnd,
+            "移動先フォルダ",
+            initial_dir.as_deref(),
+        ) {
+            let path_refs: Vec<&Path> = paths.iter().map(PathBuf::as_path).collect();
+            if let Ok(true) = crate::file_ops::move_files(self.hwnd, &path_refs, &dest) {
+                // パス更新失敗時は従来通りリストから削除（フォールバック）
+                if let Err(e) = self.document.update_marked_paths(&dest) {
+                    eprintln!("パス更新失敗、リストから削除: {e}");
+                    self.document.remove_marked_from_list();
+                }
+                self.process_document_events();
+            }
+        }
+    }
+
+    fn action_marked_copy(&mut self) {
+        let marked = self.document.file_list().marked_indices();
+        let paths: Vec<std::path::PathBuf> = marked
+            .iter()
+            .map(|&i| self.document.file_list().files()[i].path.clone())
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
+        let initial_dir = self.document.file_list().files()[marked[0]]
+            .source
+            .parent_dir()
+            .map(Path::to_path_buf);
+        if let Ok(Some(dest)) = crate::file_ops::select_folder_dialog(
+            self.hwnd,
+            "コピー先フォルダ",
+            initial_dir.as_deref(),
+        ) {
+            let path_refs: Vec<&Path> = paths.iter().map(PathBuf::as_path).collect();
+            if let Err(e) = crate::file_ops::copy_files(self.hwnd, &path_refs, &dest) {
+                self.show_error_title(&format!("ファイルコピー失敗: {e}"));
+            }
+        }
+    }
+
+    fn action_marked_copy_names(&mut self) {
+        let names: Vec<String> = self
+            .document
+            .file_list()
+            .marked_indices()
+            .iter()
+            .map(|&i| self.document.file_list().files()[i].source.display_path())
+            .collect();
+        if !names.is_empty() {
+            let text = names.join("\r\n");
+            if let Err(e) = crate::clipboard::copy_text_to_clipboard(self.hwnd, &text) {
+                self.show_error_title(&format!("マークファイル名コピー失敗: {e}"));
+            }
+        }
+    }
+
+    fn action_paste_image(&mut self) {
+        if !self.guard_unsaved_edit() {
+            return;
+        }
+        self.selection.deselect();
+        match crate::clipboard::paste_image_from_clipboard(self.hwnd) {
+            Ok(Some(image)) => {
+                // 一時ファイルに保存してから開く
+                let temp_path = std::env::temp_dir().join("gv3_clipboard.png");
+                if let Some(img_buf) =
+                    image::RgbaImage::from_raw(image.width, image.height, image.data.clone())
+                    && img_buf.save(&temp_path).is_ok()
+                {
+                    if let Err(e) = self.document.open_single(&temp_path) {
+                        self.show_error_title(&format!("貼り付け失敗: {e}"));
+                    }
+                    self.process_document_events();
+                }
+            }
+            Ok(None) => {} // クリップボードに画像なし
+            Err(e) => self.show_error_title(&format!("貼り付け失敗: {e}")),
+        }
+    }
+
+    fn action_new_window(&mut self) {
+        if let Ok(exe) = std::env::current_exe() {
+            let mut cmd = std::process::Command::new(&exe);
+            // コンテナ内の場合はコンテナパスを渡す
+            if let Some(source) = self.document.current_source() {
+                match source {
+                    crate::file_info::FileSource::ArchiveEntry { archive, .. } => {
+                        cmd.arg(archive);
+                    }
+                    crate::file_info::FileSource::PdfPage { pdf_path, .. } => {
+                        cmd.arg(pdf_path);
+                    }
+                    crate::file_info::FileSource::File(path) => {
+                        cmd.arg(path);
+                    }
+                }
+            }
+            if let Err(e) = cmd.spawn() {
+                self.show_error_title(&format!("新規ウィンドウ起動失敗: {e}"));
+            }
+        }
+    }
+
+    fn action_close_all(&mut self) {
+        if !self.guard_unsaved_edit() {
+            return;
+        }
+        self.selection.deselect();
+        self.document.close_all();
+        self.process_document_events();
+        self.update_title();
+    }
+
+    fn action_open_containing_folder(&mut self) {
+        if let Some(source) = self.document.current_source() {
+            let target = match source {
+                crate::file_info::FileSource::ArchiveEntry { archive, .. } => archive.clone(),
+                crate::file_info::FileSource::PdfPage { pdf_path, .. } => pdf_path.clone(),
+                crate::file_info::FileSource::File(path) => path.clone(),
+            };
+            let arg = format!("/select,{}", target.display());
+            if let Err(e) = std::process::Command::new("explorer.exe").arg(&arg).spawn() {
+                self.show_error_title(&format!("エクスプローラ起動失敗: {e}"));
+            }
+        }
+    }
+
+    fn action_open_exe_folder(&mut self) {
+        if let Ok(exe) = std::env::current_exe()
+            && let Some(dir) = exe.parent()
+        {
+            if let Err(e) = std::process::Command::new("explorer.exe").arg(dir).spawn() {
+                self.show_error_title(&format!("エクスプローラ起動失敗: {e}"));
+            }
+        }
+    }
+
+    fn action_open_bookmark_folder(&mut self) {
+        let dir = crate::bookmark::bookmark_dir();
+        let _ = std::fs::create_dir_all(&dir);
+        if let Err(e) = std::process::Command::new("explorer.exe").arg(&dir).spawn() {
+            self.show_error_title(&format!("エクスプローラ起動失敗: {e}"));
+        }
+    }
+
+    fn action_open_spi_folder(&mut self) {
+        if let Ok(exe) = std::env::current_exe()
+            && let Some(dir) = exe.parent()
+        {
+            let spi_dir = dir.join("spi");
+            let _ = std::fs::create_dir_all(&spi_dir);
+            if let Err(e) = std::process::Command::new("explorer.exe")
+                .arg(&spi_dir)
+                .spawn()
+            {
+                self.show_error_title(&format!("エクスプローラ起動失敗: {e}"));
+            }
+        }
+    }
+
+    fn action_open_temp_folder(&mut self) {
+        let dir = std::env::temp_dir();
+        if let Err(e) = std::process::Command::new("explorer.exe").arg(&dir).spawn() {
+            self.show_error_title(&format!("エクスプローラ起動失敗: {e}"));
+        }
+    }
+
+    fn action_rotate_arbitrary(&mut self) {
+        if self.document.current_image().is_some()
+            && let Some(degrees) = crate::ui::rotate_dialog::show_rotate_dialog(self.hwnd)
+            && let Some(img) = self.document.current_image()
+        {
+            let result = crate::filter::transform::rotate_arbitrary(img, degrees);
+            self.selection.deselect();
+            self.document.apply_edit(result);
+            self.process_document_events();
+        }
+    }
+
+    fn action_resize(&mut self) {
+        if let Some(img) = self.document.current_image()
+            && let Some((nw, nh)) =
+                crate::ui::resize_dialog::show_resize_dialog(self.hwnd, img.width, img.height)
+            && let Some(img) = self.document.current_image()
+        {
+            let result = crate::filter::transform::resize(img, nw, nh);
+            self.selection.deselect();
+            self.document.apply_edit(result);
+            self.process_document_events();
+        }
+    }
+
+    fn action_fill(&mut self) {
+        if self.document.current_image().is_some() {
+            use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
+            let fields = [
+                FieldDef {
+                    label: "赤 (0-255)",
+                    default: "255".into(),
+                    integer_only: true,
+                },
+                FieldDef {
+                    label: "緑 (0-255)",
+                    default: "255".into(),
+                    integer_only: true,
+                },
+                FieldDef {
+                    label: "青 (0-255)",
+                    default: "255".into(),
+                    integer_only: true,
+                },
+            ];
+            if let Some(vals) = show_filter_dialog(self.hwnd, "塗り潰す", &fields)
+                && let Some(img) = self.document.current_image()
+            {
+                let r = vals[0].parse::<u8>().unwrap_or(255);
+                let g = vals[1].parse::<u8>().unwrap_or(255);
+                let b = vals[2].parse::<u8>().unwrap_or(255);
+                let sel = self.selection.current_rect();
+                let result = crate::filter::color::fill(img, sel.as_ref(), r, g, b);
+                self.document.apply_edit(result);
+                self.process_document_events();
+            }
+        }
+    }
+
+    fn action_levels(&mut self) {
+        if self.document.current_image().is_some() {
+            use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
+            let fields = [
+                FieldDef {
+                    label: "下限 (0-255)",
+                    default: "0".into(),
+                    integer_only: true,
+                },
+                FieldDef {
+                    label: "上限 (0-255)",
+                    default: "255".into(),
+                    integer_only: true,
+                },
+            ];
+            if let Some(vals) = show_filter_dialog(self.hwnd, "レベル補正", &fields)
+                && let Some(img) = self.document.current_image()
+            {
+                let low = vals[0].parse::<u8>().unwrap_or(0);
+                let high = vals[1].parse::<u8>().unwrap_or(255);
+                let sel = self.selection.current_rect();
+                let result = crate::filter::brightness::levels(img, sel.as_ref(), low, high);
+                self.document.apply_edit(result);
+                self.process_document_events();
+            }
+        }
+    }
+
+    fn action_gamma(&mut self) {
+        if self.document.current_image().is_some() {
+            use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
+            let fields = [FieldDef {
+                label: "ガンマ値 (0.1〜10.0)",
+                default: "1.0".into(),
+                integer_only: false,
+            }];
+            if let Some(vals) = show_filter_dialog(self.hwnd, "ガンマ補正", &fields)
+                && let Some(img) = self.document.current_image()
+            {
+                let gamma = vals[0].parse::<f64>().unwrap_or(1.0).clamp(0.1, 10.0);
+                let sel = self.selection.current_rect();
+                let result = crate::filter::brightness::gamma(img, sel.as_ref(), gamma);
+                self.document.apply_edit(result);
+                self.process_document_events();
+            }
+        }
+    }
+
+    fn action_brightness_contrast(&mut self) {
+        if self.document.current_image().is_some() {
+            use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
+            let fields = [
+                FieldDef {
+                    label: "明るさ (-128〜128)",
+                    default: "0".into(),
+                    integer_only: false,
+                },
+                FieldDef {
+                    label: "コントラスト (-128〜128)",
+                    default: "0".into(),
+                    integer_only: false,
+                },
+            ];
+            if let Some(vals) = show_filter_dialog(self.hwnd, "明るさとコントラスト", &fields)
+                && let Some(img) = self.document.current_image()
+            {
+                let brightness = vals[0].parse::<i32>().unwrap_or(0).clamp(-128, 128);
+                let contrast = vals[1].parse::<i32>().unwrap_or(0).clamp(-128, 128);
+                let sel = self.selection.current_rect();
+                let result = crate::filter::brightness::brightness_contrast(
+                    img,
+                    sel.as_ref(),
+                    brightness,
+                    contrast,
+                );
+                self.document.apply_edit(result);
+                self.process_document_events();
+            }
+        }
+    }
+
+    fn action_mosaic(&mut self) {
+        if self.document.current_image().is_some() {
+            use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
+            let fields = [FieldDef {
+                label: "ブロックサイズ",
+                default: "10".into(),
+                integer_only: true,
+            }];
+            if let Some(vals) = show_filter_dialog(self.hwnd, "モザイク", &fields)
+                && let Some(img) = self.document.current_image()
+            {
+                let size = vals[0].parse::<u32>().unwrap_or(10).max(1);
+                let sel = self.selection.current_rect();
+                let result = crate::filter::blur::mosaic(img, sel.as_ref(), size);
+                self.document.apply_edit(result);
+                self.process_document_events();
+            }
+        }
+    }
+
+    fn action_gaussian_blur(&mut self) {
+        if self.document.current_image().is_some() {
+            use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
+            let fields = [FieldDef {
+                label: "半径 (0.1〜10.0)",
+                default: "2.0".into(),
+                integer_only: false,
+            }];
+            if let Some(vals) = show_filter_dialog(self.hwnd, "ガウスぼかし", &fields)
+                && let Some(img) = self.document.current_image()
+            {
+                let radius = vals[0].parse::<f64>().unwrap_or(2.0).clamp(0.1, 10.0);
+                let sel = self.selection.current_rect();
+                let result = crate::filter::blur::gaussian_blur(img, sel.as_ref(), radius);
+                self.document.apply_edit(result);
+                self.process_document_events();
+            }
+        }
+    }
+
+    fn action_unsharp_mask(&mut self) {
+        if self.document.current_image().is_some() {
+            use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
+            let fields = [FieldDef {
+                label: "半径 (0.1〜10.0)",
+                default: "2.0".into(),
+                integer_only: false,
+            }];
+            if let Some(vals) = show_filter_dialog(self.hwnd, "アンシャープマスク", &fields)
+                && let Some(img) = self.document.current_image()
+            {
+                let radius = vals[0].parse::<f64>().unwrap_or(2.0).clamp(0.1, 10.0);
+                let sel = self.selection.current_rect();
+                let result = crate::filter::blur::unsharp_mask(img, sel.as_ref(), radius);
+                self.document.apply_edit(result);
+                self.process_document_events();
+            }
+        }
+    }
+
+    fn action_bookmark_load(&mut self) {
+        if !self.guard_unsaved_edit() {
+            return;
+        }
+        self.selection.deselect();
+        match crate::bookmark::load_bookmark(self.hwnd) {
+            Ok(Some(data)) => {
+                if let Err(e) = self.document.load_bookmark_data(data) {
+                    self.show_error_title(&format!("ブックマーク読み込み失敗: {e}"));
+                }
+                self.process_document_events();
+            }
+            Ok(None) => {} // キャンセル
+            Err(e) => self.show_error_title(&format!("ブックマーク読み込み失敗: {e}")),
+        }
+    }
+
+    fn action_pfilter_levels(&mut self) {
+        use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
+        let fields = [
+            FieldDef {
+                label: "下限 (0-255)",
+                default: "0".into(),
+                integer_only: true,
+            },
+            FieldDef {
+                label: "上限 (0-255)",
+                default: "255".into(),
+                integer_only: true,
+            },
+        ];
+        if let Some(vals) = show_filter_dialog(self.hwnd, "永続レベル補正", &fields) {
+            let low = vals[0].parse::<u8>().unwrap_or(0);
+            let high = vals[1].parse::<u8>().unwrap_or(255);
+            self.add_persistent_filter(FilterOperation::Levels { low, high });
+        }
+    }
+
+    fn action_pfilter_gamma(&mut self) {
+        use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
+        let fields = [FieldDef {
+            label: "ガンマ値 (0.1〜10.0)",
+            default: "1.0".into(),
+            integer_only: false,
+        }];
+        if let Some(vals) = show_filter_dialog(self.hwnd, "永続ガンマ補正", &fields) {
+            let value = vals[0].parse::<f64>().unwrap_or(1.0).clamp(0.1, 10.0);
+            self.add_persistent_filter(FilterOperation::Gamma { value });
+        }
+    }
+
+    fn action_pfilter_brightness_contrast(&mut self) {
+        use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
+        let fields = [
+            FieldDef {
+                label: "明るさ (-128〜128)",
+                default: "0".into(),
+                integer_only: false,
+            },
+            FieldDef {
+                label: "コントラスト (-128〜128)",
+                default: "0".into(),
+                integer_only: false,
+            },
+        ];
+        if let Some(vals) = show_filter_dialog(self.hwnd, "永続明るさとコントラスト", &fields)
+        {
+            let brightness = vals[0].parse::<i32>().unwrap_or(0).clamp(-128, 128);
+            let contrast = vals[1].parse::<i32>().unwrap_or(0).clamp(-128, 128);
+            self.add_persistent_filter(FilterOperation::BrightnessContrast {
+                brightness,
+                contrast,
+            });
+        }
+    }
+
+    fn action_pfilter_gaussian_blur(&mut self) {
+        use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
+        let fields = [FieldDef {
+            label: "半径 (0.1〜10.0)",
+            default: "2.0".into(),
+            integer_only: false,
+        }];
+        if let Some(vals) = show_filter_dialog(self.hwnd, "永続ガウスぼかし", &fields) {
+            let radius = vals[0].parse::<f64>().unwrap_or(2.0).clamp(0.1, 10.0);
+            self.add_persistent_filter(FilterOperation::GaussianBlur { radius });
+        }
+    }
+
+    fn action_pfilter_unsharp_mask(&mut self) {
+        use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
+        let fields = [FieldDef {
+            label: "半径 (0.1〜10.0)",
+            default: "2.0".into(),
+            integer_only: false,
+        }];
+        if let Some(vals) = show_filter_dialog(self.hwnd, "永続アンシャープマスク", &fields)
+        {
+            let radius = vals[0].parse::<f64>().unwrap_or(2.0).clamp(0.1, 10.0);
+            self.add_persistent_filter(FilterOperation::UnsharpMask { radius });
+        }
+    }
+
+    fn action_toggle_file_list(&mut self) {
+        self.file_list_panel.toggle();
+        // パネルが表示状態になったら全同期（非表示中の変更を反映）
+        if self.file_list_panel.is_visible() {
+            let doc = &self.document;
+            self.file_list_panel
+                .update(doc.file_list(), |i| doc.is_cached(i));
+            if let Some(idx) = doc.file_list().current_index() {
+                self.file_list_panel.set_selection(idx);
+            }
+            // cached_indicesも同期
+            self.cached_indices.clear();
+            let files = self.document.file_list().files();
+            for i in 0..files.len() {
+                if self.document.is_cached(i) {
+                    self.cached_indices.insert(i);
+                }
+            }
+        }
+        // toggle内でWM_SIZEが送られてon_sizeが呼ばれる
+        // 同期再描画でちらつきを防止
+        unsafe {
+            let _ = UpdateWindow(self.hwnd);
+        }
+    }
+
+    /// ファイルリストパネルの同期ヘルパー（MarkInvertAll / MarkInvertToHere で共通）
+    fn sync_file_list_panel(&mut self) {
+        if self.file_list_panel.is_visible() {
+            let doc = &self.document;
+            self.file_list_panel
+                .update(doc.file_list(), |i| doc.is_cached(i));
+            if let Some(idx) = doc.file_list().current_index() {
+                self.file_list_panel.set_selection(idx);
+            }
+        }
+    }
+
     /// アクションを実行する
     fn execute_action(&mut self, action: Action) {
         match action {
@@ -767,56 +1517,10 @@ impl AppWindow {
             }
 
             // --- マーク操作 ---
-            Action::MarkSet => {
-                // mark_current()は内部でnavigate_relative(1)するのでマーク元indexを先に取得
-                let mark_idx = self.document.file_list().current_index();
-                self.document.mark_current();
-                self.process_document_events();
-                if self.file_list_panel.is_visible()
-                    && let Some(idx) = mark_idx
-                    && let Some(info) = self.document.file_list().files().get(idx)
-                {
-                    let is_cached = self.document.is_cached(idx);
-                    self.file_list_panel.update_item(idx, info, is_cached);
-                    // update_itemでselectionが崩れるので復元
-                    if let Some(cur) = self.document.file_list().current_index() {
-                        self.file_list_panel.set_selection(cur);
-                    }
-                }
-            }
-            Action::MarkUnset => {
-                self.document.unmark_current();
-                if self.file_list_panel.is_visible()
-                    && let Some(idx) = self.document.file_list().current_index()
-                {
-                    let info = &self.document.file_list().files()[idx];
-                    let is_cached = self.document.is_cached(idx);
-                    self.file_list_panel.update_item(idx, info, is_cached);
-                    self.file_list_panel.set_selection(idx);
-                }
-            }
-            Action::MarkInvertAll => {
-                self.document.invert_all_marks();
-                if self.file_list_panel.is_visible() {
-                    let doc = &self.document;
-                    self.file_list_panel
-                        .update(doc.file_list(), |i| doc.is_cached(i));
-                    if let Some(idx) = doc.file_list().current_index() {
-                        self.file_list_panel.set_selection(idx);
-                    }
-                }
-            }
-            Action::MarkInvertToHere => {
-                self.document.invert_marks_to_here();
-                if self.file_list_panel.is_visible() {
-                    let doc = &self.document;
-                    self.file_list_panel
-                        .update(doc.file_list(), |i| doc.is_cached(i));
-                    if let Some(idx) = doc.file_list().current_index() {
-                        self.file_list_panel.set_selection(idx);
-                    }
-                }
-            }
+            Action::MarkSet => self.action_mark_set(),
+            Action::MarkUnset => self.action_mark_unset(),
+            Action::MarkInvertAll => self.action_mark_invert_all(),
+            Action::MarkInvertToHere => self.action_mark_invert_to_here(),
             Action::NavigatePrevMark => self.navigate_with_guard(Document::navigate_prev_mark),
             Action::NavigateNextMark => self.navigate_with_guard(Document::navigate_next_mark),
             Action::RemoveFromList => {
@@ -833,241 +1537,14 @@ impl AppWindow {
             Action::NavigateNextFolder => self.navigate_with_guard(Document::navigate_next_folder),
 
             // --- ファイル操作 ---
-            Action::OpenFile => {
-                if !self.guard_unsaved_edit() {
-                    return;
-                }
-                self.selection.deselect();
-                let initial_dir = self
-                    .document
-                    .current_source()
-                    .and_then(|s| s.parent_dir())
-                    .map(Path::to_path_buf);
-                if let Ok(Some(path)) =
-                    crate::file_ops::open_file_dialog(self.hwnd, initial_dir.as_deref())
-                {
-                    if let Err(e) = self.document.open(&path) {
-                        self.show_error_title(&format!("ファイルを開けませんでした: {e}"));
-                    }
-                    self.process_document_events();
-                }
-            }
-            Action::OpenFolder => {
-                if !self.guard_unsaved_edit() {
-                    return;
-                }
-                self.selection.deselect();
-                let initial_dir = self
-                    .document
-                    .current_source()
-                    .and_then(|s| s.parent_dir())
-                    .map(Path::to_path_buf);
-                if let Ok(Some(path)) =
-                    crate::file_ops::open_folder_dialog(self.hwnd, initial_dir.as_deref())
-                {
-                    if let Err(e) = self.document.open_folder(&path) {
-                        self.show_error_title(&format!("フォルダを開けませんでした: {e}"));
-                    }
-                    self.process_document_events();
-                }
-            }
-            Action::DeleteFile => {
-                // コンテナ内（アーカイブ/PDF）のファイル削除は無効
-                if let Some(source) = self.document.current_source()
-                    && source.is_contained()
-                {
-                    return;
-                }
-                if let Some(path) = self.document.current_path().map(Path::to_path_buf)
-                    && let Ok(true) = crate::file_ops::delete_to_recycle_bin(self.hwnd, &[&path])
-                {
-                    self.document.remove_current_from_list();
-                    self.process_document_events();
-                }
-            }
-            Action::MoveFile => {
-                let Some(current) = self.document.file_list().current() else {
-                    return;
-                };
-                let source = current.source.clone();
-                let path = current.path.clone();
-
-                // PDFページは移動不可（ページ単位の書き出しにはデコード済み画像の再エンコードが必要）
-                if matches!(source, crate::file_info::FileSource::PdfPage { .. }) {
-                    return;
-                }
-
-                let initial_dir = source.parent_dir().map(Path::to_path_buf);
-                let default_name = source.default_save_name();
-
-                // ファイルソースに応じてダイアログのラベルを分岐
-                let (dialog_title, dialog_button) = match &source {
-                    crate::file_info::FileSource::File(_) => ("ファイルを移動", "移動"),
-                    _ => ("ファイルを書き出す", "書き出す"),
-                };
-
-                if let Ok(Some(dest)) = crate::file_ops::save_file_dialog(
-                    self.hwnd,
-                    &default_name,
-                    "すべてのファイル",
-                    "*.*",
-                    initial_dir.as_deref(),
-                    Some(dialog_title),
-                    Some(dialog_button),
-                ) {
-                    match &source {
-                        crate::file_info::FileSource::File(_) => {
-                            // 通常ファイル: SHFileOperationWでUndo対応の移動
-                            match crate::file_ops::move_single_file(self.hwnd, &path, &dest) {
-                                Ok(true) => {
-                                    // 移動先パスでリスト内エントリを更新（異フォルダでも追跡）
-                                    if let Err(e) = self.document.rename_current_in_list(&dest) {
-                                        self.show_error_title(&format!("リスト更新失敗: {e}"));
-                                    }
-                                    self.process_document_events();
-                                }
-                                Ok(false) => {} // ユーザーキャンセル
-                                Err(e) => {
-                                    self.show_error_title(&format!("ファイル移動失敗: {e}"));
-                                }
-                            }
-                        }
-                        crate::file_info::FileSource::ArchiveEntry { on_demand, .. } => {
-                            // アーカイブエントリ: 書き出し（リスト除去なし）
-                            let result = if *on_demand {
-                                self.document.read_file_data_current().and_then(|data| {
-                                    std::fs::write(&dest, &data).map_err(anyhow::Error::from)
-                                })
-                            } else {
-                                std::fs::copy(&path, &dest)
-                                    .map(|_| ())
-                                    .map_err(anyhow::Error::from)
-                            };
-                            if let Err(e) = result {
-                                self.show_error_title(&format!("ファイル書き出し失敗: {e}"));
-                            }
-                        }
-                        crate::file_info::FileSource::PdfPage { .. } => {
-                            unreachable!(); // 上でガード済み
-                        }
-                    }
-                }
-            }
-            Action::CopyFile => {
-                if let Some(current) = self.document.file_list().current() {
-                    let default_name = current.source.default_save_name();
-                    let initial_dir = current.source.parent_dir().map(Path::to_path_buf);
-                    if let Ok(Some(dest)) = crate::file_ops::save_file_dialog(
-                        self.hwnd,
-                        &default_name,
-                        "すべてのファイル",
-                        "*.*",
-                        initial_dir.as_deref(),
-                        Some("ファイルを複製"),
-                        Some("複製"),
-                    ) {
-                        let result = if matches!(
-                            current.source,
-                            crate::file_info::FileSource::ArchiveEntry {
-                                on_demand: true,
-                                ..
-                            }
-                        ) {
-                            // オンデマンド: アーカイブから読み出して書き出し
-                            self.document.read_file_data_current().and_then(|data| {
-                                std::fs::write(&dest, &data).map_err(anyhow::Error::from)
-                            })
-                        } else {
-                            // 通常ファイル/temp展開済み/PDF: 既存のfs::copy
-                            std::fs::copy(&current.path, &dest)
-                                .map(|_| ())
-                                .map_err(anyhow::Error::from)
-                        };
-                        if let Err(e) = result {
-                            self.show_error_title(&format!("ファイルコピー失敗: {e}"));
-                        }
-                    }
-                }
-            }
-            Action::MarkedDelete => {
-                // コンテナ内（アーカイブ/PDF）は無効
-                if let Some(source) = self.document.current_source()
-                    && source.is_contained()
-                {
-                    return;
-                }
-                let paths: Vec<std::path::PathBuf> = self
-                    .document
-                    .file_list()
-                    .marked_indices()
-                    .iter()
-                    .map(|&i| self.document.file_list().files()[i].path.clone())
-                    .collect();
-                let path_refs: Vec<&Path> = paths.iter().map(PathBuf::as_path).collect();
-                if let Ok(true) = crate::file_ops::delete_to_recycle_bin(self.hwnd, &path_refs) {
-                    self.document.remove_marked_from_list();
-                    self.process_document_events();
-                }
-            }
-            Action::MarkedMove => {
-                if let Some(source) = self.document.current_source()
-                    && source.is_contained()
-                {
-                    return;
-                }
-                let marked = self.document.file_list().marked_indices();
-                let paths: Vec<std::path::PathBuf> = marked
-                    .iter()
-                    .map(|&i| self.document.file_list().files()[i].path.clone())
-                    .collect();
-                if paths.is_empty() {
-                    return;
-                }
-                // マーク済み最初のファイルの親ディレクトリを初期ディレクトリとして使用
-                let initial_dir = self.document.file_list().files()[marked[0]]
-                    .source
-                    .parent_dir()
-                    .map(Path::to_path_buf);
-                if let Ok(Some(dest)) = crate::file_ops::select_folder_dialog(
-                    self.hwnd,
-                    "移動先フォルダ",
-                    initial_dir.as_deref(),
-                ) {
-                    let path_refs: Vec<&Path> = paths.iter().map(PathBuf::as_path).collect();
-                    if let Ok(true) = crate::file_ops::move_files(self.hwnd, &path_refs, &dest) {
-                        // パス更新失敗時は従来通りリストから削除（フォールバック）
-                        if let Err(e) = self.document.update_marked_paths(&dest) {
-                            eprintln!("パス更新失敗、リストから削除: {e}");
-                            self.document.remove_marked_from_list();
-                        }
-                        self.process_document_events();
-                    }
-                }
-            }
-            Action::MarkedCopy => {
-                let marked = self.document.file_list().marked_indices();
-                let paths: Vec<std::path::PathBuf> = marked
-                    .iter()
-                    .map(|&i| self.document.file_list().files()[i].path.clone())
-                    .collect();
-                if paths.is_empty() {
-                    return;
-                }
-                let initial_dir = self.document.file_list().files()[marked[0]]
-                    .source
-                    .parent_dir()
-                    .map(Path::to_path_buf);
-                if let Ok(Some(dest)) = crate::file_ops::select_folder_dialog(
-                    self.hwnd,
-                    "コピー先フォルダ",
-                    initial_dir.as_deref(),
-                ) {
-                    let path_refs: Vec<&Path> = paths.iter().map(PathBuf::as_path).collect();
-                    if let Err(e) = crate::file_ops::copy_files(self.hwnd, &path_refs, &dest) {
-                        self.show_error_title(&format!("ファイルコピー失敗: {e}"));
-                    }
-                }
-            }
+            Action::OpenFile => self.action_open_file(),
+            Action::OpenFolder => self.action_open_folder(),
+            Action::DeleteFile => self.action_delete_file(),
+            Action::MoveFile => self.action_move_file(),
+            Action::CopyFile => self.action_copy_file(),
+            Action::MarkedDelete => self.action_marked_delete(),
+            Action::MarkedMove => self.action_marked_move(),
+            Action::MarkedCopy => self.action_marked_copy(),
             Action::Reload => self.navigate_with_guard(Document::reload),
 
             // --- クリップボード ---
@@ -1086,46 +1563,8 @@ impl AppWindow {
                     self.show_error_title(&format!("ファイル名コピー失敗: {e}"));
                 }
             }
-            Action::MarkedCopyNames => {
-                let names: Vec<String> = self
-                    .document
-                    .file_list()
-                    .marked_indices()
-                    .iter()
-                    .map(|&i| self.document.file_list().files()[i].source.display_path())
-                    .collect();
-                if !names.is_empty() {
-                    let text = names.join("\r\n");
-                    if let Err(e) = crate::clipboard::copy_text_to_clipboard(self.hwnd, &text) {
-                        self.show_error_title(&format!("マークファイル名コピー失敗: {e}"));
-                    }
-                }
-            }
-            Action::PasteImage => {
-                if !self.guard_unsaved_edit() {
-                    return;
-                }
-                self.selection.deselect();
-                match crate::clipboard::paste_image_from_clipboard(self.hwnd) {
-                    Ok(Some(image)) => {
-                        // 一時ファイルに保存してから開く
-                        let temp_path = std::env::temp_dir().join("gv3_clipboard.png");
-                        if let Some(img_buf) = image::RgbaImage::from_raw(
-                            image.width,
-                            image.height,
-                            image.data.clone(),
-                        ) && img_buf.save(&temp_path).is_ok()
-                        {
-                            if let Err(e) = self.document.open_single(&temp_path) {
-                                self.show_error_title(&format!("貼り付け失敗: {e}"));
-                            }
-                            self.process_document_events();
-                        }
-                    }
-                    Ok(None) => {} // クリップボードに画像なし
-                    Err(e) => self.show_error_title(&format!("貼り付け失敗: {e}")),
-                }
-            }
+            Action::MarkedCopyNames => self.action_marked_copy_names(),
+            Action::PasteImage => self.action_paste_image(),
 
             // --- 画像書き出し ---
             Action::ExportJpg => {
@@ -1139,77 +1578,13 @@ impl AppWindow {
             }
 
             // --- ユーティリティ ---
-            Action::NewWindow => {
-                // 現在のexeを新規プロセスで起動
-                if let Ok(exe) = std::env::current_exe() {
-                    let mut cmd = std::process::Command::new(&exe);
-                    // コンテナ内の場合はコンテナパスを渡す
-                    if let Some(source) = self.document.current_source() {
-                        match source {
-                            crate::file_info::FileSource::ArchiveEntry { archive, .. } => {
-                                cmd.arg(archive);
-                            }
-                            crate::file_info::FileSource::PdfPage { pdf_path, .. } => {
-                                cmd.arg(pdf_path);
-                            }
-                            crate::file_info::FileSource::File(path) => {
-                                cmd.arg(path);
-                            }
-                        }
-                    }
-                    let _ = cmd.spawn();
-                }
-            }
-            Action::CloseAll => {
-                if !self.guard_unsaved_edit() {
-                    return;
-                }
-                self.selection.deselect();
-                self.document.close_all();
-                self.process_document_events();
-                self.update_title();
-            }
-            Action::OpenContainingFolder => {
-                if let Some(source) = self.document.current_source() {
-                    let target = match source {
-                        crate::file_info::FileSource::ArchiveEntry { archive, .. } => {
-                            archive.clone()
-                        }
-                        crate::file_info::FileSource::PdfPage { pdf_path, .. } => pdf_path.clone(),
-                        crate::file_info::FileSource::File(path) => path.clone(),
-                    };
-                    // /select,path でエクスプローラを開く
-                    let arg = format!("/select,{}", target.display());
-                    let _ = std::process::Command::new("explorer.exe").arg(&arg).spawn();
-                }
-            }
-            Action::OpenExeFolder => {
-                if let Ok(exe) = std::env::current_exe()
-                    && let Some(dir) = exe.parent()
-                {
-                    let _ = std::process::Command::new("explorer.exe").arg(dir).spawn();
-                }
-            }
-            Action::OpenBookmarkFolder => {
-                let dir = crate::bookmark::bookmark_dir();
-                let _ = std::fs::create_dir_all(&dir);
-                let _ = std::process::Command::new("explorer.exe").arg(&dir).spawn();
-            }
-            Action::OpenSpiFolder => {
-                if let Ok(exe) = std::env::current_exe()
-                    && let Some(dir) = exe.parent()
-                {
-                    let spi_dir = dir.join("spi");
-                    let _ = std::fs::create_dir_all(&spi_dir);
-                    let _ = std::process::Command::new("explorer.exe")
-                        .arg(&spi_dir)
-                        .spawn();
-                }
-            }
-            Action::OpenTempFolder => {
-                let dir = std::env::temp_dir();
-                let _ = std::process::Command::new("explorer.exe").arg(&dir).spawn();
-            }
+            Action::NewWindow => self.action_new_window(),
+            Action::CloseAll => self.action_close_all(),
+            Action::OpenContainingFolder => self.action_open_containing_folder(),
+            Action::OpenExeFolder => self.action_open_exe_folder(),
+            Action::OpenBookmarkFolder => self.action_open_bookmark_folder(),
+            Action::OpenSpiFolder => self.action_open_spi_folder(),
+            Action::OpenTempFolder => self.action_open_temp_folder(),
             Action::ShowImageInfo => {
                 self.show_image_info();
             }
@@ -1246,202 +1621,17 @@ impl AppWindow {
             Action::Rotate90CCW => {
                 self.apply_transform(crate::filter::transform::rotate_270);
             }
-            Action::RotateArbitrary => {
-                if self.document.current_image().is_some()
-                    && let Some(degrees) = crate::ui::rotate_dialog::show_rotate_dialog(self.hwnd)
-                    && let Some(img) = self.document.current_image()
-                {
-                    let result = crate::filter::transform::rotate_arbitrary(img, degrees);
-                    self.selection.deselect();
-                    self.document.apply_edit(result);
-                    self.process_document_events();
-                }
-            }
-            Action::Resize => {
-                if let Some(img) = self.document.current_image()
-                    && let Some((nw, nh)) = crate::ui::resize_dialog::show_resize_dialog(
-                        self.hwnd, img.width, img.height,
-                    )
-                    && let Some(img) = self.document.current_image()
-                {
-                    let result = crate::filter::transform::resize(img, nw, nh);
-                    self.selection.deselect();
-                    self.document.apply_edit(result);
-                    self.process_document_events();
-                }
-            }
+            Action::RotateArbitrary => self.action_rotate_arbitrary(),
+            Action::Resize => self.action_resize(),
 
             // --- フィルタ（パラメータあり） ---
-            Action::Fill => {
-                if self.document.current_image().is_some() {
-                    use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
-                    let fields = [
-                        FieldDef {
-                            label: "赤 (0-255)",
-                            default: "255".into(),
-                            integer_only: true,
-                        },
-                        FieldDef {
-                            label: "緑 (0-255)",
-                            default: "255".into(),
-                            integer_only: true,
-                        },
-                        FieldDef {
-                            label: "青 (0-255)",
-                            default: "255".into(),
-                            integer_only: true,
-                        },
-                    ];
-                    if let Some(vals) = show_filter_dialog(self.hwnd, "塗り潰す", &fields)
-                        && let Some(img) = self.document.current_image()
-                    {
-                        let r = vals[0].parse::<u8>().unwrap_or(255);
-                        let g = vals[1].parse::<u8>().unwrap_or(255);
-                        let b = vals[2].parse::<u8>().unwrap_or(255);
-                        let sel = self.selection.current_rect();
-                        let result = crate::filter::color::fill(img, sel.as_ref(), r, g, b);
-                        self.document.apply_edit(result);
-                        self.process_document_events();
-                    }
-                }
-            }
-            Action::Levels => {
-                if self.document.current_image().is_some() {
-                    use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
-                    let fields = [
-                        FieldDef {
-                            label: "下限 (0-255)",
-                            default: "0".into(),
-                            integer_only: true,
-                        },
-                        FieldDef {
-                            label: "上限 (0-255)",
-                            default: "255".into(),
-                            integer_only: true,
-                        },
-                    ];
-                    if let Some(vals) = show_filter_dialog(self.hwnd, "レベル補正", &fields)
-                        && let Some(img) = self.document.current_image()
-                    {
-                        let low = vals[0].parse::<u8>().unwrap_or(0);
-                        let high = vals[1].parse::<u8>().unwrap_or(255);
-                        let sel = self.selection.current_rect();
-                        let result =
-                            crate::filter::brightness::levels(img, sel.as_ref(), low, high);
-                        self.document.apply_edit(result);
-                        self.process_document_events();
-                    }
-                }
-            }
-            Action::Gamma => {
-                if self.document.current_image().is_some() {
-                    use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
-                    let fields = [FieldDef {
-                        label: "ガンマ値 (0.1〜10.0)",
-                        default: "1.0".into(),
-                        integer_only: false,
-                    }];
-                    if let Some(vals) = show_filter_dialog(self.hwnd, "ガンマ補正", &fields)
-                        && let Some(img) = self.document.current_image()
-                    {
-                        let gamma = vals[0].parse::<f64>().unwrap_or(1.0).clamp(0.1, 10.0);
-                        let sel = self.selection.current_rect();
-                        let result = crate::filter::brightness::gamma(img, sel.as_ref(), gamma);
-                        self.document.apply_edit(result);
-                        self.process_document_events();
-                    }
-                }
-            }
-            Action::BrightnessContrast => {
-                if self.document.current_image().is_some() {
-                    use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
-                    let fields = [
-                        FieldDef {
-                            label: "明るさ (-128〜128)",
-                            default: "0".into(),
-                            integer_only: false,
-                        },
-                        FieldDef {
-                            label: "コントラスト (-128〜128)",
-                            default: "0".into(),
-                            integer_only: false,
-                        },
-                    ];
-                    if let Some(vals) =
-                        show_filter_dialog(self.hwnd, "明るさとコントラスト", &fields)
-                        && let Some(img) = self.document.current_image()
-                    {
-                        let brightness = vals[0].parse::<i32>().unwrap_or(0).clamp(-128, 128);
-                        let contrast = vals[1].parse::<i32>().unwrap_or(0).clamp(-128, 128);
-                        let sel = self.selection.current_rect();
-                        let result = crate::filter::brightness::brightness_contrast(
-                            img,
-                            sel.as_ref(),
-                            brightness,
-                            contrast,
-                        );
-                        self.document.apply_edit(result);
-                        self.process_document_events();
-                    }
-                }
-            }
-            Action::Mosaic => {
-                if self.document.current_image().is_some() {
-                    use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
-                    let fields = [FieldDef {
-                        label: "ブロックサイズ",
-                        default: "10".into(),
-                        integer_only: true,
-                    }];
-                    if let Some(vals) = show_filter_dialog(self.hwnd, "モザイク", &fields)
-                        && let Some(img) = self.document.current_image()
-                    {
-                        let size = vals[0].parse::<u32>().unwrap_or(10).max(1);
-                        let sel = self.selection.current_rect();
-                        let result = crate::filter::blur::mosaic(img, sel.as_ref(), size);
-                        self.document.apply_edit(result);
-                        self.process_document_events();
-                    }
-                }
-            }
-            Action::GaussianBlur => {
-                if self.document.current_image().is_some() {
-                    use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
-                    let fields = [FieldDef {
-                        label: "半径 (0.1〜10.0)",
-                        default: "2.0".into(),
-                        integer_only: false,
-                    }];
-                    if let Some(vals) = show_filter_dialog(self.hwnd, "ガウスぼかし", &fields)
-                        && let Some(img) = self.document.current_image()
-                    {
-                        let radius = vals[0].parse::<f64>().unwrap_or(2.0).clamp(0.1, 10.0);
-                        let sel = self.selection.current_rect();
-                        let result = crate::filter::blur::gaussian_blur(img, sel.as_ref(), radius);
-                        self.document.apply_edit(result);
-                        self.process_document_events();
-                    }
-                }
-            }
-            Action::UnsharpMask => {
-                if self.document.current_image().is_some() {
-                    use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
-                    let fields = [FieldDef {
-                        label: "半径 (0.1〜10.0)",
-                        default: "2.0".into(),
-                        integer_only: false,
-                    }];
-                    if let Some(vals) = show_filter_dialog(self.hwnd, "アンシャープマスク", &fields)
-                        && let Some(img) = self.document.current_image()
-                    {
-                        let radius = vals[0].parse::<f64>().unwrap_or(2.0).clamp(0.1, 10.0);
-                        let sel = self.selection.current_rect();
-                        let result = crate::filter::blur::unsharp_mask(img, sel.as_ref(), radius);
-                        self.document.apply_edit(result);
-                        self.process_document_events();
-                    }
-                }
-            }
+            Action::Fill => self.action_fill(),
+            Action::Levels => self.action_levels(),
+            Action::Gamma => self.action_gamma(),
+            Action::BrightnessContrast => self.action_brightness_contrast(),
+            Action::Mosaic => self.action_mosaic(),
+            Action::GaussianBlur => self.action_gaussian_blur(),
+            Action::UnsharpMask => self.action_unsharp_mask(),
 
             // --- フィルタ（パラメータなし） ---
             Action::InvertColors => self.apply_simple_filter(crate::filter::color::invert_colors),
@@ -1481,65 +1671,9 @@ impl AppWindow {
             Action::PFilterRotate90CCW => {
                 self.add_persistent_filter(FilterOperation::Rotate90CCW);
             }
-            Action::PFilterLevels => {
-                use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
-                let fields = [
-                    FieldDef {
-                        label: "下限 (0-255)",
-                        default: "0".into(),
-                        integer_only: true,
-                    },
-                    FieldDef {
-                        label: "上限 (0-255)",
-                        default: "255".into(),
-                        integer_only: true,
-                    },
-                ];
-                if let Some(vals) = show_filter_dialog(self.hwnd, "永続レベル補正", &fields)
-                {
-                    let low = vals[0].parse::<u8>().unwrap_or(0);
-                    let high = vals[1].parse::<u8>().unwrap_or(255);
-                    self.add_persistent_filter(FilterOperation::Levels { low, high });
-                }
-            }
-            Action::PFilterGamma => {
-                use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
-                let fields = [FieldDef {
-                    label: "ガンマ値 (0.1〜10.0)",
-                    default: "1.0".into(),
-                    integer_only: false,
-                }];
-                if let Some(vals) = show_filter_dialog(self.hwnd, "永続ガンマ補正", &fields)
-                {
-                    let value = vals[0].parse::<f64>().unwrap_or(1.0).clamp(0.1, 10.0);
-                    self.add_persistent_filter(FilterOperation::Gamma { value });
-                }
-            }
-            Action::PFilterBrightnessContrast => {
-                use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
-                let fields = [
-                    FieldDef {
-                        label: "明るさ (-128〜128)",
-                        default: "0".into(),
-                        integer_only: false,
-                    },
-                    FieldDef {
-                        label: "コントラスト (-128〜128)",
-                        default: "0".into(),
-                        integer_only: false,
-                    },
-                ];
-                if let Some(vals) =
-                    show_filter_dialog(self.hwnd, "永続明るさとコントラスト", &fields)
-                {
-                    let brightness = vals[0].parse::<i32>().unwrap_or(0).clamp(-128, 128);
-                    let contrast = vals[1].parse::<i32>().unwrap_or(0).clamp(-128, 128);
-                    self.add_persistent_filter(FilterOperation::BrightnessContrast {
-                        brightness,
-                        contrast,
-                    });
-                }
-            }
+            Action::PFilterLevels => self.action_pfilter_levels(),
+            Action::PFilterGamma => self.action_pfilter_gamma(),
+            Action::PFilterBrightnessContrast => self.action_pfilter_brightness_contrast(),
             Action::PFilterGrayscaleSimple => {
                 self.add_persistent_filter(FilterOperation::GrayscaleSimple);
             }
@@ -1552,32 +1686,8 @@ impl AppWindow {
             Action::PFilterSharpenStrong => {
                 self.add_persistent_filter(FilterOperation::SharpenStrong);
             }
-            Action::PFilterGaussianBlur => {
-                use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
-                let fields = [FieldDef {
-                    label: "半径 (0.1〜10.0)",
-                    default: "2.0".into(),
-                    integer_only: false,
-                }];
-                if let Some(vals) = show_filter_dialog(self.hwnd, "永続ガウスぼかし", &fields)
-                {
-                    let radius = vals[0].parse::<f64>().unwrap_or(2.0).clamp(0.1, 10.0);
-                    self.add_persistent_filter(FilterOperation::GaussianBlur { radius });
-                }
-            }
-            Action::PFilterUnsharpMask => {
-                use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
-                let fields = [FieldDef {
-                    label: "半径 (0.1〜10.0)",
-                    default: "2.0".into(),
-                    integer_only: false,
-                }];
-                if let Some(vals) = show_filter_dialog(self.hwnd, "永続アンシャープマスク", &fields)
-                {
-                    let radius = vals[0].parse::<f64>().unwrap_or(2.0).clamp(0.1, 10.0);
-                    self.add_persistent_filter(FilterOperation::UnsharpMask { radius });
-                }
-            }
+            Action::PFilterGaussianBlur => self.action_pfilter_gaussian_blur(),
+            Action::PFilterUnsharpMask => self.action_pfilter_unsharp_mask(),
             Action::PFilterMedianFilter => {
                 self.add_persistent_filter(FilterOperation::MedianFilter);
             }
@@ -1597,22 +1707,7 @@ impl AppWindow {
                     self.show_error_title(&format!("ブックマーク保存失敗: {e}"));
                 }
             }
-            Action::BookmarkLoad => {
-                if !self.guard_unsaved_edit() {
-                    return;
-                }
-                self.selection.deselect();
-                match crate::bookmark::load_bookmark(self.hwnd) {
-                    Ok(Some(data)) => {
-                        if let Err(e) = self.document.load_bookmark_data(data) {
-                            self.show_error_title(&format!("ブックマーク読み込み失敗: {e}"));
-                        }
-                        self.process_document_events();
-                    }
-                    Ok(None) => {} // キャンセル
-                    Err(e) => self.show_error_title(&format!("ブックマーク読み込み失敗: {e}")),
-                }
-            }
+            Action::BookmarkLoad => self.action_bookmark_load(),
             // --- ページ指定ナビゲーション ---
             Action::NavigateToPage => {
                 if !self.guard_unsaved_edit() {
@@ -1651,31 +1746,7 @@ impl AppWindow {
             }
 
             // --- ファイルリスト ---
-            Action::ToggleFileList => {
-                self.file_list_panel.toggle();
-                // パネルが表示状態になったら全同期（非表示中の変更を反映）
-                if self.file_list_panel.is_visible() {
-                    let doc = &self.document;
-                    self.file_list_panel
-                        .update(doc.file_list(), |i| doc.is_cached(i));
-                    if let Some(idx) = doc.file_list().current_index() {
-                        self.file_list_panel.set_selection(idx);
-                    }
-                    // cached_indicesも同期
-                    self.cached_indices.clear();
-                    let files = self.document.file_list().files();
-                    for i in 0..files.len() {
-                        if self.document.is_cached(i) {
-                            self.cached_indices.insert(i);
-                        }
-                    }
-                }
-                // toggle内でWM_SIZEが送られてon_sizeが呼ばれる
-                // 同期再描画でちらつきを防止
-                unsafe {
-                    let _ = UpdateWindow(self.hwnd);
-                }
-            }
+            Action::ToggleFileList => self.action_toggle_file_list(),
 
             // --- ヘルプ ---
             Action::ShowHelp => {
@@ -2021,31 +2092,13 @@ Susieプラグイン (.sph/.spi) で拡張可能";
         false
     }
 
-    /// 未保存の編集がある場合に確認ダイアログを表示する
-    /// trueを返した場合は操作を続行してよい
+    /// 未保存の編集がある場合は破棄して続行する
     fn guard_unsaved_edit(&mut self) -> bool {
-        if !self.document.has_unsaved_edit() {
-            return true;
-        }
-        let msg = "編集中の画像は保存されていません。破棄しますか？\0";
-        let title = "ぐらびゅ3\0";
-        let wide_msg: Vec<u16> = msg.encode_utf16().collect();
-        let wide_title: Vec<u16> = title.encode_utf16().collect();
-        let answer = unsafe {
-            MessageBoxW(
-                Some(self.hwnd),
-                windows::core::PCWSTR(wide_msg.as_ptr()),
-                windows::core::PCWSTR(wide_title.as_ptr()),
-                MB_YESNO | MB_ICONQUESTION,
-            )
-        };
-        if answer == IDYES {
+        if self.document.has_unsaved_edit() {
             self.document.discard_editing_session();
             self.selection.deselect();
-            true
-        } else {
-            false
         }
+        true
     }
 
     fn on_drop_files(&mut self, hdrop: HDROP) {

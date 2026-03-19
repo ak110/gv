@@ -2,6 +2,7 @@
 name = "gv3"
 version = "1.1.1"
 edition = "2024"
+rust-version = "1.87"
 description = "Windows用の軽量画像ビューアー"
 license = "MIT"
 repository = "https://github.com/ak110/gv3"
@@ -61,3 +62,25 @@ codegen-units = 1
 
 [profile.dev.package."*"]
 opt-level = 1
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+cast_lossless = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+return_self_not_must_use = "allow"
+struct_excessive_bools = "allow"
+too_many_lines = "allow"
+wildcard_imports = "allow"
+doc_markdown = "allow"
+needless_pass_by_value = "allow"
+similar_names = "allow"
+unreadable_literal = "allow"
+items_after_statements = "allow"
+many_single_char_names = "allow"

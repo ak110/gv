@@ -11,26 +11,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  rust:
+  test:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
       - uses: jdx/mise-action@v3
       - uses: Swatinem/rust-cache@v2
-      - run: mise run lint-rust
-
-  audit:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: rustsec/audit-check@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-  docs:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: jdx/mise-action@v3
       - run: pnpm install --frozen-lockfile
-      - run: mise run lint-docs
+      - run: mise run test
+
+  cargo-deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: EmbarkStudios/cargo-deny-action@v2
