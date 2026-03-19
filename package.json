@@ -10,7 +10,7 @@
     "prettier:fix": "prettier --write \"**/*.{yml,yaml,json}\""
   },
   "devDependencies": {
-    "markdownlint-cli2": "^0.17",
+    "markdownlint-cli2": "^0.21",
     "prettier": "^3",
     "textlint": "^14",
     "textlint-rule-preset-ja-spacing": "^2",
