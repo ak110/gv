@@ -14,7 +14,7 @@ jobs:
   rust:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: jdx/mise-action@v3
       - uses: Swatinem/rust-cache@v2
       - run: mise run lint-rust
@@ -22,7 +22,7 @@ jobs:
   docs:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: jdx/mise-action@v3
       - run: pnpm install --frozen-lockfile
       - run: mise run lint-docs

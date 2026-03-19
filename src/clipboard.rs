@@ -134,9 +134,28 @@ pub fn paste_image_from_clipboard(hwnd: HWND) -> Result<Option<DecodedImage>> {
             bail!("未対応のDIBビット深度: {bit_count}");
         }
 
+        let bi_size = u32::from_le_bytes(std::ptr::read_unaligned(header as *const [u8; 4]));
+        let bi_compression =
+            u32::from_le_bytes(std::ptr::read_unaligned(header.add(16) as *const [u8; 4]));
+
+        if bi_size < 40 {
+            let _ = GlobalUnlock(hglobal);
+            let _ = CloseClipboard();
+            bail!("DIBヘッダサイズが不正: {bi_size}");
+        }
+
         let bytes_per_pixel = (bit_count / 8) as usize;
         let src_row_stride = (width as usize * bytes_per_pixel).div_ceil(4) * 4;
-        let pixel_offset = 40usize;
+        let pixel_offset = compute_dib_pixel_offset(bi_size, bi_compression);
+
+        // ピクセルデータが収まるか検証
+        let required_size =
+            pixel_offset.saturating_add(src_row_stride.saturating_mul(abs_height as usize));
+        if required_size > data_size {
+            let _ = GlobalUnlock(hglobal);
+            let _ = CloseClipboard();
+            bail!("DIBデータが不正（ピクセルデータ不足）");
+        }
 
         let mut rgba = vec![0u8; width as usize * abs_height as usize * 4];
 
@@ -167,5 +186,55 @@ pub fn paste_image_from_clipboard(hwnd: HWND) -> Result<Option<DecodedImage>> {
             width: width as u32,
             height: abs_height,
         }))
+    }
+}
+
+/// DIBヘッダのbiSizeとbiCompressionからピクセルデータの開始オフセットを計算する。
+/// BI_BITFIELDSやBI_ALPHABITFIELDSの場合、カラーマスクがヘッダ直後に付加される。
+fn compute_dib_pixel_offset(bi_size: u32, bi_compression: u32) -> usize {
+    const BI_BITFIELDS: u32 = 3;
+    const BI_ALPHABITFIELDS: u32 = 6;
+
+    if bi_size == 40 {
+        match bi_compression {
+            BI_BITFIELDS => 40 + 12,      // 3つのDWORDカラーマスク
+            BI_ALPHABITFIELDS => 40 + 16, // 4つのDWORDカラーマスク
+            _ => 40,
+        }
+    } else {
+        // BITMAPV4HEADER(108), BITMAPV5HEADER(124) 等はヘッダにマスクを含む
+        bi_size as usize
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_compute_dib_pixel_offset_bi_rgb() {
+        assert_eq!(compute_dib_pixel_offset(40, 0), 40);
+    }
+
+    #[test]
+    fn test_compute_dib_pixel_offset_bi_bitfields() {
+        assert_eq!(compute_dib_pixel_offset(40, 3), 52);
+    }
+
+    #[test]
+    fn test_compute_dib_pixel_offset_bi_alphabitfields() {
+        assert_eq!(compute_dib_pixel_offset(40, 6), 56);
+    }
+
+    #[test]
+    fn test_compute_dib_pixel_offset_v4_header() {
+        assert_eq!(compute_dib_pixel_offset(108, 0), 108);
+        assert_eq!(compute_dib_pixel_offset(108, 3), 108);
+    }
+
+    #[test]
+    fn test_compute_dib_pixel_offset_v5_header() {
+        assert_eq!(compute_dib_pixel_offset(124, 0), 124);
+        assert_eq!(compute_dib_pixel_offset(124, 3), 124);
     }
 }
