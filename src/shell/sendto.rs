@@ -12,11 +12,17 @@ use windows::core::Interface;
 
 use crate::util::to_wide;
 
-const LNK_NAME: &str = "ぐらびゅ3.lnk";
+const LNK_NAME: &str = "ぐらびゅ.lnk";
+const OLD_LNK_NAME: &str = "ぐらびゅ3.lnk";
 
 /// 「送る」にショートカットを登録する
 pub fn register() -> Result<()> {
     let sendto_dir = get_sendto_path()?;
+    // 旧ショートカットの削除
+    let old_lnk = sendto_dir.join(OLD_LNK_NAME);
+    if old_lnk.exists() {
+        let _ = std::fs::remove_file(&old_lnk);
+    }
     let lnk_path = sendto_dir.join(LNK_NAME);
     let exe = std::env::current_exe().context("exe パス取得失敗")?;
 
@@ -30,7 +36,7 @@ pub fn register() -> Result<()> {
         shell_link.SetPath(windows::core::PCWSTR(wide_exe.as_ptr()))?;
 
         // 説明
-        let wide_desc = to_wide("ぐらびゅ3で開く");
+        let wide_desc = to_wide("ぐらびゅで開く");
         shell_link.SetDescription(windows::core::PCWSTR(wide_desc.as_ptr()))?;
 
         // IPersistFileで保存
@@ -45,6 +51,11 @@ pub fn register() -> Result<()> {
 /// 「送る」からショートカットを削除する
 pub fn unregister() -> Result<()> {
     let sendto_dir = get_sendto_path()?;
+    // 旧ショートカットも削除
+    let old_lnk = sendto_dir.join(OLD_LNK_NAME);
+    if old_lnk.exists() {
+        let _ = std::fs::remove_file(&old_lnk);
+    }
     let lnk_path = sendto_dir.join(LNK_NAME);
     if lnk_path.exists() {
         std::fs::remove_file(&lnk_path)

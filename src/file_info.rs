@@ -166,7 +166,7 @@ mod tests {
 
     #[test]
     fn from_path_valid_file() {
-        let dir = std::env::temp_dir().join("gv3_test_file_info");
+        let dir = std::env::temp_dir().join("gv_test_file_info");
         let _ = std::fs::create_dir_all(&dir);
         let file_path = dir.join("test.png");
         let mut f = std::fs::File::create(&file_path).unwrap();

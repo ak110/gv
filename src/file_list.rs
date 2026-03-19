@@ -689,7 +689,7 @@ mod tests {
 
     #[test]
     fn populate_filters_by_extension() {
-        let dir = std::env::temp_dir().join("gv3_test_fl_populate");
+        let dir = std::env::temp_dir().join("gv_test_fl_populate");
         create_test_files(&dir, &["a.jpg", "b.png", "c.txt", "d.bmp", "readme.md"]);
 
         let mut fl = FileList::new(test_registry());
@@ -701,7 +701,7 @@ mod tests {
 
     #[test]
     fn natural_sort_order() {
-        let dir = std::env::temp_dir().join("gv3_test_fl_natural");
+        let dir = std::env::temp_dir().join("gv_test_fl_natural");
         create_test_files(&dir, &["img2.png", "img10.png", "img1.png"]);
 
         let mut fl = FileList::new(test_registry());
@@ -715,7 +715,7 @@ mod tests {
 
     #[test]
     fn natural_sort_case_insensitive() {
-        let dir = std::env::temp_dir().join("gv3_test_fl_natural_ci");
+        let dir = std::env::temp_dir().join("gv_test_fl_natural_ci");
         create_test_files(&dir, &["IMG1.png", "img2.png", "Img10.png"]);
 
         let mut fl = FileList::new(test_registry());
@@ -729,7 +729,7 @@ mod tests {
 
     #[test]
     fn navigate_relative_wraps_around() {
-        let dir = std::env::temp_dir().join("gv3_test_fl_nav");
+        let dir = std::env::temp_dir().join("gv_test_fl_nav");
         create_test_files(&dir, &["a.png", "b.png", "c.png"]);
 
         let mut fl = FileList::new(test_registry());
@@ -754,7 +754,7 @@ mod tests {
 
     #[test]
     fn navigate_first_last() {
-        let dir = std::env::temp_dir().join("gv3_test_fl_firstlast");
+        let dir = std::env::temp_dir().join("gv_test_fl_firstlast");
         create_test_files(&dir, &["a.png", "b.png", "c.png"]);
 
         let mut fl = FileList::new(test_registry());
@@ -772,7 +772,7 @@ mod tests {
 
     #[test]
     fn set_current_by_path_found() {
-        let dir = std::env::temp_dir().join("gv3_test_fl_setpath");
+        let dir = std::env::temp_dir().join("gv_test_fl_setpath");
         create_test_files(&dir, &["a.png", "b.png"]);
 
         let mut fl = FileList::new(test_registry());
@@ -786,7 +786,7 @@ mod tests {
 
     #[test]
     fn sort_preserves_current_position() {
-        let dir = std::env::temp_dir().join("gv3_test_fl_sortpreserve");
+        let dir = std::env::temp_dir().join("gv_test_fl_sortpreserve");
         create_test_files(&dir, &["c.png", "a.png", "b.png"]);
 
         let mut fl = FileList::new(test_registry());
@@ -813,7 +813,7 @@ mod tests {
 
     #[test]
     fn mark_and_unmark() {
-        let dir = std::env::temp_dir().join("gv3_test_fl_mark");
+        let dir = std::env::temp_dir().join("gv_test_fl_mark");
         create_test_files(&dir, &["a.png", "b.png", "c.png"]);
 
         let mut fl = FileList::new(test_registry());
@@ -835,7 +835,7 @@ mod tests {
 
     #[test]
     fn invert_all_marks() {
-        let dir = std::env::temp_dir().join("gv3_test_fl_invert");
+        let dir = std::env::temp_dir().join("gv_test_fl_invert");
         create_test_files(&dir, &["a.png", "b.png", "c.png"]);
 
         let mut fl = FileList::new(test_registry());
@@ -853,7 +853,7 @@ mod tests {
 
     #[test]
     fn invert_marks_to_here() {
-        let dir = std::env::temp_dir().join("gv3_test_fl_invert_here");
+        let dir = std::env::temp_dir().join("gv_test_fl_invert_here");
         create_test_files(&dir, &["a.png", "b.png", "c.png"]);
 
         let mut fl = FileList::new(test_registry());
@@ -871,7 +871,7 @@ mod tests {
 
     #[test]
     fn remove_at_adjusts_current_index() {
-        let dir = std::env::temp_dir().join("gv3_test_fl_removeat");
+        let dir = std::env::temp_dir().join("gv_test_fl_removeat");
         create_test_files(&dir, &["a.png", "b.png", "c.png"]);
 
         let mut fl = FileList::new(test_registry());
@@ -893,7 +893,7 @@ mod tests {
 
     #[test]
     fn remove_marked() {
-        let dir = std::env::temp_dir().join("gv3_test_fl_removemarked");
+        let dir = std::env::temp_dir().join("gv_test_fl_removemarked");
         create_test_files(&dir, &["a.png", "b.png", "c.png"]);
 
         let mut fl = FileList::new(test_registry());
@@ -913,7 +913,7 @@ mod tests {
 
     #[test]
     fn navigate_marks() {
-        let dir = std::env::temp_dir().join("gv3_test_fl_navmark");
+        let dir = std::env::temp_dir().join("gv_test_fl_navmark");
         create_test_files(&dir, &["a.png", "b.png", "c.png", "d.png"]);
 
         let mut fl = FileList::new(test_registry());
@@ -942,7 +942,7 @@ mod tests {
 
     #[test]
     fn sorted_navigate_forward_backward() {
-        let dir = std::env::temp_dir().join("gv3_test_fl_sortnav");
+        let dir = std::env::temp_dir().join("gv_test_fl_sortnav");
         // 自然順: a.png, b.png, c.png
         // サイズ順は同じ（全てdummy 5バイト）なので名前順で確認
         create_test_files(&dir, &["c.png", "a.png", "b.png"]);
@@ -973,7 +973,7 @@ mod tests {
 
     #[test]
     fn navigate_marks_none_marked() {
-        let dir = std::env::temp_dir().join("gv3_test_fl_navmark_none");
+        let dir = std::env::temp_dir().join("gv_test_fl_navmark_none");
         create_test_files(&dir, &["a.png", "b.png"]);
 
         let mut fl = FileList::new(test_registry());
@@ -989,7 +989,7 @@ mod tests {
 
     #[test]
     fn populate_single_creates_one_entry() {
-        let dir = std::env::temp_dir().join("gv3_test_fl_single");
+        let dir = std::env::temp_dir().join("gv_test_fl_single");
         create_test_files(&dir, &["target.png", "other.png", "another.jpg"]);
 
         let mut fl = FileList::new(test_registry());
@@ -1053,7 +1053,7 @@ mod tests {
 
     #[test]
     fn shuffle_all_preserves_elements_and_position() {
-        let dir = std::env::temp_dir().join("gv3_test_fl_shuffle_all");
+        let dir = std::env::temp_dir().join("gv_test_fl_shuffle_all");
         create_test_files(&dir, &["a.png", "b.png", "c.png", "d.png", "e.png"]);
 
         let mut fl = FileList::new(test_registry());
@@ -1140,7 +1140,7 @@ mod tests {
 
     #[test]
     fn sorted_navigate_single_element() {
-        let dir = std::env::temp_dir().join("gv3_test_fl_sortnav_single");
+        let dir = std::env::temp_dir().join("gv_test_fl_sortnav_single");
         create_test_files(&dir, &["only.png"]);
 
         let mut fl = FileList::new(test_registry());
@@ -1272,8 +1272,8 @@ mod tests {
 
     #[test]
     fn update_marked_paths_moves_to_dest_dir() {
-        let src_dir = std::env::temp_dir().join("gv3_test_fl_update_marked_src");
-        let dest_dir = std::env::temp_dir().join("gv3_test_fl_update_marked_dest");
+        let src_dir = std::env::temp_dir().join("gv_test_fl_update_marked_src");
+        let dest_dir = std::env::temp_dir().join("gv_test_fl_update_marked_dest");
         create_test_files(&src_dir, &["a.png", "b.png", "c.png"]);
         let _ = std::fs::create_dir_all(&dest_dir);
         // 移動先にもファイルを作成（from_pathが成功するように）

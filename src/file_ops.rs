@@ -261,7 +261,7 @@ pub fn save_file_dialog(
     }
 }
 
-/// ブックマーク読み込みダイアログ（.gv3bmフィルタ + bookmarksフォルダ初期表示）
+/// ブックマーク読み込みダイアログ（.gvbmフィルタ + bookmarksフォルダ初期表示）
 pub fn open_bookmark_dialog(hwnd: HWND) -> Result<Option<PathBuf>> {
     unsafe {
         let dialog: IFileOpenDialog = windows::Win32::System::Com::CoCreateInstance(
@@ -282,8 +282,8 @@ pub fn open_bookmark_dialog(hwnd: HWND) -> Result<Option<PathBuf>> {
         }
 
         // フィルタ: ブックマーク + すべてのファイル
-        let filter_name: Vec<u16> = "ぐらびゅ3ブックマーク\0".encode_utf16().collect();
-        let filter_spec: Vec<u16> = "*.gv3bm\0".encode_utf16().collect();
+        let filter_name: Vec<u16> = "ぐらびゅブックマーク\0".encode_utf16().collect();
+        let filter_spec: Vec<u16> = "*.gvbm;*.gv3bm\0".encode_utf16().collect();
         let all_name: Vec<u16> = "すべてのファイル\0".encode_utf16().collect();
         let all_spec: Vec<u16> = "*.*\0".encode_utf16().collect();
 

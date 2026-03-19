@@ -1,16 +1,16 @@
 //! 起動時の孤立tempフォルダクリーンアップ
 //!
-//! プロセス強制終了等で残った gv3_archive_* ディレクトリを検出・削除する。
+//! プロセス強制終了等で残った gv_archive_* ディレクトリを検出・削除する。
 
 use windows::Win32::Foundation::CloseHandle;
 use windows::Win32::System::Threading::OpenProcess;
 use windows::Win32::System::Threading::PROCESS_QUERY_LIMITED_INFORMATION;
 
-/// %TEMP% 配下の孤立した gv3_archive_* ディレクトリを削除する
+/// %TEMP% 配下の孤立した gv_archive_* / gv3_archive_* ディレクトリを削除する
 ///
-/// ディレクトリ名の形式: gv3_archive_{pid}_{timestamp_ms}
+/// ディレクトリ名の形式: gv_archive_{pid}_{timestamp_ms}
 /// - 自プロセスのPIDにマッチ → スキップ（自分のtempは触らない）
-/// - PIDのプロセスが生存中 → スキップ（他のgv3インスタンスかもしれない）
+/// - PIDのプロセスが生存中 → スキップ（他のgvインスタンスかもしれない）
 /// - PIDのプロセスが死亡済み → 削除（孤立temp）
 pub fn cleanup_orphaned_temp_dirs() {
     let temp_dir = std::env::temp_dir();
@@ -25,11 +25,12 @@ pub fn cleanup_orphaned_temp_dirs() {
         let Some(name_str) = name.to_str() else {
             continue;
         };
-        if !name_str.starts_with("gv3_archive_") {
+        // 新旧両方のプレフィクスを検索対象にする
+        if !name_str.starts_with("gv_archive_") && !name_str.starts_with("gv3_archive_") {
             continue;
         }
 
-        // PID抽出: gv3_archive_{pid}_{ms}
+        // PID抽出: gv_archive_{pid}_{ms} or gv3_archive_{pid}_{ms}
         let Some(pid) = parse_pid_from_dir_name(name_str) else {
             continue;
         };
@@ -50,9 +51,11 @@ pub fn cleanup_orphaned_temp_dirs() {
 }
 
 /// ディレクトリ名からPIDを抽出する
-/// 形式: gv3_archive_{pid}_{timestamp_ms}
+/// 形式: gv_archive_{pid}_{timestamp_ms} or gv3_archive_{pid}_{timestamp_ms}
 fn parse_pid_from_dir_name(name: &str) -> Option<u32> {
-    let rest = name.strip_prefix("gv3_archive_")?;
+    let rest = name
+        .strip_prefix("gv_archive_")
+        .or_else(|| name.strip_prefix("gv3_archive_"))?;
     let pid_str = rest.split('_').next()?;
     pid_str.parse().ok()
 }
@@ -77,6 +80,15 @@ mod tests {
     #[test]
     fn parse_pid_valid() {
         assert_eq!(
+            parse_pid_from_dir_name("gv_archive_12345_1700000000000"),
+            Some(12345)
+        );
+    }
+
+    #[test]
+    fn parse_pid_legacy_prefix() {
+        // 旧プレフィクス gv3_archive_ もサポート
+        assert_eq!(
             parse_pid_from_dir_name("gv3_archive_12345_1700000000000"),
             Some(12345)
         );
@@ -84,8 +96,7 @@ mod tests {
 
     #[test]
     fn parse_pid_no_timestamp() {
-        // タイムスタンプ部分がなくてもPIDは取れる
-        assert_eq!(parse_pid_from_dir_name("gv3_archive_99"), Some(99));
+        assert_eq!(parse_pid_from_dir_name("gv_archive_99"), Some(99));
     }
 
     #[test]
@@ -95,7 +106,7 @@ mod tests {
 
     #[test]
     fn parse_pid_non_numeric() {
-        assert_eq!(parse_pid_from_dir_name("gv3_archive_abc_100"), None);
+        assert_eq!(parse_pid_from_dir_name("gv_archive_abc_100"), None);
     }
 
     #[test]

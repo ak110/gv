@@ -105,7 +105,7 @@ mod tests {
     fn nonexistent_rar_returns_error() {
         let reg = Arc::new(ExtensionRegistry::new());
         let handler = RarHandler::new(reg);
-        let dir = std::env::temp_dir().join("gv3_test_rar_noexist");
+        let dir = std::env::temp_dir().join("gv_test_rar_noexist");
         let _ = std::fs::create_dir_all(&dir);
         let result: Result<Vec<super::ExtractedEntry>> =
             handler.extract_images(Path::new("nonexistent.rar"), &dir);

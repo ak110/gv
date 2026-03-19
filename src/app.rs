@@ -66,7 +66,7 @@ pub struct AppWindow {
 impl AppWindow {
     /// AppWindowを作成しウィンドウを表示する
     pub fn create(config: Config, initial_files: &[PathBuf]) -> Result<Box<Self>> {
-        let class_name = windows::core::w!("gv3_main");
+        let class_name = windows::core::w!("gv_main");
 
         // アイコンをリソースからロード（リソースID 1）
         let icon = unsafe {
@@ -78,7 +78,7 @@ impl AppWindow {
         };
         window::register_window_class_with_icon(class_name, Some(Self::wnd_proc), icon)?;
 
-        let hwnd = window::create_window(class_name, windows::core::w!("ぐらびゅ3"), 1024, 768)?;
+        let hwnd = window::create_window(class_name, windows::core::w!("ぐらびゅ"), 1024, 768)?;
 
         // ウィンドウにアイコンを設定（タスクバー表示用）
         if let Some(ref icon) = icon {
@@ -141,7 +141,7 @@ impl AppWindow {
         // キーバインド設定の読み込み
         let key_config_path = std::env::current_exe()
             .ok()
-            .and_then(|p| p.parent().map(|d| d.join("gv3.keys.toml")));
+            .and_then(|p| p.parent().map(|d| d.join("ぐらびゅ.keys.toml")));
         let key_config = KeyConfig::load(key_config_path.as_deref());
 
         // メニューバー構築（初期状態は非表示）
@@ -331,9 +331,9 @@ impl AppWindow {
             } else {
                 String::new()
             };
-            format!("{display}{page_info}{sel_info} - ぐらびゅ3\0")
+            format!("{display}{page_info}{sel_info} - ぐらびゅ\0")
         } else {
-            "ぐらびゅ3\0".to_string()
+            "ぐらびゅ\0".to_string()
         };
 
         let wide: Vec<u16> = title.encode_utf16().collect();
@@ -344,7 +344,7 @@ impl AppWindow {
 
     /// タイトルバーにエラーメッセージを表示する
     fn show_error_title(&self, msg: &str) {
-        let title = format!("ぐらびゅ3 - エラー: {msg}\0");
+        let title = format!("ぐらびゅ - エラー: {msg}\0");
         let wide: Vec<u16> = title.encode_utf16().collect();
         unsafe {
             let _ = SetWindowTextW(self.hwnd, windows::core::PCWSTR(wide.as_ptr()));
@@ -1002,7 +1002,7 @@ impl AppWindow {
         match crate::clipboard::paste_image_from_clipboard(self.hwnd) {
             Ok(Some(image)) => {
                 // 一時ファイルに保存してから開く
-                let temp_path = std::env::temp_dir().join("gv3_clipboard.png");
+                let temp_path = std::env::temp_dir().join("gv_clipboard.png");
                 if let Some(img_buf) =
                     image::RgbaImage::from_raw(image.width, image.height, image.data.clone())
                     && img_buf.save(&temp_path).is_ok()
@@ -1848,7 +1848,7 @@ impl AppWindow {
     /// ヘルプを表示する
     fn show_help(&self) {
         let text = "\
-ぐらびゅ3 - Windows用画像ビューアー
+ぐらびゅ - Windows用画像ビューアー
 
 【主要キーバインド】
 ← / →              前後の画像に移動
@@ -1875,7 +1875,7 @@ Susieプラグイン (.sph/.spi) で拡張可能";
 
         info_dialog::show_info_dialog(
             self.hwnd,
-            "ぐらびゅ3 ヘルプ",
+            "ぐらびゅ ヘルプ",
             text,
             self.monospace_font.hfont(),
         );
@@ -2131,7 +2131,7 @@ Susieプラグイン (.sph/.spi) で拡張可能";
         } else if paths.len() > 1 {
             // 混在: 通知して最初のファイルのみ開く
             let msg = "複数ファイルを開く場合はアーカイブ/PDFのみ対応しています\0";
-            let title = "ぐらびゅ3\0";
+            let title = "ぐらびゅ\0";
             let wide_msg: Vec<u16> = msg.encode_utf16().collect();
             let wide_title: Vec<u16> = title.encode_utf16().collect();
             unsafe {

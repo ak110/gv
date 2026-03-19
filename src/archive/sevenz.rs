@@ -87,7 +87,7 @@ mod tests {
     fn nonexistent_7z_returns_error() {
         let reg = Arc::new(ExtensionRegistry::new());
         let handler = SevenZHandler::new(reg);
-        let dir = std::env::temp_dir().join("gv3_test_7z_noexist");
+        let dir = std::env::temp_dir().join("gv_test_7z_noexist");
         let _ = std::fs::create_dir_all(&dir);
         let result: Result<Vec<super::ExtractedEntry>> =
             handler.extract_images(Path::new("nonexistent.7z"), &dir);

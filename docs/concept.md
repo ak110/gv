@@ -1,8 +1,8 @@
-# ぐらびゅ3 プロジェクトコンセプト
+# ぐらびゅ プロジェクトコンセプト
 
 ## 概要
 
-**ぐらびゅ3** は、Windows用の軽量な画像ビューアーである。
+**ぐらびゅ** は、Windows用の軽量な画像ビューアーである。
 
 ## 設計方針
 
@@ -65,5 +65,5 @@ mise run lint
 
 REM リリースビルド
 mise run build-release
-REM → target/release/gv3.exe
+REM → target/release/ぐらびゅ.exe
 ```

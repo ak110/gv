@@ -1,7 +1,7 @@
-# ぐらびゅ3
+# ぐらびゅ
 
-[![CI](https://github.com/ak110/gv3/actions/workflows/ci.yml/badge.svg)](https://github.com/ak110/gv3/actions/workflows/ci.yml)
-[![Release](https://github.com/ak110/gv3/actions/workflows/release.yml/badge.svg)](https://github.com/ak110/gv3/actions/workflows/release.yml)
+[![CI](https://github.com/ak110/gv/actions/workflows/ci.yml/badge.svg)](https://github.com/ak110/gv/actions/workflows/ci.yml)
+[![Release](https://github.com/ak110/gv/actions/workflows/release.yml/badge.svg)](https://github.com/ak110/gv/actions/workflows/release.yml)
 
 Windows用画像ビューアー。
 
@@ -11,13 +11,13 @@ Windows用画像ビューアー。
 
 ## インストール
 
-[Releases](https://github.com/ak110/gv3/releases) からZIPをダウンロードし、任意のフォルダに展開してください。
+[Releases](https://github.com/ak110/gv/releases) からZIPをダウンロードし、任意のフォルダに展開してください。
 
 ## 使い方
 
 ```cmd
 REM 画像ファイルを指定して起動
-gv3.exe image.jpg
+ぐらびゅ.exe image.jpg
 
 REM ファイル関連付けやD&Dでも起動可能
 ```
@@ -43,17 +43,17 @@ REM ファイル関連付けやD&Dでも起動可能
 
 ### 設定ファイル
 
-`gv3.toml` と `gv3.keys.toml` をexeと同じディレクトリに配置することで設定をカスタマイズできます。
-同梱の `gv3.default.toml` / `gv3.keys.default.toml` をコピーしてリネームしてお使いください。
+`ぐらびゅ.toml` と `ぐらびゅ.keys.toml` をexeと同じディレクトリに配置することで設定をカスタマイズできます。
+同梱の `ぐらびゅ.default.toml` / `ぐらびゅ.keys.default.toml` をコピーしてリネームしてお使いください。
 
 ### シェル統合
 
 ```cmd
 REM ファイル関連付け・コンテキストメニュー・「送る」を一括登録
-gv3.exe --register
+ぐらびゅ.exe --register
 
 REM 一括解除
-gv3.exe --unregister
+ぐらびゅ.exe --unregister
 ```
 
 ## 対応フォーマット
@@ -76,7 +76,7 @@ ZIP / cbz, RAR / cbr, 7z
 実行ファイルと同じディレクトリの `spi/` フォルダにプラグインDLLを配置すると自動検出されます。
 
 ```text
-gv3.exe
+ぐらびゅ.exe
 spi/
   ifXXX.sph    ← 画像プラグイン
   axXXX.spi    ← アーカイブプラグイン

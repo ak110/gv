@@ -5,8 +5,9 @@ use std::sync::{Arc, RwLock};
 
 use anyhow::{Context as _, Result};
 use crossbeam_channel::Sender;
+use rayon::prelude::*;
 
-use crate::archive::ArchiveManager;
+use crate::archive::{ArchiveImageEntry, ArchiveManager};
 use crate::editing::EditingSession;
 use crate::extension_registry::ExtensionRegistry;
 use crate::file_info::FileSource;
@@ -47,6 +48,106 @@ pub enum DocumentEvent {
     },
     /// エラー通知
     Error(String),
+}
+
+/// コンテナ（ZIP/PDF/RAR/7z）の並列読み込み結果
+enum ContainerResult {
+    Pdf {
+        path: PathBuf,
+        page_count: u32,
+    },
+    Zip {
+        path: PathBuf,
+        buffer: ZipBuffer,
+        entries: Vec<ArchiveImageEntry>,
+    },
+    TempExtracted {
+        path: PathBuf,
+        temp_dir: PathBuf,
+        entries: Vec<(PathBuf, String)>,
+    },
+    Error {
+        path: PathBuf,
+        error: String,
+    },
+}
+
+/// 単一コンテナを処理する（rayon workerから呼ばれる）
+fn process_single_container(path: &Path, archive_manager: &ArchiveManager) -> ContainerResult {
+    if Document::is_pdf(path) {
+        match crate::pdf_renderer::get_pdf_page_count_safe(path) {
+            Ok(page_count) => ContainerResult::Pdf {
+                path: path.to_path_buf(),
+                page_count,
+            },
+            Err(e) => ContainerResult::Error {
+                path: path.to_path_buf(),
+                error: format!("{e:#}"),
+            },
+        }
+    } else if archive_manager.supports_on_demand(path) {
+        // ZIP: mmapで読み込み
+        let buffer =
+            if let Ok(mmap) = File::open(path).and_then(|f| unsafe { memmap2::Mmap::map(&f) }) {
+                ZipBuffer::Mmap(mmap)
+            } else {
+                match std::fs::read(path) {
+                    Ok(data) => ZipBuffer::Memory(data),
+                    Err(e) => {
+                        return ContainerResult::Error {
+                            path: path.to_path_buf(),
+                            error: format!("アーカイブ読み込み失敗: {e}"),
+                        };
+                    }
+                }
+            };
+        match archive_manager.list_images_from_buffer(buffer.as_ref(), path) {
+            Ok(entries) => ContainerResult::Zip {
+                path: path.to_path_buf(),
+                buffer,
+                entries,
+            },
+            Err(e) => ContainerResult::Error {
+                path: path.to_path_buf(),
+                error: format!("{e:#}"),
+            },
+        }
+    } else {
+        // RAR/7z/Susie: temp展開
+        let temp_dir = std::env::temp_dir().join(format!(
+            "gv_archive_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock before UNIX epoch")
+                .as_millis()
+        ));
+        if let Err(e) = std::fs::create_dir_all(&temp_dir) {
+            return ContainerResult::Error {
+                path: path.to_path_buf(),
+                error: format!("一時ディレクトリ作成失敗: {e}"),
+            };
+        }
+        match archive_manager.extract_images(path, &temp_dir) {
+            Ok(entries) => {
+                if entries.is_empty() {
+                    let _ = std::fs::remove_dir_all(&temp_dir);
+                }
+                ContainerResult::TempExtracted {
+                    path: path.to_path_buf(),
+                    temp_dir,
+                    entries,
+                }
+            }
+            Err(e) => {
+                let _ = std::fs::remove_dir_all(&temp_dir);
+                ContainerResult::Error {
+                    path: path.to_path_buf(),
+                    error: format!("{e:#}"),
+                }
+            }
+        }
+    }
 }
 
 /// 画像・ファイルリスト・状態管理（モデル層）
@@ -292,114 +393,127 @@ impl Document {
     }
 
     /// 複数コンテナ（アーカイブ/PDF混在）をまとめて開く
+    /// I/Oバウンドな読み込み処理を並列化し、結果を直列で統合する
     pub fn open_containers(&mut self, paths: &[PathBuf]) -> Result<()> {
         self.cleanup_archive_temp();
         self.invalidate_cache();
         self.file_list.clear();
 
-        let mut all_empty = true;
-        for path in paths {
-            if Self::is_pdf(path) {
-                // PDFページを追加
-                let page_count = crate::pdf_renderer::get_pdf_page_count_safe(path)?;
-                if page_count == 0 {
-                    continue;
-                }
-                all_empty = false;
-                for i in 0..page_count {
-                    let info = crate::file_info::FileInfo {
-                        path: path.clone(),
-                        source: FileSource::PdfPage {
-                            pdf_path: path.clone(),
-                            page_index: i,
-                        },
-                        file_name: format!("Page {:03}", i + 1),
-                        file_size: 0,
-                        modified: std::time::SystemTime::now(),
-                        marked: false,
-                        load_failed: false,
-                    };
-                    self.file_list.push(info);
-                }
-                self.current_containers.push(path.clone());
-            } else if self.archive_manager.supports_on_demand(path) {
-                // オンデマンド（ZIP）: mmapで読み込み（OSがページフォルト駆動で必要部分のみロード）
-                let buffer = if let Ok(mmap) =
-                    File::open(path).and_then(|f| unsafe { memmap2::Mmap::map(&f) })
-                {
-                    ZipBuffer::Mmap(mmap)
-                } else {
-                    // mmapフォールバック: ヒープに読み込み
-                    let data = std::fs::read(path)
-                        .with_context(|| format!("アーカイブ読み込み失敗: {}", path.display()))?;
-                    ZipBuffer::Memory(data)
-                };
-                let entries = self
-                    .archive_manager
-                    .list_images_from_buffer(buffer.as_ref(), path)?;
-                if entries.is_empty() {
-                    continue;
-                }
-                all_empty = false;
-                for entry in &entries {
-                    let info = crate::file_info::FileInfo {
-                        path: path.clone(), // アーカイブパス自体（PDFと同じパターン）
-                        source: FileSource::ArchiveEntry {
-                            archive: path.clone(),
-                            entry: entry.entry_name.clone(),
-                            on_demand: true,
-                        },
-                        file_name: entry.file_name.clone(),
-                        file_size: entry.file_size,
-                        modified: std::time::SystemTime::now(),
-                        marked: false,
-                        load_failed: false,
-                    };
-                    self.file_list.push(info);
-                }
-                self.zip_buffers
-                    .write()
-                    .expect("zip_buffers lock poisoned")
-                    .insert(path.clone(), buffer);
-                self.current_containers.push(path.clone());
-            } else {
-                // 非オンデマンド（RAR/7z/Susie）: 既存のtemp展開ロジック
-                let temp_dir = std::env::temp_dir().join(format!(
-                    "gv3_archive_{}_{}",
-                    std::process::id(),
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .expect("system clock before UNIX epoch")
-                        .as_millis()
-                ));
-                std::fs::create_dir_all(&temp_dir)?;
+        // フェーズ1: 並列I/O（rayon ThreadPool、4スレッド）
+        let archive_manager = &self.archive_manager;
+        let results: Vec<ContainerResult> = if paths.len() <= 1 {
+            // 単一コンテナは直列処理（スレッドプール生成コスト回避）
+            paths
+                .iter()
+                .map(|path| process_single_container(path, archive_manager))
+                .collect()
+        } else {
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(4)
+                .build()
+                .context("スレッドプール作成失敗")?;
+            pool.install(|| {
+                paths
+                    .par_iter()
+                    .map(|path| process_single_container(path, archive_manager))
+                    .collect()
+            })
+        };
 
-                let entries = self.archive_manager.extract_images(path, &temp_dir)?;
-                if entries.is_empty() {
-                    let _ = std::fs::remove_dir_all(&temp_dir);
-                    continue;
+        // フェーズ2: 結果統合（直列）
+        let mut errors: Vec<String> = Vec::new();
+        for result in results {
+            match result {
+                ContainerResult::Error { path, error } => {
+                    errors.push(format!("{}: {error}", path.display()));
                 }
-
-                all_empty = false;
-                self.archive_temp_dirs.push(temp_dir);
-                self.current_containers.push(path.clone());
-
-                for (temp_path, entry_name) in &entries {
-                    if let Ok(mut info) = crate::file_info::FileInfo::from_path(temp_path) {
-                        info.source = FileSource::ArchiveEntry {
-                            archive: path.clone(),
-                            entry: entry_name.clone(),
-                            on_demand: false,
+                ContainerResult::Pdf { path, page_count } => {
+                    if page_count == 0 {
+                        continue;
+                    }
+                    for i in 0..page_count {
+                        let info = crate::file_info::FileInfo {
+                            path: path.clone(),
+                            source: FileSource::PdfPage {
+                                pdf_path: path.clone(),
+                                page_index: i,
+                            },
+                            file_name: format!("Page {:03}", i + 1),
+                            file_size: 0,
+                            modified: std::time::SystemTime::now(),
+                            marked: false,
+                            load_failed: false,
                         };
-                        info.file_name = crate::archive::extract_filename(entry_name).to_string();
                         self.file_list.push(info);
+                    }
+                    self.current_containers.push(path);
+                }
+                ContainerResult::Zip {
+                    path,
+                    buffer,
+                    entries,
+                } => {
+                    if entries.is_empty() {
+                        continue;
+                    }
+                    for entry in &entries {
+                        let info = crate::file_info::FileInfo {
+                            path: path.clone(),
+                            source: FileSource::ArchiveEntry {
+                                archive: path.clone(),
+                                entry: entry.entry_name.clone(),
+                                on_demand: true,
+                            },
+                            file_name: entry.file_name.clone(),
+                            file_size: entry.file_size,
+                            modified: std::time::SystemTime::now(),
+                            marked: false,
+                            load_failed: false,
+                        };
+                        self.file_list.push(info);
+                    }
+                    self.zip_buffers
+                        .write()
+                        .expect("zip_buffers lock poisoned")
+                        .insert(path.clone(), buffer);
+                    self.current_containers.push(path);
+                }
+                ContainerResult::TempExtracted {
+                    path,
+                    temp_dir,
+                    entries,
+                } => {
+                    if entries.is_empty() {
+                        continue;
+                    }
+                    self.archive_temp_dirs.push(temp_dir);
+                    self.current_containers.push(path.clone());
+                    for (temp_path, entry_name) in &entries {
+                        if let Ok(mut info) = crate::file_info::FileInfo::from_path(temp_path) {
+                            info.source = FileSource::ArchiveEntry {
+                                archive: path.clone(),
+                                entry: entry_name.clone(),
+                                on_demand: false,
+                            };
+                            info.file_name =
+                                crate::archive::extract_filename(entry_name).to_string();
+                            self.file_list.push(info);
+                        }
                     }
                 }
             }
         }
 
-        if all_empty {
-            anyhow::bail!("コンテナ内に画像ファイルがありません");
+        // エラー処理: 部分成功を許容、全失敗のみエラー返却
+        if self.file_list.len() == 0 {
+            if errors.is_empty() {
+                anyhow::bail!("コンテナ内に画像ファイルがありません");
+            }
+            anyhow::bail!("全てのコンテナの読み込みに失敗:\n{}", errors.join("\n"));
+        }
+        if !errors.is_empty() {
+            let msg = format!("{}件のコンテナを開けませんでした", errors.len());
+            let _ = self.event_sender.send(DocumentEvent::Error(msg));
         }
 
         self.file_list.sort_current();
@@ -950,7 +1064,7 @@ mod tests {
 
     /// テスト用の一時ディレクトリにダミー画像を配置する
     fn setup_test_dir(name: &str, count: usize) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("gv3_test_document_{name}"));
+        let dir = std::env::temp_dir().join(format!("gv_test_document_{name}"));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let png_data = create_1x1_white_png();
@@ -1159,6 +1273,72 @@ mod tests {
         }
         assert!(got_nav, "NavigationChangedイベントが送信されなかった");
         assert!(got_ready, "ImageReadyイベントが送信されなかった");
+
+        cleanup_test_dir(&dir);
+    }
+
+    /// テスト用ZIPファイルを作成する（PNG画像を指定数含む）
+    fn create_test_zip(path: &Path, image_count: usize) {
+        let png_data = create_1x1_white_png();
+        let file = std::fs::File::create(path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        for i in 0..image_count {
+            zip.start_file(format!("image_{i:03}.png"), options)
+                .unwrap();
+            std::io::Write::write_all(&mut zip, &png_data).unwrap();
+        }
+        zip.finish().unwrap();
+    }
+
+    #[test]
+    fn open_containers_parallel_zips() {
+        let dir = setup_test_dir("parallel_zip", 0);
+        let zip_paths: Vec<PathBuf> = (0..3)
+            .map(|i| {
+                let p = dir.join(format!("archive_{i}.zip"));
+                create_test_zip(&p, 2);
+                p
+            })
+            .collect();
+
+        let (mut doc, _rx) = test_document();
+        doc.open_containers(&zip_paths).unwrap();
+
+        // 3 ZIP × 2画像 = 6エントリ
+        assert_eq!(doc.file_list().len(), 6);
+        assert_eq!(doc.file_list().current_index(), Some(0));
+        assert!(doc.current_image().is_some());
+
+        cleanup_test_dir(&dir);
+    }
+
+    #[test]
+    fn open_containers_partial_failure() {
+        let dir = setup_test_dir("partial_fail", 0);
+
+        // 有効なZIP
+        let valid_zip = dir.join("valid.zip");
+        create_test_zip(&valid_zip, 2);
+
+        // 存在しないファイル
+        let bad_path = dir.join("nonexistent.zip");
+
+        let (mut doc, rx) = test_document();
+        doc.open_containers(&[valid_zip, bad_path]).unwrap();
+
+        // 有効なZIPの2エントリだけ読み込まれる
+        assert_eq!(doc.file_list().len(), 2);
+
+        // エラー通知が送信される
+        let mut got_error = false;
+        while let Ok(event) = rx.try_recv() {
+            if matches!(event, DocumentEvent::Error(_)) {
+                got_error = true;
+            }
+        }
+        assert!(got_error, "部分失敗時にエラー通知が送信されなかった");
 
         cleanup_test_dir(&dir);
     }

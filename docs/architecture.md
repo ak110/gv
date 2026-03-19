@@ -1,13 +1,13 @@
-# ぐらびゅ3 アーキテクチャ設計書
+# ぐらびゅ アーキテクチャ設計書
 
 ## モジュール構成
 
 ```text
-gv3/
+gv/
 ├── Cargo.toml
 ├── build.rs                    # リソースコンパイル（アイコン等）
-├── gv3.default.toml             # デフォルト設定ファイル
-├── gv3.keys.default.toml       # デフォルトキーバインド
+├── ぐらびゅ.default.toml             # デフォルト設定ファイル
+├── ぐらびゅ.keys.default.toml       # デフォルトキーバインド
 ├── spi/                        # Susieプラグイン配置ディレクトリ
 ├── src/
 │   ├── main.rs                 # エントリーポイント、メッセージループ
@@ -248,7 +248,7 @@ struct SusieManager {
 ## 設定管理
 
 ```toml
-# gv3.toml
+# ぐらびゅ.toml
 
 [display]
 auto_scale = "fit"             # shrink | fit | enlarge | original

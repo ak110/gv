@@ -21,7 +21,7 @@ pub enum DisplayModeConfig {
     Fixed,
 }
 
-/// アプリケーション設定（gv3.toml）
+/// アプリケーション設定（ぐらびゅ.toml）
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -195,7 +195,7 @@ impl PrefetchConfig {
 }
 
 impl Config {
-    /// exeディレクトリの `gv3.toml` を読み込む。
+    /// exeディレクトリの `ぐらびゅ.toml` を読み込む。
     /// ファイルなし / パース失敗はデフォルトにフォールバック。
     pub fn load() -> Self {
         let Some(config_path) = Self::config_path() else {
@@ -217,11 +217,11 @@ impl Config {
         Ok(config)
     }
 
-    /// 設定ファイルのパスを返す（exeと同じディレクトリの gv3.toml）
+    /// 設定ファイルのパスを返す（exeと同じディレクトリの ぐらびゅ.toml）
     fn config_path() -> Option<std::path::PathBuf> {
         std::env::current_exe()
             .ok()
-            .and_then(|p| p.parent().map(|d| d.join("gv3.toml")))
+            .and_then(|p| p.parent().map(|d| d.join("ぐらびゅ.toml")))
     }
 }
 
@@ -339,8 +339,8 @@ default_sort = "bogus"
 
     #[test]
     fn toml_default_matches_rust_default() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("gv3.default.toml");
-        let config = Config::load_from(&path).expect("gv3.default.toml の読み込みに失敗");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ぐらびゅ.default.toml");
+        let config = Config::load_from(&path).expect("ぐらびゅ.default.toml の読み込みに失敗");
         let default = Config::default();
 
         // display

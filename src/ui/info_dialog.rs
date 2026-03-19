@@ -17,7 +17,7 @@ struct DialogData {
 
 /// ウィンドウクラス登録（一度だけ）
 static REGISTER_ONCE: Once = Once::new();
-const CLASS_NAME: &str = "gv3_info_dialog\0";
+const CLASS_NAME: &str = "gv_info_dialog\0";
 
 // 子コントロールID
 const ID_EDIT: u16 = 0x200;

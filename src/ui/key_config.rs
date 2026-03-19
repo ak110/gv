@@ -258,7 +258,7 @@ impl KeyConfig {
     fn default_bindings() -> HashMap<InputChord, Action> {
         let mut m = HashMap::new();
 
-        // [navigation] — gv3.keys.default.toml と同順
+        // [navigation] — ぐらびゅ.keys.default.toml と同順
         bind(&mut m, "←, WheelUp, ↑", Action::NavigateBack);
         bind(&mut m, "→, WheelDown, ↓", Action::NavigateForward);
         bind(&mut m, "Shift+←", Action::Navigate1Back);

@@ -1,11 +1,15 @@
 [package]
-name = "gv3"
+name = "gv"
 version = "1.1.1"
 edition = "2024"
 rust-version = "1.87"
 description = "Windows用の軽量画像ビューアー"
 license = "MIT"
-repository = "https://github.com/ak110/gv3"
+repository = "https://github.com/ak110/gv"
+
+[[bin]]
+name = "ぐらびゅ"
+path = "src/main.rs"
 
 [dependencies]
 windows = { version = "0.62", features = [

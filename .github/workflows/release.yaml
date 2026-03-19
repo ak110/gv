@@ -86,11 +86,12 @@ jobs:
         shell: pwsh
         run: |
           $version = "${{ steps.bump.outputs.version }}"
-          $zipName = "gv3-v$version.zip"
+          $zipName = "gv-v$version.zip"
+          # Cargo.tomlの[[bin]] name = "ぐらびゅ" によりこの名前で生成される
           Compress-Archive -Path @(
-            "target/release/gv3.exe",
-            "gv3.default.toml",
-            "gv3.keys.default.toml",
+            "target/release/ぐらびゅ.exe",
+            "ぐらびゅ.default.toml",
+            "ぐらびゅ.keys.default.toml",
             "README.md",
             "LICENSE"
           ) -DestinationPath $zipName
@@ -107,6 +108,6 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create "v${{ steps.bump.outputs.version }}" `
-            "gv3-v${{ steps.bump.outputs.version }}.zip" `
+            "gv-v${{ steps.bump.outputs.version }}.zip" `
             --title "v${{ steps.bump.outputs.version }}" `
             --generate-notes

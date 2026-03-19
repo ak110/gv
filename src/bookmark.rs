@@ -36,13 +36,13 @@ pub fn save_bookmark(
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    let default_name = format!("bookmark_{now}.gv3bm");
+    let default_name = format!("bookmark_{now}.gvbm");
 
     let save_path = crate::file_ops::save_file_dialog(
         hwnd,
         &default_name,
-        "ぐらびゅ3ブックマーク",
-        "*.gv3bm",
+        "ぐらびゅブックマーク",
+        "*.gvbm",
         Some(&dir),
         None,
         None,

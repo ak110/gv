@@ -189,7 +189,7 @@ mod tests {
 
     #[test]
     fn extract_images_from_zip() {
-        let dir = std::env::temp_dir().join("gv3_test_zip_extract");
+        let dir = std::env::temp_dir().join("gv_test_zip_extract");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
@@ -228,7 +228,7 @@ mod tests {
 
     #[test]
     fn extract_handles_duplicate_filenames() {
-        let dir = std::env::temp_dir().join("gv3_test_zip_dup");
+        let dir = std::env::temp_dir().join("gv_test_zip_dup");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
@@ -275,7 +275,7 @@ mod tests {
 
     #[test]
     fn list_images_returns_image_entries_only() {
-        let dir = std::env::temp_dir().join("gv3_test_zip_list");
+        let dir = std::env::temp_dir().join("gv_test_zip_list");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let zip_path = dir.join("test.zip");
@@ -303,7 +303,7 @@ mod tests {
 
     #[test]
     fn read_entry_returns_data() {
-        let dir = std::env::temp_dir().join("gv3_test_zip_read");
+        let dir = std::env::temp_dir().join("gv_test_zip_read");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let zip_path = dir.join("test.zip");

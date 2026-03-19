@@ -26,7 +26,7 @@ struct DialogData {
 }
 
 static REGISTER_ONCE: Once = Once::new();
-const CLASS_NAME: &str = "gv3_filter_dialog\0";
+const CLASS_NAME: &str = "gv_filter_dialog\0";
 
 const ID_EDIT_BASE: u16 = 0x600;
 const ID_OK: u16 = 0x6F0;

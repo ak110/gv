@@ -197,7 +197,7 @@ mod tests {
 
     #[test]
     fn resolve_filename_handles_duplicates() {
-        let dir = std::env::temp_dir().join("gv3_test_resolve_fn");
+        let dir = std::env::temp_dir().join("gv_test_resolve_fn");
         let _ = std::fs::create_dir_all(&dir);
 
         // 重複なし
@@ -384,7 +384,7 @@ mod tests {
 
     #[test]
     fn resolve_filename_no_extension() {
-        let dir = std::env::temp_dir().join("gv3_test_resolve_noext");
+        let dir = std::env::temp_dir().join("gv_test_resolve_noext");
         let _ = std::fs::create_dir_all(&dir);
 
         // 拡張子なしファイルの重複解決
@@ -397,7 +397,7 @@ mod tests {
 
     #[test]
     fn resolve_filename_multiple_duplicates() {
-        let dir = std::env::temp_dir().join("gv3_test_resolve_multi");
+        let dir = std::env::temp_dir().join("gv_test_resolve_multi");
         let _ = std::fs::create_dir_all(&dir);
 
         // 連番の重複解決: _2, _3 と順に増える

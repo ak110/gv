@@ -17,7 +17,7 @@ struct DialogData {
 }
 
 static REGISTER_ONCE: Once = Once::new();
-const CLASS_NAME: &str = "gv3_resize_dialog\0";
+const CLASS_NAME: &str = "gv_resize_dialog\0";
 
 const ID_WIDTH_EDIT: u16 = 0x500;
 const ID_HEIGHT_EDIT: u16 = 0x501;

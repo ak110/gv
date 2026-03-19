@@ -58,7 +58,8 @@ fn main() -> Result<()> {
         CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok()?;
     }
 
-    // 起動時クリーンアップ
+    // 起動時マイグレーション・クリーンアップ
+    migrate_old_filenames();
     temp_cleanup::cleanup_orphaned_temp_dirs();
     updater::cleanup_old_exe();
 
@@ -90,14 +91,37 @@ fn main() -> Result<()> {
     std::process::exit(exit_code);
 }
 
+/// 旧ファイル名(gv3.*)を新ファイル名(ぐらびゅ.*)にリネームする
+fn migrate_old_filenames() {
+    let Some(dir) = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(std::path::Path::to_path_buf))
+    else {
+        return;
+    };
+    let migrations = [
+        ("gv3.toml", "ぐらびゅ.toml"),
+        ("gv3.keys.toml", "ぐらびゅ.keys.toml"),
+        ("gv3.default.toml", "ぐらびゅ.default.toml"),
+        ("gv3.keys.default.toml", "ぐらびゅ.keys.default.toml"),
+    ];
+    for (old, new) in &migrations {
+        let old_path = dir.join(old);
+        let new_path = dir.join(new);
+        if old_path.exists() && !new_path.exists() {
+            let _ = std::fs::rename(&old_path, &new_path);
+        }
+    }
+}
+
 fn print_help() {
     let version = env!("CARGO_PKG_VERSION");
     println!(
         "\
-ぐらびゅ3 v{version} - Windows用画像ビューアー
+ぐらびゅ v{version} - Windows用画像ビューアー
 
 使い方:
-  gv3.exe [オプション] [ファイルパス]
+  ぐらびゅ.exe [オプション] [ファイルパス]
 
 オプション:
   --help, -h        このヘルプを表示

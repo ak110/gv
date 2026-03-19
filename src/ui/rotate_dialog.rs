@@ -17,7 +17,7 @@ struct DialogData {
 }
 
 static REGISTER_ONCE: Once = Once::new();
-const CLASS_NAME: &str = "gv3_rotate_dialog\0";
+const CLASS_NAME: &str = "gv_rotate_dialog\0";
 
 const ID_EDIT: u16 = 0x400;
 const ID_OK: u16 = 0x401;

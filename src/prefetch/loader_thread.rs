@@ -307,7 +307,7 @@ mod tests {
 
     #[test]
     fn load_and_receive_response() {
-        let dir = std::env::temp_dir().join("gv3_test_prefetch_load");
+        let dir = std::env::temp_dir().join("gv_test_prefetch_load");
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("test.png");
         {
@@ -352,7 +352,7 @@ mod tests {
 
     #[test]
     fn stale_generation_is_skipped() {
-        let dir = std::env::temp_dir().join("gv3_test_prefetch_gen");
+        let dir = std::env::temp_dir().join("gv_test_prefetch_gen");
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("test.png");
         {
