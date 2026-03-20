@@ -25,8 +25,8 @@ const CLASS_NAME: &str = "gv_page_dialog\0";
 
 // 子コントロールID
 const ID_EDIT: u16 = 0x300;
-const ID_OK: u16 = 0x301;
-const ID_CANCEL: u16 = 0x302;
+const ID_OK: u16 = 1; // IDOK: IsDialogMessageWのEnter/ESC対応
+const ID_CANCEL: u16 = 2; // IDCANCEL
 const ID_LABEL: u16 = 0x303;
 
 /// ダイアログサイズ

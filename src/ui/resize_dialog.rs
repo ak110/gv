@@ -21,8 +21,8 @@ const CLASS_NAME: &str = "gv_resize_dialog\0";
 
 const ID_WIDTH_EDIT: u16 = 0x500;
 const ID_HEIGHT_EDIT: u16 = 0x501;
-const ID_OK: u16 = 0x502;
-const ID_CANCEL: u16 = 0x503;
+const ID_OK: u16 = 1; // IDOK: IsDialogMessageWのEnter/ESC対応
+const ID_CANCEL: u16 = 2; // IDCANCEL
 
 const DIALOG_WIDTH: i32 = 300;
 const DIALOG_HEIGHT: i32 = 180;

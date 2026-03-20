@@ -29,8 +29,8 @@ static REGISTER_ONCE: Once = Once::new();
 const CLASS_NAME: &str = "gv_filter_dialog\0";
 
 const ID_EDIT_BASE: u16 = 0x600;
-const ID_OK: u16 = 0x6F0;
-const ID_CANCEL: u16 = 0x6F1;
+const ID_OK: u16 = 1; // IDOK: IsDialogMessageWのEnter/ESC対応
+const ID_CANCEL: u16 = 2; // IDCANCEL
 
 const DIALOG_WIDTH: i32 = 320;
 const BUTTON_WIDTH: i32 = 80;

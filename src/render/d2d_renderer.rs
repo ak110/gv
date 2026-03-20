@@ -450,6 +450,10 @@ impl D2DRenderer {
         }
     }
 
+    pub fn layout(&self) -> &Layout {
+        &self.layout
+    }
+
     pub fn layout_mut(&mut self) -> &mut Layout {
         &mut self.layout
     }

@@ -1022,7 +1022,6 @@ impl Document {
     }
 
     /// 永続フィルタへの参照
-    #[allow(dead_code)] // 将来のUI（フィルタ状態表示等）で使用予定
     pub fn persistent_filter(&self) -> &PersistentFilter {
         &self.persistent_filter
     }

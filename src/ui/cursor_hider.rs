@@ -45,6 +45,11 @@ impl CursorHider {
         }
     }
 
+    /// カーソル自動非表示が有効か
+    pub fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
     /// 有効/無効をトグル
     pub fn toggle_enabled(&mut self, hwnd: HWND) {
         self.enabled = !self.enabled;

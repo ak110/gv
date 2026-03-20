@@ -52,7 +52,6 @@ impl PersistentFilter {
         }
     }
 
-    #[allow(dead_code)] // 将来のメニューチェック状態表示で使用予定
     pub fn is_enabled(&self) -> bool {
         self.enabled
     }
@@ -67,15 +66,38 @@ impl PersistentFilter {
         self.generation
     }
 
-    #[allow(dead_code)] // 将来のフィルタリスト表示UIで使用予定
+    #[cfg(test)]
     pub fn operations(&self) -> &[FilterOperation] {
         &self.operations
+    }
+
+    /// 指定したバリアントと同じ種別の操作が含まれるか判定
+    pub fn has_operation(&self, probe: &FilterOperation) -> bool {
+        let target = std::mem::discriminant(probe);
+        self.operations
+            .iter()
+            .any(|op| std::mem::discriminant(op) == target)
     }
 
     /// フィルタ操作を追加する
     pub fn add_operation(&mut self, op: FilterOperation) {
         self.operations.push(op);
         self.generation += 1;
+    }
+
+    /// 指定バリアントと同じ種別の操作を全て除去する
+    /// 除去した場合trueを返す
+    pub fn remove_operation_type(&mut self, probe: &FilterOperation) -> bool {
+        let target = std::mem::discriminant(probe);
+        let before = self.operations.len();
+        self.operations
+            .retain(|op| std::mem::discriminant(op) != target);
+        if self.operations.len() == before {
+            false
+        } else {
+            self.generation += 1;
+            true
+        }
     }
 
     /// 全操作をクリアする

@@ -453,6 +453,75 @@ impl AppWindow {
         }
     }
 
+    /// メニューポップアップ表示時にトグル項目のチェック状態を更新
+    fn update_menu_checks(&self, popup: HMENU) {
+        let pf = self.document.persistent_filter();
+        let pf_enabled = pf.is_enabled();
+
+        // 永続フィルタの有効/無効チェック
+        menu::update_menu_check(popup, Action::PFilterToggle, pf_enabled);
+
+        // 各フィルタ操作のチェックマーク + フィルタ無効時はグレーアウト
+        use crate::persistent_filter::FilterOperation as FO;
+        let filter_actions: &[(Action, FO)] = &[
+            (Action::PFilterFlipH, FO::FlipHorizontal),
+            (Action::PFilterFlipV, FO::FlipVertical),
+            (Action::PFilterRotate180, FO::Rotate180),
+            (Action::PFilterRotate90CW, FO::Rotate90CW),
+            (Action::PFilterRotate90CCW, FO::Rotate90CCW),
+            (Action::PFilterLevels, FO::Levels { low: 0, high: 0 }),
+            (Action::PFilterGamma, FO::Gamma { value: 0.0 }),
+            (
+                Action::PFilterBrightnessContrast,
+                FO::BrightnessContrast {
+                    brightness: 0,
+                    contrast: 0,
+                },
+            ),
+            (Action::PFilterGrayscaleSimple, FO::GrayscaleSimple),
+            (Action::PFilterGrayscaleStrict, FO::GrayscaleStrict),
+            (Action::PFilterBlur, FO::Blur),
+            (Action::PFilterBlurStrong, FO::BlurStrong),
+            (Action::PFilterSharpen, FO::Sharpen),
+            (Action::PFilterSharpenStrong, FO::SharpenStrong),
+            (
+                Action::PFilterGaussianBlur,
+                FO::GaussianBlur { radius: 0.0 },
+            ),
+            (Action::PFilterUnsharpMask, FO::UnsharpMask { radius: 0.0 }),
+            (Action::PFilterMedianFilter, FO::MedianFilter),
+            (Action::PFilterInvertColors, FO::InvertColors),
+            (Action::PFilterApplyAlpha, FO::ApplyAlpha),
+        ];
+        for (action, probe) in filter_actions {
+            menu::update_menu_check(popup, *action, pf.has_operation(probe));
+            menu::update_menu_enabled(popup, *action, pf_enabled);
+        }
+
+        // その他のトグル項目
+        menu::update_menu_check(
+            popup,
+            Action::ToggleFileList,
+            self.file_list_panel.is_visible(),
+        );
+        menu::update_menu_check(popup, Action::ToggleAlwaysOnTop, self.always_on_top);
+        menu::update_menu_check(
+            popup,
+            Action::ToggleMargin,
+            self.renderer.layout().margin_enabled,
+        );
+        menu::update_menu_check(
+            popup,
+            Action::ToggleCursorHide,
+            self.cursor_hider.is_enabled(),
+        );
+        menu::update_menu_check(
+            popup,
+            Action::ToggleFullscreen,
+            self.fullscreen.is_fullscreen(),
+        );
+    }
+
     // --- WndProc ---
 
     extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
@@ -566,6 +635,11 @@ impl AppWindow {
                         app.cursor_hider.on_timer(hwnd);
                         return LRESULT(0);
                     }
+                }
+                WM_INITMENUPOPUP => {
+                    // wParam = 開こうとしているポップアップメニューのHMENU
+                    let popup = HMENU(wparam.0 as *mut _);
+                    app.update_menu_checks(popup);
                 }
                 WM_COMMAND => {
                     let notify_code = ((wparam.0 as u32) >> 16) & 0xFFFF;
@@ -689,11 +763,29 @@ impl AppWindow {
         }
     }
 
-    /// パラメータなし永続フィルタの共通パターン
-    fn add_persistent_filter(&mut self, op: crate::persistent_filter::FilterOperation) {
-        self.document.persistent_filter_mut().add_operation(op);
+    /// 永続フィルタのトグル（既存なら削除、なければ追加）
+    fn toggle_persistent_filter(&mut self, op: crate::persistent_filter::FilterOperation) {
+        let pf = self.document.persistent_filter_mut();
+        if !pf.remove_operation_type(&op) {
+            pf.add_operation(op);
+        }
         self.document.on_persistent_filter_changed();
         self.process_document_events();
+    }
+
+    /// パラメータ付き永続フィルタのトグル（既存なら削除してtrue、なければfalse）
+    fn remove_persistent_filter_if_exists(
+        &mut self,
+        probe: &crate::persistent_filter::FilterOperation,
+    ) -> bool {
+        let pf = self.document.persistent_filter_mut();
+        if pf.remove_operation_type(probe) {
+            self.document.on_persistent_filter_changed();
+            self.process_document_events();
+            true
+        } else {
+            false
+        }
     }
 
     // === アクションハンドラ（execute_action から呼び出される個別メソッド） ===
@@ -1322,6 +1414,11 @@ impl AppWindow {
     }
 
     fn action_pfilter_levels(&mut self) {
+        // 既存なら削除（トグルオフ）
+        let probe = FilterOperation::Levels { low: 0, high: 0 };
+        if self.remove_persistent_filter_if_exists(&probe) {
+            return;
+        }
         use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
         let fields = [
             FieldDef {
@@ -1338,11 +1435,19 @@ impl AppWindow {
         if let Some(vals) = show_filter_dialog(self.hwnd, "永続レベル補正", &fields) {
             let low = vals[0].parse::<u8>().unwrap_or(0);
             let high = vals[1].parse::<u8>().unwrap_or(255);
-            self.add_persistent_filter(FilterOperation::Levels { low, high });
+            self.document
+                .persistent_filter_mut()
+                .add_operation(FilterOperation::Levels { low, high });
+            self.document.on_persistent_filter_changed();
+            self.process_document_events();
         }
     }
 
     fn action_pfilter_gamma(&mut self) {
+        let probe = FilterOperation::Gamma { value: 0.0 };
+        if self.remove_persistent_filter_if_exists(&probe) {
+            return;
+        }
         use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
         let fields = [FieldDef {
             label: "ガンマ値 (0.1〜10.0)",
@@ -1351,11 +1456,22 @@ impl AppWindow {
         }];
         if let Some(vals) = show_filter_dialog(self.hwnd, "永続ガンマ補正", &fields) {
             let value = vals[0].parse::<f64>().unwrap_or(1.0).clamp(0.1, 10.0);
-            self.add_persistent_filter(FilterOperation::Gamma { value });
+            self.document
+                .persistent_filter_mut()
+                .add_operation(FilterOperation::Gamma { value });
+            self.document.on_persistent_filter_changed();
+            self.process_document_events();
         }
     }
 
     fn action_pfilter_brightness_contrast(&mut self) {
+        let probe = FilterOperation::BrightnessContrast {
+            brightness: 0,
+            contrast: 0,
+        };
+        if self.remove_persistent_filter_if_exists(&probe) {
+            return;
+        }
         use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
         let fields = [
             FieldDef {
@@ -1373,14 +1489,22 @@ impl AppWindow {
         {
             let brightness = vals[0].parse::<i32>().unwrap_or(0).clamp(-128, 128);
             let contrast = vals[1].parse::<i32>().unwrap_or(0).clamp(-128, 128);
-            self.add_persistent_filter(FilterOperation::BrightnessContrast {
-                brightness,
-                contrast,
-            });
+            self.document.persistent_filter_mut().add_operation(
+                FilterOperation::BrightnessContrast {
+                    brightness,
+                    contrast,
+                },
+            );
+            self.document.on_persistent_filter_changed();
+            self.process_document_events();
         }
     }
 
     fn action_pfilter_gaussian_blur(&mut self) {
+        let probe = FilterOperation::GaussianBlur { radius: 0.0 };
+        if self.remove_persistent_filter_if_exists(&probe) {
+            return;
+        }
         use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
         let fields = [FieldDef {
             label: "半径 (0.1〜10.0)",
@@ -1389,11 +1513,19 @@ impl AppWindow {
         }];
         if let Some(vals) = show_filter_dialog(self.hwnd, "永続ガウスぼかし", &fields) {
             let radius = vals[0].parse::<f64>().unwrap_or(2.0).clamp(0.1, 10.0);
-            self.add_persistent_filter(FilterOperation::GaussianBlur { radius });
+            self.document
+                .persistent_filter_mut()
+                .add_operation(FilterOperation::GaussianBlur { radius });
+            self.document.on_persistent_filter_changed();
+            self.process_document_events();
         }
     }
 
     fn action_pfilter_unsharp_mask(&mut self) {
+        let probe = FilterOperation::UnsharpMask { radius: 0.0 };
+        if self.remove_persistent_filter_if_exists(&probe) {
+            return;
+        }
         use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
         let fields = [FieldDef {
             label: "半径 (0.1〜10.0)",
@@ -1403,7 +1535,11 @@ impl AppWindow {
         if let Some(vals) = show_filter_dialog(self.hwnd, "永続アンシャープマスク", &fields)
         {
             let radius = vals[0].parse::<f64>().unwrap_or(2.0).clamp(0.1, 10.0);
-            self.add_persistent_filter(FilterOperation::UnsharpMask { radius });
+            self.document
+                .persistent_filter_mut()
+                .add_operation(FilterOperation::UnsharpMask { radius });
+            self.document.on_persistent_filter_changed();
+            self.process_document_events();
         }
     }
 
@@ -1656,45 +1792,47 @@ impl AppWindow {
                 self.process_document_events();
             }
             Action::PFilterFlipH => {
-                self.add_persistent_filter(FilterOperation::FlipHorizontal);
+                self.toggle_persistent_filter(FilterOperation::FlipHorizontal);
             }
             Action::PFilterFlipV => {
-                self.add_persistent_filter(FilterOperation::FlipVertical);
+                self.toggle_persistent_filter(FilterOperation::FlipVertical);
             }
             Action::PFilterRotate180 => {
-                self.add_persistent_filter(FilterOperation::Rotate180);
+                self.toggle_persistent_filter(FilterOperation::Rotate180);
             }
             Action::PFilterRotate90CW => {
-                self.add_persistent_filter(FilterOperation::Rotate90CW);
+                self.toggle_persistent_filter(FilterOperation::Rotate90CW);
             }
             Action::PFilterRotate90CCW => {
-                self.add_persistent_filter(FilterOperation::Rotate90CCW);
+                self.toggle_persistent_filter(FilterOperation::Rotate90CCW);
             }
             Action::PFilterLevels => self.action_pfilter_levels(),
             Action::PFilterGamma => self.action_pfilter_gamma(),
             Action::PFilterBrightnessContrast => self.action_pfilter_brightness_contrast(),
             Action::PFilterGrayscaleSimple => {
-                self.add_persistent_filter(FilterOperation::GrayscaleSimple);
+                self.toggle_persistent_filter(FilterOperation::GrayscaleSimple);
             }
             Action::PFilterGrayscaleStrict => {
-                self.add_persistent_filter(FilterOperation::GrayscaleStrict);
+                self.toggle_persistent_filter(FilterOperation::GrayscaleStrict);
             }
-            Action::PFilterBlur => self.add_persistent_filter(FilterOperation::Blur),
-            Action::PFilterBlurStrong => self.add_persistent_filter(FilterOperation::BlurStrong),
-            Action::PFilterSharpen => self.add_persistent_filter(FilterOperation::Sharpen),
+            Action::PFilterBlur => self.toggle_persistent_filter(FilterOperation::Blur),
+            Action::PFilterBlurStrong => {
+                self.toggle_persistent_filter(FilterOperation::BlurStrong);
+            }
+            Action::PFilterSharpen => self.toggle_persistent_filter(FilterOperation::Sharpen),
             Action::PFilterSharpenStrong => {
-                self.add_persistent_filter(FilterOperation::SharpenStrong);
+                self.toggle_persistent_filter(FilterOperation::SharpenStrong);
             }
             Action::PFilterGaussianBlur => self.action_pfilter_gaussian_blur(),
             Action::PFilterUnsharpMask => self.action_pfilter_unsharp_mask(),
             Action::PFilterMedianFilter => {
-                self.add_persistent_filter(FilterOperation::MedianFilter);
+                self.toggle_persistent_filter(FilterOperation::MedianFilter);
             }
             Action::PFilterInvertColors => {
-                self.add_persistent_filter(FilterOperation::InvertColors);
+                self.toggle_persistent_filter(FilterOperation::InvertColors);
             }
             Action::PFilterApplyAlpha => {
-                self.add_persistent_filter(FilterOperation::ApplyAlpha);
+                self.toggle_persistent_filter(FilterOperation::ApplyAlpha);
             }
 
             // --- ブックマーク ---

@@ -202,8 +202,28 @@ pub fn build_menu_bar() -> HMENU {
 }
 
 /// Action からメニューIDを計算
-fn action_to_menu_id(action: Action) -> u16 {
+pub fn action_to_menu_id(action: Action) -> u16 {
     WM_COMMAND_BASE + action as u16
+}
+
+/// メニュー項目の有効/無効を更新
+pub fn update_menu_enabled(menu: HMENU, action: Action, enabled: bool) {
+    unsafe {
+        let flag = if enabled { MF_ENABLED } else { MF_GRAYED };
+        let _ = EnableMenuItem(menu, action_to_menu_id(action) as u32, MF_BYCOMMAND | flag);
+    }
+}
+
+/// メニュー項目のチェック状態を更新
+pub fn update_menu_check(menu: HMENU, action: Action, checked: bool) {
+    unsafe {
+        let flag = if checked { MF_CHECKED } else { MF_UNCHECKED };
+        let _ = CheckMenuItem(
+            menu,
+            action_to_menu_id(action) as u32,
+            (MF_BYCOMMAND | flag).0,
+        );
+    }
 }
 
 /// メニューIDからActionに変換

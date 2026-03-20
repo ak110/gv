@@ -20,8 +20,8 @@ static REGISTER_ONCE: Once = Once::new();
 const CLASS_NAME: &str = "gv_rotate_dialog\0";
 
 const ID_EDIT: u16 = 0x400;
-const ID_OK: u16 = 0x401;
-const ID_CANCEL: u16 = 0x402;
+const ID_OK: u16 = 1; // IDOK: IsDialogMessageWのEnter/ESC対応
+const ID_CANCEL: u16 = 2; // IDCANCEL
 
 const DIALOG_WIDTH: i32 = 280;
 const DIALOG_HEIGHT: i32 = 150;
