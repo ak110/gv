@@ -1,6 +1,6 @@
 {
   "private": true,
-  "packageManager": "pnpm@9.15.4",
+  "packageManager": "pnpm@10.32.1",
   "scripts": {
     "textlint": "textlint docs/*.md README.md",
     "textlint:fix": "textlint --fix docs/*.md README.md",
@@ -10,10 +10,10 @@
     "prettier:fix": "prettier --write \"**/*.{yml,yaml,json}\""
   },
   "devDependencies": {
-    "markdownlint-cli2": "^0.17",
-    "prettier": "^3",
-    "textlint": "^14",
-    "textlint-rule-preset-ja-spacing": "^2",
-    "textlint-rule-preset-ja-technical-writing": "^10"
+    "markdownlint-cli2": "^0.21.0",
+    "prettier": "^3.8.1",
+    "textlint": "^15.5.2",
+    "textlint-rule-preset-ja-spacing": "^2.4.3",
+    "textlint-rule-preset-ja-technical-writing": "^12.0.2"
   }
 }

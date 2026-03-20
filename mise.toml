@@ -1,12 +1,14 @@
 [tools]
-rust = "stable"
+rust = "1.94"
 node = "lts"
 pnpm = "latest"
 
 [tasks.setup]
 description = "Initial project setup (install deps + configure git hooks)"
 run = [
+  "rustup component add rustfmt clippy",
   "cargo install cargo-edit cargo-deny",
+  "pnpm self-update",
   "pnpm install",
   "git config core.hooksPath .githooks",
 ]
@@ -55,6 +57,7 @@ description = "Update all dependencies (including major versions)"
 run = [
   "cargo upgrade",
   "cargo update",
+  "pnpm update --latest",
 ]
 
 [tasks.coverage]

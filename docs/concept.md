@@ -35,7 +35,7 @@
 ### 主要ライブラリ
 
 | 機能 | crate | 備考 |
-|------|-------|------|
+| ------ | ------- | ------ |
 | Win32 API | `windows` (Microsoft公式) | ウィンドウ管理、Direct2D、Shell API |
 | 画像デコード | `image` | JPEG/PNG/GIF/BMP/WebP |
 | ZIP | `zip` | Unicode対応 |
