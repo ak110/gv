@@ -11,7 +11,7 @@
 mise install && mise run setup
 ```
 
-`git push`時にはpre-pushフックが`mise run test`を自動実行する。
+`git commit`時にはpre-commitフックが`mise run test`を自動実行する。
 
 clippyのpedantic lint設定は`Cargo.toml`の`[lints.clippy]`セクションで管理している。
 
