@@ -5,24 +5,13 @@
 Win32メッセージベースのアプリケーションにはMVVMは過剰であるため、シンプルなMV分離を採用。
 Rustのチャネルで疎結合化している。
 
-```text
-┌─────────────────────────────────────────────────┐
-│  AppWindow (app.rs)                             │
-│  - Win32ウィンドウ管理                           │
-│  - メニュー・キー入力のハンドリング               │
-│  - DocumentEventの受信 → 再描画・UI更新          │
-│                                                 │
-│  WM_KEYDOWN → Document操作メソッド呼び出し       │
-│  WM_PAINT   → Renderer.draw(document.current()) │
-└─────────┬───────────────────────────┬───────────┘
-          │ 操作呼び出し              │ イベント受信
-          ▼                           │
-┌─────────────────────────┐           │
-│  Document (document.rs) │           │
-│  - FileList管理          ├──────────┘
-│  - 先読みエンジン制御     │  DocumentEvent送信
-│  - 表示状態管理          │  (チャネル経由)
-└─────────────────────────┘
+```mermaid
+flowchart TB
+    AppWindow["<b>AppWindow</b> (app.rs)<br/>Win32ウィンドウ管理<br/>メニュー・キー入力のハンドリング<br/>DocumentEventの受信 → 再描画・UI更新<br/><br/>WM_KEYDOWN → Document操作メソッド呼び出し<br/>WM_PAINT → Renderer.draw(document.current())"]
+    Document["<b>Document</b> (document.rs)<br/>FileList管理<br/>先読みエンジン制御<br/>表示状態管理"]
+
+    AppWindow -- "操作呼び出し" --> Document
+    Document -- "DocumentEvent送信<br/>(チャネル経由)" --> AppWindow
 ```
 
 ## 先読みエンジン設計
@@ -41,20 +30,17 @@ Rustのチャネルで疎結合化している。
 
 ### ワーカースレッド
 
-```text
-メインスレッド                     ワーカースレッド
-     │                                  │
-     ├── LoadRequest送信 ───────────────→│
-     │   (index, priority)              │ デコード実行
-     │                                  │ (ImageDecoder使用)
-     │←─────────── ImageReady受信 ───────┤
-     │  (index, decoded_image)          │
-     ├── キャッシュに格納               │
-     │   → DocumentEvent::ImageReady    │
-     │                                  │
-     ├── CancelRequest送信 ────────────→│
-     │   (キャッシュ範囲外になった      │ 現在のデコードを中断
-     │    画像のキャンセル)              │
+```mermaid
+sequenceDiagram
+    participant M as メインスレッド
+    participant W as ワーカースレッド
+
+    M->>W: LoadRequest送信 (index, priority)
+    Note right of W: デコード実行 (ImageDecoder使用)
+    W->>M: ImageReady受信 (index, decoded_image)
+    Note left of M: キャッシュに格納<br/>→ DocumentEvent::ImageReady
+    M->>W: CancelRequest送信<br/>(キャッシュ範囲外になった画像のキャンセル)
+    Note right of W: 現在のデコードを中断
 ```
 
 - `crossbeam-channel` でリクエストキューを実装
