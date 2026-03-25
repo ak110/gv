@@ -11,9 +11,21 @@
 mise install && mise run setup
 ```
 
+`cargo`や`node`、`pnpm`などのコマンドはシステムにインストールされたものではなく、必ずmise経由で実行すること（`mise run`タスク経由、またはmiseが管理するPATH上のバイナリを使用）。
+
 `git commit`時にはpre-commitフックが`mise run test`を自動実行する。
 
 clippyのpedantic lint設定は`Cargo.toml`の`[lints.clippy]`セクションで管理している。
+
+## Windowsバッチファイル生成時の注意
+
+cmd.exeはバッチファイルをシステムのANSIコードページ（日本語環境ではCP932）で読む。UTF-8で書くとDBCSバイト列が改行やコマンド構文を破壊する。
+
+- ファイル名に日本語を含むバッチファイルは **UTF-8 BOM + `chcp 65001`** で書き出す。CP932だとcopyコマンド等のパス引数で日本語ファイル名を正しく解釈できない場合がある
+- Rustの`format!`はLFのみ出力するので`replace('\n', "\r\n")`でCRLFに変換が必要
+- `if ( ... )` ブロック内に日本語テキストがあると、DBCSトレイルバイトが特殊文字と誤認される。日本語を含む場合は `goto` で制御フローを構成する
+- CP932変換が必要な場合は `WideCharToMultiByte(CP_ACP, ...)` を使う
+- バッチファイルのテストは実際に `cmd /c` で実行して結果を検証する。テスト不可能な副作用（`start`、`del "%~f0"`等）はヘルパーで無効化してコアロジックを検証可能にする
 
 ## キーバインド定義の管理
 
