@@ -970,6 +970,7 @@ impl Document {
                     height: img.height,
                     format: "PDF".to_string(),
                     comments: Vec::new(),
+                    exif: Vec::new(),
                 })
             } else {
                 anyhow::bail!("PDFページがまだレンダリングされていません")

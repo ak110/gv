@@ -2004,6 +2004,14 @@ impl AppWindow {
             for comment in &metadata.comments {
                 info_lines.push(comment.clone());
             }
+            // EXIF情報
+            if !metadata.exif.is_empty() {
+                info_lines.push(String::new());
+                info_lines.push("--- EXIF ---".to_string());
+                for (key, value) in &metadata.exif {
+                    info_lines.push(format!("{key}: {value}"));
+                }
+            }
         }
 
         let text = info_lines.join("\n\n");
