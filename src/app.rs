@@ -36,6 +36,9 @@ use crate::ui::window;
 /// DocumentEventをUIスレッドに通知するためのカスタムメッセージ
 const WM_DOCUMENT_EVENT: u32 = WM_APP + 1;
 
+/// スライドショー用タイマーID
+const TIMER_ID_SLIDESHOW: usize = 2;
+
 /// 修飾キーVKコード
 const VK_CONTROL: i32 = 0x11;
 const VK_SHIFT: i32 = 0x10;
@@ -62,6 +65,10 @@ pub struct AppWindow {
     monospace_font: MonospaceFont,
     // 矩形選択
     selection: Selection,
+    // スライドショー
+    slideshow_active: bool,
+    slideshow_interval_ms: u32,
+    slideshow_repeat: bool,
 }
 
 impl AppWindow {
@@ -177,6 +184,9 @@ impl AppWindow {
             cached_indices: HashSet::new(),
             monospace_font,
             selection: Selection::new(),
+            slideshow_active: false,
+            slideshow_interval_ms: config.slideshow.interval_ms,
+            slideshow_repeat: config.slideshow.repeat,
         });
 
         // GWLP_USERDATAにポインタを格納（WndProcからアクセスするため）
@@ -274,6 +284,7 @@ impl AppWindow {
                     self.file_list_panel.set_selection(index);
                 }
                 DocumentEvent::FileListChanged => {
+                    self.stop_slideshow();
                     let doc = &self.document;
                     self.file_list_panel
                         .update(doc.file_list(), |i| doc.is_cached(i));
@@ -521,6 +532,7 @@ impl AppWindow {
             Action::ToggleFullscreen,
             self.fullscreen.is_fullscreen(),
         );
+        menu::update_menu_check(popup, Action::SlideshowToggle, self.slideshow_active);
     }
 
     // --- WndProc ---
@@ -636,6 +648,10 @@ impl AppWindow {
                         app.cursor_hider.on_timer(hwnd);
                         return LRESULT(0);
                     }
+                    if wparam.0 == TIMER_ID_SLIDESHOW {
+                        app.on_slideshow_timer();
+                        return LRESULT(0);
+                    }
                 }
                 WM_INITMENUPOPUP => {
                     // wParam = 開こうとしているポップアップメニューのHMENU
@@ -668,6 +684,7 @@ impl AppWindow {
                                 return LRESULT(0);
                             }
                             app.selection.deselect();
+                            app.stop_slideshow();
                             app.document.navigate_to(sel.0 as usize);
                             app.process_document_events();
                         }
@@ -1587,6 +1604,16 @@ impl AppWindow {
 
     /// アクションを実行する
     fn execute_action(&mut self, action: Action) {
+        // スライドショー中は、スライドショー関連以外のアクションで自動停止
+        if self.slideshow_active
+            && !matches!(
+                action,
+                Action::SlideshowToggle | Action::SlideshowFaster | Action::SlideshowSlower
+            )
+        {
+            self.stop_slideshow();
+        }
+
         match action {
             // --- ナビゲーション ---
             Action::NavigateBack => self.navigate_with_guard(|d| d.navigate_relative(-1)),
@@ -1907,6 +1934,11 @@ impl AppWindow {
                 self.action_unregister_shell();
             }
 
+            // --- スライドショー ---
+            Action::SlideshowToggle => self.toggle_slideshow(),
+            Action::SlideshowFaster => self.adjust_slideshow_interval(-500),
+            Action::SlideshowSlower => self.adjust_slideshow_interval(500),
+
             // --- 終了 ---
             Action::Exit => unsafe {
                 let _ = DestroyWindow(self.hwnd);
@@ -1923,6 +1955,7 @@ impl AppWindow {
         let current = self.document.file_list().current_index().unwrap_or(0) + 1;
         if let Some(page) = crate::ui::page_dialog::show_page_dialog(self.hwnd, current, total) {
             let index = (page.saturating_sub(1)).min(total - 1);
+            self.stop_slideshow();
             self.document.navigate_to(index);
             self.process_document_events();
         }
@@ -1976,6 +2009,87 @@ impl AppWindow {
             result.push(c);
         }
         result
+    }
+
+    // --- スライドショー ---
+
+    /// スライドショーを開始/停止する
+    fn toggle_slideshow(&mut self) {
+        if self.slideshow_active {
+            self.stop_slideshow();
+        } else {
+            self.start_slideshow();
+        }
+    }
+
+    /// スライドショー開始
+    fn start_slideshow(&mut self) {
+        if self.document.file_list().len() < 2 {
+            return;
+        }
+        self.slideshow_active = true;
+        unsafe {
+            let _ = SetTimer(
+                Some(self.hwnd),
+                TIMER_ID_SLIDESHOW,
+                self.slideshow_interval_ms,
+                None,
+            );
+        }
+    }
+
+    /// スライドショー停止
+    fn stop_slideshow(&mut self) {
+        if !self.slideshow_active {
+            return;
+        }
+        self.slideshow_active = false;
+        unsafe {
+            let _ = KillTimer(Some(self.hwnd), TIMER_ID_SLIDESHOW);
+        }
+    }
+
+    /// スライドショーのタイマー発火時
+    fn on_slideshow_timer(&mut self) {
+        if !self.slideshow_active {
+            return;
+        }
+        // 最後の画像に到達しているか確認
+        let at_end = self
+            .document
+            .file_list()
+            .current_index()
+            .is_some_and(|idx| idx + 1 >= self.document.file_list().len());
+
+        if at_end {
+            if self.slideshow_repeat {
+                self.document.navigate_first();
+                self.process_document_events();
+            } else {
+                self.stop_slideshow();
+            }
+            return;
+        }
+        self.document.navigate_relative(1);
+        self.process_document_events();
+    }
+
+    /// スライドショー間隔を変更（最小500ms、最大30000ms）
+    fn adjust_slideshow_interval(&mut self, delta_ms: i32) {
+        let new_val =
+            (i64::from(self.slideshow_interval_ms) + i64::from(delta_ms)).clamp(500, 30_000) as u32;
+        self.slideshow_interval_ms = new_val;
+        // 実行中ならタイマーを新しい間隔で再設定（同一IDは上書き）
+        if self.slideshow_active {
+            unsafe {
+                let _ = SetTimer(
+                    Some(self.hwnd),
+                    TIMER_ID_SLIDESHOW,
+                    self.slideshow_interval_ms,
+                    None,
+                );
+            }
+        }
     }
 
     /// 画像情報を表示する
