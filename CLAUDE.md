@@ -6,6 +6,5 @@
 
 - @README.md
 - @docs/concept.md
-- @docs/user-guide.md
 - @docs/architecture.md
 - @docs/development.md

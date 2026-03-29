@@ -5,8 +5,8 @@ hero:
   text: Windows用画像ビューアー
   actions:
     - theme: brand
-      text: ユーザーガイド
-      link: /user-guide
+      text: はじめに
+      link: /getting-started
     - theme: alt
       text: ダウンロード
       link: https://github.com/ak110/gv/releases
