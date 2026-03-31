@@ -224,11 +224,9 @@ impl AppWindow {
 
         // 初期ファイルがあれば開く
         if !initial_files.is_empty() {
-            let result = if initial_files.len() > 1
-                && initial_files.iter().all(|p| app.document.is_container(p))
-            {
-                // 全てコンテナなら複数コンテナをまとめて開く
-                app.document.open_containers(initial_files)
+            let result = if initial_files.len() > 1 {
+                // 複数パス: フォルダ・コンテナ・画像の混在をすべてフラットに展開
+                app.document.open_multiple(initial_files)
             } else if initial_files[0].is_dir() {
                 app.document.open_folder(&initial_files[0])
             } else {
@@ -894,11 +892,15 @@ impl AppWindow {
         {
             return;
         }
-        if let Some(path) = self.document.current_path().map(Path::to_path_buf)
-            && let Ok(true) = crate::file_ops::delete_to_recycle_bin(self.hwnd, &[&path])
-        {
-            self.document.remove_current_from_list();
-            self.process_document_events();
+        if let Some(path) = self.document.current_path().map(Path::to_path_buf) {
+            if let Ok(true) = crate::file_ops::delete_to_recycle_bin(self.hwnd, &[&path]) {
+                self.document.remove_current_from_list();
+                self.process_document_events();
+            }
+            // Shell APIがフォーカスを奪うことがあるため復帰
+            unsafe {
+                let _ = SetForegroundWindow(self.hwnd);
+            }
         }
     }
 
@@ -946,6 +948,10 @@ impl AppWindow {
                         Err(e) => {
                             self.show_error_title(&format!("ファイル移動失敗: {e}"));
                         }
+                    }
+                    // Shell APIがフォーカスを奪うことがあるため復帰
+                    unsafe {
+                        let _ = SetForegroundWindow(self.hwnd);
                     }
                 }
                 crate::file_info::FileSource::ArchiveEntry { on_demand, .. } => {
@@ -1026,6 +1032,10 @@ impl AppWindow {
             self.document.remove_marked_from_list();
             self.process_document_events();
         }
+        // Shell APIがフォーカスを奪うことがあるため復帰
+        unsafe {
+            let _ = SetForegroundWindow(self.hwnd);
+        }
     }
 
     fn action_marked_move(&mut self) {
@@ -1060,6 +1070,10 @@ impl AppWindow {
                 }
                 self.process_document_events();
             }
+            // Shell APIがフォーカスを奪うことがあるため復帰
+            unsafe {
+                let _ = SetForegroundWindow(self.hwnd);
+            }
         }
     }
 
@@ -1084,6 +1098,10 @@ impl AppWindow {
             let path_refs: Vec<&Path> = paths.iter().map(PathBuf::as_path).collect();
             if let Err(e) = crate::file_ops::copy_files(self.hwnd, &path_refs, &dest) {
                 self.show_error_title(&format!("ファイルコピー失敗: {e}"));
+            }
+            // Shell APIがフォーカスを奪うことがあるため復帰
+            unsafe {
+                let _ = SetForegroundWindow(self.hwnd);
             }
         }
     }
@@ -1130,22 +1148,8 @@ impl AppWindow {
 
     fn action_new_window(&mut self) {
         if let Ok(exe) = std::env::current_exe() {
-            let mut cmd = std::process::Command::new(&exe);
-            // コンテナ内の場合はコンテナパスを渡す
-            if let Some(source) = self.document.current_source() {
-                match source {
-                    crate::file_info::FileSource::ArchiveEntry { archive, .. } => {
-                        cmd.arg(archive);
-                    }
-                    crate::file_info::FileSource::PdfPage { pdf_path, .. } => {
-                        cmd.arg(pdf_path);
-                    }
-                    crate::file_info::FileSource::File(path) => {
-                        cmd.arg(path);
-                    }
-                }
-            }
-            if let Err(e) = cmd.spawn() {
+            // 引数なしで空のウィンドウを起動
+            if let Err(e) = std::process::Command::new(&exe).spawn() {
                 self.show_error_title(&format!("新規ウィンドウ起動失敗: {e}"));
             }
         }
@@ -2504,24 +2508,9 @@ Susieプラグイン (.sph/.spi) で拡張可能";
             return;
         }
 
-        let result = if paths.len() > 1 && paths.iter().all(|p| self.document.is_container(p)) {
-            // 全てコンテナ（アーカイブ/PDF）なら複数コンテナをまとめて開く
-            self.document.open_containers(&paths)
-        } else if paths.len() > 1 {
-            // 混在: 通知して最初のファイルのみ開く
-            let msg = "複数ファイルを開く場合はアーカイブ/PDFのみ対応しています\0";
-            let title = "ぐらびゅ\0";
-            let wide_msg: Vec<u16> = msg.encode_utf16().collect();
-            let wide_title: Vec<u16> = title.encode_utf16().collect();
-            unsafe {
-                MessageBoxW(
-                    Some(self.hwnd),
-                    windows::core::PCWSTR(wide_msg.as_ptr()),
-                    windows::core::PCWSTR(wide_title.as_ptr()),
-                    MB_OK | MB_ICONINFORMATION,
-                );
-            }
-            self.document.open(&paths[0])
+        let result = if paths.len() > 1 {
+            // 複数パス: フォルダ・コンテナ・画像の混在をすべてフラットに展開
+            self.document.open_multiple(&paths)
         } else if paths[0].is_dir() {
             self.document.open_folder(&paths[0])
         } else {
