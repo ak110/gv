@@ -20,3 +20,4 @@ jobs:
       - uses: taiki-e/install-action@cargo-deny
       - run: mise run setup-ci
       - run: mise run test
+      - run: pinact run --check
