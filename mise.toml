@@ -2,6 +2,7 @@
 rust = "1.94"
 node = "lts"
 pnpm = "latest"
+pinact = "latest"
 
 [tasks.setup]
 description = "Initial project setup (install deps + configure git hooks)"
@@ -58,6 +59,7 @@ run = [
   "cargo upgrade",
   "cargo update",
   "pnpm update --latest",
+  "GITHUB_TOKEN=$(gh auth token) pinact run --update --min-age 1",
 ]
 
 [tasks.docs]

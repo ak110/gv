@@ -42,7 +42,7 @@ windows = { version = "0.62", features = [
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "bmp", "webp"] }
 png = "0.18"
 serde = { version = "1", features = ["derive"] }
-toml = "1.0"
+toml = "1.1"
 anyhow = "1"
 thiserror = "2"
 crossbeam-channel = "0.5"
