@@ -14,6 +14,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 concurrency:
   group: release
@@ -109,9 +110,19 @@ jobs:
             "LICENSE"
           ) -DestinationPath $zipName
 
+      - name: Update version.json for GitHub Pages
+        shell: pwsh
+        run: |
+          $version = "${{ steps.bump.outputs.version }}"
+          $json = @{
+            tag_name = "v$version"
+            download_url = "https://github.com/${{ github.repository }}/releases/download/v$version/gv-v$version.zip"
+          } | ConvertTo-Json
+          Set-Content -Path "docs/public/version.json" -Value $json -NoNewline
+
       - name: Commit, tag and push
         run: |
-          git add Cargo.toml Cargo.lock
+          git add Cargo.toml Cargo.lock docs/public/version.json
           git commit -m "release: v${{ steps.bump.outputs.version }}"
           git tag "v${{ steps.bump.outputs.version }}"
           git push origin HEAD --tags
@@ -124,3 +135,8 @@ jobs:
             "gv-v${{ steps.bump.outputs.version }}.zip" `
             --title "v${{ steps.bump.outputs.version }}" `
             --generate-notes
+
+      - name: Trigger docs deployment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run docs.yaml

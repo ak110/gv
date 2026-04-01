@@ -6,7 +6,8 @@ use std::path::PathBuf;
 
 use anyhow::{Context as _, Result};
 
-const GITHUB_API_URL: &str = "https://api.github.com/repos/ak110/gv/releases/latest";
+/// GitHub Pages経由のバージョン情報URL（APIレートリミット回避）
+const VERSION_URL: &str = "https://ak110.github.io/gv/version.json";
 
 /// 更新情報
 pub struct UpdateInfo {
@@ -16,16 +17,15 @@ pub struct UpdateInfo {
     pub is_newer: bool,
 }
 
-/// GitHub APIから最新リリース情報を取得し、バージョン比較する
+/// GitHub Pages上のversion.jsonから最新リリース情報を取得し、バージョン比較する
 pub fn check_for_update() -> Result<UpdateInfo> {
     let current_version = env!("CARGO_PKG_VERSION").to_string();
 
-    // GitHub API呼び出し
-    let body = ureq::get(GITHUB_API_URL)
-        .header("Accept", "application/vnd.github.v3+json")
+    // GitHub Pages経由でバージョン情報を取得（APIレートリミットの影響を受けない）
+    let body = ureq::get(VERSION_URL)
         .header("User-Agent", &format!("gv/{current_version}"))
         .call()
-        .context("GitHub API呼び出し失敗")?
+        .context("バージョン情報の取得失敗")?
         .body_mut()
         .read_to_string()
         .context("レスポンス読み込み失敗")?;
@@ -37,24 +37,10 @@ pub fn check_for_update() -> Result<UpdateInfo> {
         .ok_or_else(|| anyhow::anyhow!("tag_nameが見つかりません"))?;
     let latest_version = tag.strip_prefix('v').unwrap_or(tag).to_string();
 
-    // ダウンロードURL取得（ぐらびゅ.exeまたは.zipアセット）
-    let download_url = response["assets"]
-        .as_array()
-        .and_then(|assets| {
-            assets.iter().find_map(|a| {
-                let name = a["name"].as_str().unwrap_or("");
-                if std::path::Path::new(name)
-                    .extension()
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"))
-                    || name == "ぐらびゅ.exe"
-                {
-                    a["browser_download_url"].as_str().map(ToString::to_string)
-                } else {
-                    None
-                }
-            })
-        })
-        .ok_or_else(|| anyhow::anyhow!("ダウンロード可能なアセットが見つかりません"))?;
+    let download_url = response["download_url"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("download_urlが見つかりません"))?
+        .to_string();
 
     let is_newer = match (
         parse_version(&current_version),
