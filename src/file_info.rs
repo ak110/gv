@@ -24,7 +24,11 @@ pub enum FileSource {
 }
 
 impl FileSource {
-    /// 表示用パスを生成する
+    /// 表示用パスを生成する。
+    ///
+    /// 戻り値は **OS パスではなく UI 表示専用の論理パス文字列** であり、
+    /// `Path::join` で組み立てる対象ではない (`/` 区切り固定で Windows パスとも混在しうる)。
+    /// ファイルシステム操作には `parent_dir()` / `default_save_name()` 等の専用メソッドを使うこと。
     pub fn display_path(&self) -> String {
         match self {
             FileSource::File(path) => path.display().to_string(),

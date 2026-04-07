@@ -291,6 +291,10 @@ impl D2DRenderer {
         };
         let pitch = image.width * 4;
 
+        // SAFETY: D2D は (pitch * height) バイトをコピーする。bgra_data は
+        // rgba_to_premultiplied_bgra で `image.data.len()` (= width*height*4) バイトを返すため
+        // pitch (= width*4) × height = bgra_data.len() を満たす。CreateBitmap は同期コピーで
+        // 戻った時点で bgra_data の参照は不要になるため寿命の問題もない。
         unsafe {
             self.render_target
                 .CreateBitmap(

@@ -20,6 +20,12 @@ pub fn copy_text_to_clipboard(hwnd: HWND, text: &str) -> Result<()> {
     let wide = to_wide(text);
     let byte_len = wide.len() * 2;
 
+    // SAFETY:
+    // - hwnd は呼び出し元から渡された有効なウィンドウハンドル。
+    // - GlobalAlloc(GMEM_MOVEABLE, byte_len) で確保した領域に GlobalLock で得たポインタへ
+    //   wide (Vec<u16>) を byte_len バイトだけコピーする。コピー元・先ともに少なくとも
+    //   byte_len バイトが確保済みで領域は重ならない。
+    // - SetClipboardData 成功後はクリップボードがメモリの所有権を取るため呼び出し元では解放しない。
     unsafe {
         OpenClipboard(Some(hwnd)).context("クリップボードを開けません")?;
         let _ = EmptyClipboard();
@@ -70,6 +76,10 @@ pub fn copy_image_to_clipboard(hwnd: HWND, image: &DecodedImage) -> Result<()> {
         }
     }
 
+    // SAFETY:
+    // - dib は total_size バイトの Vec で初期化済み。GlobalAlloc(GMEM_MOVEABLE, total_size) で
+    //   確保した領域に同じバイト数だけコピーするので両側のバウンドは満たされる。
+    // - SetClipboardData 成功後はクリップボードがメモリの所有権を取るため呼び出し元では解放しない。
     unsafe {
         OpenClipboard(Some(hwnd)).context("クリップボードを開けません")?;
         let _ = EmptyClipboard();
@@ -92,6 +102,13 @@ pub fn copy_image_to_clipboard(hwnd: HWND, image: &DecodedImage) -> Result<()> {
 
 /// クリップボードから画像を取得する（CF_DIB形式）
 pub fn paste_image_from_clipboard(hwnd: HWND) -> Result<Option<DecodedImage>> {
+    // SAFETY:
+    // - GetClipboardData の戻り値 HGLOBAL に GlobalLock してから読み取る。GlobalSize で
+    //   実バイト数を確認し、required_size を計算してバウンドチェック後にのみアクセスする。
+    // - DIB ヘッダは pack されていないアライメントの可能性があるため `ptr::read_unaligned` で
+    //   読み取る (フィールドはそれぞれ 4/4/2 バイト境界に並ばない場合がある)。
+    // - ピクセルデータの読み込みも src_row + x*bytes_per_pixel が required_size 内に収まる
+    //   ことを上で検証済みなので、`*src.add(...)` は確保領域内。
     unsafe {
         OpenClipboard(Some(hwnd)).context("クリップボードを開けません")?;
 

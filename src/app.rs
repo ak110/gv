@@ -45,7 +45,14 @@ const VK_CONTROL: i32 = 0x11;
 const VK_SHIFT: i32 = 0x10;
 const VK_MENU: i32 = 0x12; // Alt
 
-/// メインウィンドウ
+/// メインウィンドウ (View 層)
+///
+/// Win32 メッセージループから呼び出され、`Document` モデルへの操作と `D2DRenderer`
+/// による描画を仲介する。`docs/architecture.md` の Model-View 分離パターン参照。
+///
+/// - メニューバー・キー入力・ファイルリストパネル等の UI 状態を所有
+/// - `Document` から `DocumentEvent` をチャネル経由で受け取り、再描画や UI 更新を行う
+/// - エラーは `show_error_title` でタイトルバーに表示する (詳細は CLAUDE.md エラー方針)
 pub struct AppWindow {
     hwnd: HWND,
     document: Document,
@@ -205,8 +212,12 @@ impl AppWindow {
             );
         });
         let cache_budget = Self::get_cache_budget();
-        app.document
-            .start_prefetch(notify, cache_budget, base_image_size);
+        if let Err(e) = app
+            .document
+            .start_prefetch(notify, cache_budget, base_image_size)
+        {
+            app.show_error_title(&format!("先読みエンジンの起動に失敗しました: {e}"));
+        }
 
         // 設定でalways_on_topが有効な場合、ウィンドウに反映
         if always_on_top {
@@ -1192,7 +1203,14 @@ impl AppWindow {
 
     fn action_open_bookmark_folder(&mut self) {
         let dir = crate::bookmark::bookmark_dir();
-        let _ = std::fs::create_dir_all(&dir);
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            // ディレクトリがすでにある場合は無視されるため、ここに来るのは権限不足等。
+            // explorer.exe 起動側でも失敗するため致命的にせず警告のみ。
+            eprintln!(
+                "警告: ブックマークディレクトリ作成失敗: {} ({e})",
+                dir.display()
+            );
+        }
         if let Err(e) = std::process::Command::new("explorer.exe").arg(&dir).spawn() {
             self.show_error_title(&format!("エクスプローラ起動失敗: {e}"));
         }
@@ -1203,7 +1221,12 @@ impl AppWindow {
             && let Some(dir) = exe.parent()
         {
             let spi_dir = dir.join("spi");
-            let _ = std::fs::create_dir_all(&spi_dir);
+            if let Err(e) = std::fs::create_dir_all(&spi_dir) {
+                eprintln!(
+                    "警告: spi ディレクトリ作成失敗: {} ({e})",
+                    spi_dir.display()
+                );
+            }
             if let Err(e) = std::process::Command::new("explorer.exe")
                 .arg(&spi_dir)
                 .spawn()
@@ -1238,10 +1261,16 @@ impl AppWindow {
                 crate::ui::resize_dialog::show_resize_dialog(self.hwnd, img.width, img.height)
             && let Some(img) = self.document.current_image()
         {
-            let result = crate::filter::transform::resize(img, nw, nh);
-            self.selection.deselect();
-            self.document.apply_edit(result);
-            self.process_document_events();
+            match crate::filter::transform::resize(img, nw, nh) {
+                Ok(result) => {
+                    self.selection.deselect();
+                    self.document.apply_edit(result);
+                    self.process_document_events();
+                }
+                Err(e) => {
+                    self.show_error_title(&format!("リサイズに失敗しました: {e}"));
+                }
+            }
         }
     }
 

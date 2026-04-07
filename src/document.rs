@@ -110,6 +110,11 @@ fn process_single_container(path: &Path, archive_manager: &ArchiveManager) -> Co
         }
     } else if archive_manager.supports_on_demand(path) {
         // ZIP: mmapで読み込み
+        // SAFETY:
+        // - memmap2::Mmap::map は対象ファイルが mmap 中に外部から書き換えられないことを
+        //   呼び出し側が保証する必要がある (Rust 的には UB の可能性)。本アプリでは
+        //   閲覧専用かつ ZipBuffer の生存期間中は書き換え操作を行わない設計のため許容する。
+        // - 失敗時は通常の fs::read にフォールバックするので致命的にはならない。
         let buffer =
             if let Ok(mmap) = File::open(path).and_then(|f| unsafe { memmap2::Mmap::map(&f) }) {
                 ZipBuffer::Mmap(mmap)
@@ -137,12 +142,14 @@ fn process_single_container(path: &Path, archive_manager: &ArchiveManager) -> Co
         }
     } else {
         // RAR/7z/Susie: temp展開
+        // システムクロックが UNIX epoch より前にずれていても処理を継続するため、
+        // duration_since のエラーは ZERO にフォールバック (一意性は process_id + path が担保)
         let temp_dir = std::env::temp_dir().join(format!(
             "gv_archive_{}_{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .expect("system clock before UNIX epoch")
+                .unwrap_or(std::time::Duration::ZERO)
                 .as_millis()
         ));
         if let Err(e) = std::fs::create_dir_all(&temp_dir) {
@@ -246,12 +253,15 @@ impl Document {
     /// `notify`: レスポンス受信時のコールバック（UIスレッド通知用）
     /// `cache_budget`: キャッシュメモリ予算（バイト）
     /// `base_image_size`: キャッシュ枚数計算の基準となる1枚あたりのバイト数
+    ///
+    /// ワーカースレッドの起動に失敗した場合は `Err` を返す。呼び出し元で
+    /// `show_error_title` 等に流すこと。失敗してもアプリ自体は起動継続可能。
     pub fn start_prefetch(
         &mut self,
         notify: Arc<dyn Fn() + Send + Sync>,
         cache_budget: usize,
         base_image_size: usize,
-    ) {
+    ) -> Result<()> {
         // UI通知コールバックをバックグラウンド展開用にも保持
         self.ui_notify = Some(Arc::clone(&notify));
         self.prefetch = Some(PrefetchEngine::new(
@@ -259,8 +269,9 @@ impl Document {
             Arc::clone(&self.decoder),
             Arc::clone(&self.archive_manager),
             Arc::clone(&self.zip_buffers),
-        ));
+        )?);
         self.update_cache_range(cache_budget, base_image_size);
+        Ok(())
     }
 
     /// キャッシュ範囲を再計算する
@@ -272,7 +283,10 @@ impl Document {
         const MAX_CACHE_FORWARD: usize = 4;
         const MAX_CACHE_BACKWARD: usize = 2;
 
-        let total_slots = (cache_budget / base_image_size).max(3);
+        // PrefetchConfig::base_image_size() で 0 はクランプされるが、
+        // 内部呼び出し経路でも防御層として 1 にフォールバックしておく。
+        let base = base_image_size.max(1);
+        let total_slots = (cache_budget / base).max(3);
         self.cache_forward = (total_slots * 2 / 3).clamp(1, MAX_CACHE_FORWARD);
         self.cache_backward = (total_slots / 3).clamp(1, MAX_CACHE_BACKWARD);
         self.cache.set_max_memory(cache_budget);
@@ -797,13 +811,24 @@ impl Document {
         let generation = self.expand_generation;
         let archive_manager = Arc::clone(&self.archive_manager);
         let ui_notify = self.ui_notify.clone();
+        // rayon プール作成失敗を UI に通知するため、event_sender をワーカースレッドへ複製する
+        let event_sender = self.event_sender.clone();
 
         std::thread::spawn(move || {
-            // rayon プールで並列展開
-            let pool = rayon::ThreadPoolBuilder::new()
-                .num_threads(4)
-                .build()
-                .expect("スレッドプール作成失敗");
+            // rayon プールで並列展開。プール作成失敗時は DocumentEvent::Error を送って終了する。
+            let pool = match rayon::ThreadPoolBuilder::new().num_threads(4).build() {
+                Ok(pool) => pool,
+                Err(e) => {
+                    let _ = event_sender.send(DocumentEvent::Error(format!(
+                        "バックグラウンド展開用スレッドプールの作成に失敗しました: {e}"
+                    )));
+                    let _ = tx.send(ContainerExpandEvent::AllDone { generation });
+                    if let Some(notify) = &ui_notify {
+                        notify();
+                    }
+                    return;
+                }
+            };
 
             pool.install(|| {
                 paths.par_iter().for_each(|path| {

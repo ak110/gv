@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::thread::JoinHandle;
 
+use anyhow::{Context as _, Result};
 use crossbeam_channel::{Receiver, Sender};
 
 use crate::archive::ArchiveManager;
@@ -59,7 +60,7 @@ impl PrefetchEngine {
         decoder: Arc<DecoderChain>,
         archive_manager: Arc<ArchiveManager>,
         zip_buffers: Arc<RwLock<HashMap<PathBuf, ZipBuffer>>>,
-    ) -> Self {
+    ) -> Result<Self> {
         let (request_tx, request_rx) = crossbeam_channel::unbounded();
         let (response_tx, response_rx) = crossbeam_channel::unbounded();
         let current_generation = Arc::new(AtomicU64::new(0));
@@ -78,15 +79,15 @@ impl PrefetchEngine {
                     zip_buffers,
                 );
             })
-            .expect("先読みワーカースレッドの起動に失敗");
+            .context("先読みワーカースレッドの起動に失敗")?;
 
-        Self {
+        Ok(Self {
             request_tx,
             response_rx,
             worker_handle: Some(worker_handle),
             current_generation,
             generation: 0,
-        }
+        })
     }
 
     /// 現在のgenerationを付与してロードリクエストを送信
@@ -109,6 +110,23 @@ impl PrefetchEngine {
     /// 全レスポンスをノンブロッキングで取得
     pub fn drain_responses(&self) -> Vec<LoadResponse> {
         let mut responses = Vec::new();
+        while let Ok(resp) = self.response_rx.try_recv() {
+            responses.push(resp);
+        }
+        responses
+    }
+
+    /// テスト用: 最初の1件をブロッキングで受信し、続けてノンブロッキングで残りを回収する。
+    ///
+    /// `recv_timeout` で確定的に待機するため、`thread::sleep` ベースのポーリングより
+    /// 高速かつ flaky になりにくい。
+    #[cfg(test)]
+    pub fn recv_responses_blocking(&self, timeout: std::time::Duration) -> Vec<LoadResponse> {
+        let mut responses = Vec::new();
+        match self.response_rx.recv_timeout(timeout) {
+            Ok(first) => responses.push(first),
+            Err(_) => return responses,
+        }
         while let Ok(resp) = self.response_rx.try_recv() {
             responses.push(resp);
         }
@@ -320,30 +338,25 @@ mod tests {
             test_decoder(),
             test_archive_manager(),
             test_zip_buffers(),
-        );
+        )
+        .expect("test PrefetchEngine::new");
         engine.request_load(0, path, None, None);
 
-        // ワーカーの処理完了を待つ
+        // ワーカーの処理完了を recv_timeout で確定的に待つ
+        let responses = engine.recv_responses_blocking(std::time::Duration::from_secs(1));
         let mut loaded = false;
-        for _ in 0..100 {
-            let responses = engine.drain_responses();
-            for resp in responses {
-                match resp {
-                    LoadResponse::Loaded { index, image, .. } => {
-                        assert_eq!(index, 0);
-                        assert_eq!(image.width, 1);
-                        assert_eq!(image.height, 1);
-                        loaded = true;
-                    }
-                    LoadResponse::Failed { error, .. } => {
-                        panic!("unexpected failure: {error}");
-                    }
+        for resp in responses {
+            match resp {
+                LoadResponse::Loaded { index, image, .. } => {
+                    assert_eq!(index, 0);
+                    assert_eq!(image.width, 1);
+                    assert_eq!(image.height, 1);
+                    loaded = true;
+                }
+                LoadResponse::Failed { error, .. } => {
+                    panic!("unexpected failure: {error}");
                 }
             }
-            if loaded {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
         }
         assert!(loaded, "レスポンスが受信できなかった");
 
@@ -365,7 +378,8 @@ mod tests {
             test_decoder(),
             test_archive_manager(),
             test_zip_buffers(),
-        );
+        )
+        .expect("test PrefetchEngine::new");
 
         // generation=0でリクエストを送信する前に世代を進める
         engine.request_load(0, path.clone(), None, None);
@@ -374,16 +388,23 @@ mod tests {
         // generation=1で新しいリクエスト
         engine.request_load(1, path, None, None);
 
-        // 少し待ってレスポンスを収集
-        std::thread::sleep(std::time::Duration::from_millis(200));
-        let responses = engine.drain_responses();
-
-        // generation=0のリクエストはスキップされる可能性がある（タイミング依存）
-        // generation=1のリクエストは確実に処理される
-        let has_gen1 = responses.iter().any(|r| match r {
-            LoadResponse::Loaded { generation, .. } => *generation == 1,
-            LoadResponse::Failed { .. } => false,
-        });
+        // generation=1 のレスポンスが届くまで recv_timeout で確定的に待機する。
+        // generation=0 のレスポンスはスキップされる可能性があるため has_gen1 まで繰り返す。
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let mut has_gen1 = false;
+        while std::time::Instant::now() < deadline {
+            let responses = engine.recv_responses_blocking(std::time::Duration::from_millis(200));
+            if responses.is_empty() {
+                continue;
+            }
+            if responses
+                .iter()
+                .any(|r| matches!(r, LoadResponse::Loaded { generation: 1, .. }))
+            {
+                has_gen1 = true;
+                break;
+            }
+        }
         assert!(has_gen1, "generation=1のレスポンスが存在するべき");
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -396,21 +417,14 @@ mod tests {
             test_decoder(),
             test_archive_manager(),
             test_zip_buffers(),
-        );
+        )
+        .expect("test PrefetchEngine::new");
         engine.request_load(0, PathBuf::from("nonexistent_file_xyz.png"), None, None);
 
-        let mut failed = false;
-        for _ in 0..100 {
-            for resp in engine.drain_responses() {
-                if matches!(resp, LoadResponse::Failed { .. }) {
-                    failed = true;
-                }
-            }
-            if failed {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
+        let responses = engine.recv_responses_blocking(std::time::Duration::from_secs(1));
+        let failed = responses
+            .iter()
+            .any(|resp| matches!(resp, LoadResponse::Failed { .. }));
         assert!(failed, "失敗レスポンスが受信できなかった");
     }
 
@@ -421,7 +435,8 @@ mod tests {
             test_decoder(),
             test_archive_manager(),
             test_zip_buffers(),
-        );
+        )
+        .expect("test PrefetchEngine::new");
         drop(engine);
         // パニックせずに終了すればOK
     }

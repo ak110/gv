@@ -15,6 +15,8 @@ pub fn to_ansi(s: &str) -> Vec<u8> {
         return vec![0];
     }
 
+    // SAFETY: Win32 WideCharToMultiByte の規定通り、まず len 取得呼び出しで必要バイト数を確認し、
+    // その +1 サイズの buf を渡してエンコードする。出力先バッファは buf スライスで境界が保証される。
     unsafe {
         // 必要バッファサイズを取得
         let len = WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, &wide, None, None, None);
@@ -50,6 +52,8 @@ pub fn from_ansi(bytes: &[u8]) -> String {
         return String::new();
     }
 
+    // SAFETY: Win32 MultiByteToWideChar の規定通り、まず wlen 取得呼び出しで必要ワイド文字数を
+    // 確認し、その分の Vec<u16> を渡してデコードする。
     unsafe {
         // 必要なワイド文字数を取得
         let wlen = MultiByteToWideChar(CP_ACP, MB_PRECOMPOSED, ansi, None);
@@ -87,6 +91,17 @@ pub fn hlocal_from_isize(val: isize) -> HLOCAL {
 /// DIB (Device Independent Bitmap) をRGBA画像に変換する
 /// Susieプラグインの GetPicture が返す BITMAPINFO + ピクセルデータを処理
 /// 対応: 1bit, 4bit, 8bit, 24bit, 32bit (bottom-up/top-down)
+///
+/// # SAFETY (関数全体)
+///
+/// 呼び出し側は以下を保証すること:
+/// - `bmi_ptr` が `BitmapInfoHeader` (40 バイト) 以上のメモリ領域を指す。
+///   bit_count <= 8 のときは続けて `colors_used * 4` バイトのパレット領域があること。
+/// - `bits_ptr` が `stride * abs_height` バイト以上のメモリ領域を指し、関数の実行中
+///   解放されないこと (Susie プラグインが GetPicture で確保したメモリの所有期間内)。
+///
+/// 関数内の各 `unsafe` ブロックは上記前提のもと、`width / height / bit_count` から
+/// 計算した `src_row` と `x * bytes_per_pixel` のオフセットでのみメモリを参照する。
 pub fn dib_to_rgba(bmi_ptr: *const u8, bits_ptr: *const u8) -> Result<DecodedImage> {
     if bmi_ptr.is_null() || bits_ptr.is_null() {
         bail!("DIBポインタがnullです");

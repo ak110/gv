@@ -35,17 +35,25 @@ pub struct SusiePlugin {
     _lib: Library,
 }
 
-// SusiePlugin自体はSend + Syncにできないが、Arc<Mutex<>>で包んで使う
+// SAFETY: SusiePlugin は内部に Library (HMODULE) と関数ポインタを保持する。
+// プラグイン側は単一の DLL ロードに対してスレッド安全とは限らないが、本アプリでは
+// `Arc<Mutex<SusiePlugin>>` で包んで全呼び出しを直列化する前提のため Send は安全。
+// Sync は実装せず、必ず Mutex 経由でアクセスすること。
 unsafe impl Send for SusiePlugin {}
 
 impl SusiePlugin {
     /// DLLをロードしてプラグインを初期化する
     pub fn try_load(path: &Path) -> Result<Self> {
+        // SAFETY: Library::new はネイティブコード (Susie プラグイン DLL) を読み込む。
+        // ロード自体は OS のローダ任せで、副作用 (DllMain 実行) があるが、Susie 規約に
+        // 準拠した DLL であることを前提とする。失敗時は Err を返してリソースは即解放される。
         let lib = unsafe {
             Library::new(path).with_context(|| format!("DLLロード失敗: {}", path.display()))?
         };
 
-        // 必須シンボルの解決
+        // SAFETY: 取得するシンボル名と GetPluginInfoFn / IsSupportedFn のシグネチャは
+        // Susie プラグイン仕様 (32bit/64bit ABI) に準拠している。シグネチャ不一致の DLL を
+        // 読み込んだ場合は呼び出し時に未定義動作になりうるが、これは Susie 規格自体の仮定。
         let get_plugin_info: GetPluginInfoFn = unsafe {
             *lib.get::<GetPluginInfoFn>(b"GetPluginInfo\0")
                 .with_context(|| "GetPluginInfoが見つかりません")?

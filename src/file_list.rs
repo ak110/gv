@@ -29,8 +29,16 @@ struct SimpleRng(u64);
 impl SimpleRng {
     fn new() -> Self {
         let mut buf = [0u8; 8];
-        getrandom::fill(&mut buf).expect("OS乱数ソースの取得に失敗");
-        let seed = u64::from_ne_bytes(buf);
+        // OS 乱数源が取れない場合はシステム時刻ベースのシードにフォールバックする。
+        // シャッフル用途のため暗号強度は不要で、決定的な再現を避けられれば十分。
+        let seed = if getrandom::fill(&mut buf).is_ok() {
+            u64::from_ne_bytes(buf)
+        } else {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(0x9E37_79B9_7F4A_7C15)
+        };
         Self(seed | 1) // 0シード回避
     }
 

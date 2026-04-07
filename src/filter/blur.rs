@@ -15,8 +15,11 @@ pub fn blur_strong(image: &DecodedImage, region: Option<&PixelRect>) -> DecodedI
 
 /// メディアンフィルタ（3x3）
 pub fn median_filter(image: &DecodedImage, region: Option<&PixelRect>) -> DecodedImage {
-    let w = image.width as i32;
-    let h = image.height as i32;
+    // ループ範囲は i32 (clamp で負値を扱うため)、インデックス計算は usize で行う
+    // (大きな画像で `i32` の `(ny * w + nx) * 4` が overflow するのを防ぐ)
+    let w_u = image.width as usize;
+    let w_i = image.width as i32;
+    let h_i = image.height as i32;
     let mut data = image.data.clone();
 
     let (x0, y0, x1, y1) = region_bounds(region, image.width, image.height);
@@ -27,13 +30,13 @@ pub fn median_filter(image: &DecodedImage, region: Option<&PixelRect>) -> Decode
                 let mut values = Vec::with_capacity(9);
                 for dy in -1..=1 {
                     for dx in -1..=1 {
-                        let nx = (x + dx).clamp(0, w - 1);
-                        let ny = (y + dy).clamp(0, h - 1);
-                        values.push(image.data[((ny * w + nx) * 4 + ch) as usize]);
+                        let nx = (x + dx).clamp(0, w_i - 1) as usize;
+                        let ny = (y + dy).clamp(0, h_i - 1) as usize;
+                        values.push(image.data[(ny * w_u + nx) * 4 + ch]);
                     }
                 }
                 values.sort_unstable();
-                let offset = ((y * w + x) * 4 + ch) as usize;
+                let offset = (y as usize * w_u + x as usize) * 4 + ch;
                 data[offset] = values[4]; // 中央値
             }
         }
@@ -48,8 +51,10 @@ pub fn median_filter(image: &DecodedImage, region: Option<&PixelRect>) -> Decode
 
 /// ボックスブラー（半径指定）
 fn box_blur(image: &DecodedImage, region: Option<&PixelRect>, radius: i32) -> DecodedImage {
-    let w = image.width as i32;
-    let h = image.height as i32;
+    // ループ範囲は i32 (clamp で負値を扱うため)、インデックス計算は usize で行う。
+    let w_u = image.width as usize;
+    let w_i = image.width as i32;
+    let h_i = image.height as i32;
     let mut data = image.data.clone();
 
     let (x0, y0, x1, y1) = region_bounds(region, image.width, image.height);
@@ -61,12 +66,12 @@ fn box_blur(image: &DecodedImage, region: Option<&PixelRect>, radius: i32) -> De
                 let mut sum = 0u32;
                 for dy in -radius..=radius {
                     for dx in -radius..=radius {
-                        let nx = (x + dx).clamp(0, w - 1);
-                        let ny = (y + dy).clamp(0, h - 1);
-                        sum += image.data[((ny * w + nx) * 4 + ch) as usize] as u32;
+                        let nx = (x + dx).clamp(0, w_i - 1) as usize;
+                        let ny = (y + dy).clamp(0, h_i - 1) as usize;
+                        sum += image.data[(ny * w_u + nx) * 4 + ch] as u32;
                     }
                 }
-                let offset = ((y * w + x) * 4 + ch) as usize;
+                let offset = (y as usize * w_u + x as usize) * 4 + ch;
                 data[offset] = (sum / kernel_size as u32) as u8;
             }
         }
@@ -92,7 +97,7 @@ fn region_bounds(region: Option<&PixelRect>, width: u32, height: u32) -> (i32, i
 /// モザイク
 pub fn mosaic(image: &DecodedImage, region: Option<&PixelRect>, block_size: u32) -> DecodedImage {
     let block = block_size.max(1) as i32;
-    let w = image.width as i32;
+    let w_u = image.width as usize;
     let mut data = image.data.clone();
 
     let (x0, y0, x1, y1) = region_bounds(region, image.width, image.height);
@@ -106,13 +111,13 @@ pub fn mosaic(image: &DecodedImage, region: Option<&PixelRect>, block_size: u32)
             let by_end = (by + block).min(y1);
             let count = ((bx_end - bx) * (by_end - by)) as u32;
 
-            // ブロック内の平均色を計算
+            // ブロック内の平均色を計算 (オフセットは usize で計算してオーバーフローを防ぐ)
             let mut r_sum = 0u32;
             let mut g_sum = 0u32;
             let mut b_sum = 0u32;
             for py in by..by_end {
                 for px in bx..bx_end {
-                    let offset = ((py * w + px) * 4) as usize;
+                    let offset = (py as usize * w_u + px as usize) * 4;
                     r_sum += image.data[offset] as u32;
                     g_sum += image.data[offset + 1] as u32;
                     b_sum += image.data[offset + 2] as u32;
@@ -125,7 +130,7 @@ pub fn mosaic(image: &DecodedImage, region: Option<&PixelRect>, block_size: u32)
             // ブロック内を平均色で塗り潰す
             for py in by..by_end {
                 for px in bx..bx_end {
-                    let offset = ((py * w + px) * 4) as usize;
+                    let offset = (py as usize * w_u + px as usize) * 4;
                     data[offset] = avg_r;
                     data[offset + 1] = avg_g;
                     data[offset + 2] = avg_b;
@@ -161,14 +166,14 @@ pub fn gaussian_blur(
 /// アンシャープマスク
 pub fn unsharp_mask(image: &DecodedImage, region: Option<&PixelRect>, radius: f64) -> DecodedImage {
     let blurred = gaussian_blur(image, region, radius);
-    let w = image.width as i32;
+    let w_u = image.width as usize;
     let mut data = image.data.clone();
 
     let (x0, y0, x1, y1) = region_bounds(region, image.width, image.height);
 
     for y in y0..y1 {
         for x in x0..x1 {
-            let offset = ((y * w + x) * 4) as usize;
+            let offset = (y as usize * w_u + x as usize) * 4;
             for ch in 0..3 {
                 // unsharp: original + (original - blurred)
                 let orig = image.data[offset + ch] as i32;

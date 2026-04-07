@@ -207,9 +207,15 @@ impl DisplayConfig {
 }
 
 impl PrefetchConfig {
-    /// キャッシュ基準サイズ（バイト）
+    /// キャッシュ基準サイズ（バイト）。
+    ///
+    /// `cache_base_width` / `cache_base_height` に 0 が設定されていても、
+    /// 後段（`Document::update_cache_range` 等）でゼロ除算が起きないよう
+    /// 最低 1 ピクセルにクランプしてから計算する。
     pub fn base_image_size(&self) -> usize {
-        self.cache_base_width as usize * self.cache_base_height as usize * 4
+        let w = self.cache_base_width.max(1) as usize;
+        let h = self.cache_base_height.max(1) as usize;
+        w * h * 4
     }
 }
 
@@ -418,12 +424,14 @@ default_sort = "bogus"
     }
 
     #[test]
-    fn prefetch_base_image_size_zero() {
+    fn prefetch_base_image_size_zero_clamps_to_one_pixel() {
+        // ゼロ設定は 1×1 ピクセルにクランプされる（document::update_cache_range の
+        // ゼロ除算防止）。
         let p = PrefetchConfig {
             cache_base_width: 0,
             cache_base_height: 0,
         };
-        assert_eq!(p.base_image_size(), 0);
+        assert_eq!(p.base_image_size(), 4);
     }
 
     #[test]

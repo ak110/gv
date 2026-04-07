@@ -1,5 +1,7 @@
 //! 画像の幾何変換（トリミング等）
 
+use anyhow::{Context as _, Result};
+
 use crate::image::DecodedImage;
 use crate::selection::PixelRect;
 
@@ -211,13 +213,16 @@ pub fn rotate_arbitrary(image: &DecodedImage, degrees: f64) -> DecodedImage {
 }
 
 /// 解像度変更（Lanczos3リサイズ、SIMD加速）
-pub fn resize(image: &DecodedImage, new_width: u32, new_height: u32) -> DecodedImage {
+///
+/// 入力サイズが極端な場合（ゼロや fast_image_resize が受け付けないサイズ）は
+/// `Err` を返す。呼び出し側で `show_error_title` 等に流すこと。
+pub fn resize(image: &DecodedImage, new_width: u32, new_height: u32) -> Result<DecodedImage> {
     if new_width == 0 || new_height == 0 {
-        return DecodedImage {
+        return Ok(DecodedImage {
             data: image.data.clone(),
             width: image.width,
             height: image.height,
-        };
+        });
     }
     use fast_image_resize as fr;
     let mut src_buf = image.data.clone();
@@ -227,19 +232,19 @@ pub fn resize(image: &DecodedImage, new_width: u32, new_height: u32) -> DecodedI
         &mut src_buf,
         fr::PixelType::U8x4,
     )
-    .expect("リサイズ用ソース画像作成失敗");
+    .context("リサイズ用ソース画像の作成に失敗")?;
     let mut dst_image = fr::images::Image::new(new_width, new_height, fr::PixelType::U8x4);
     let options =
         fr::ResizeOptions::new().resize_alg(fr::ResizeAlg::Convolution(fr::FilterType::Lanczos3));
     let mut resizer = fr::Resizer::new();
     resizer
         .resize(&src_image, &mut dst_image, &options)
-        .expect("画像リサイズ失敗");
-    DecodedImage {
+        .context("画像リサイズに失敗")?;
+    Ok(DecodedImage {
         data: dst_image.into_vec(),
         width: new_width,
         height: new_height,
-    }
+    })
 }
 
 #[cfg(test)]
@@ -380,10 +385,20 @@ mod tests {
     #[test]
     fn resize_basic() {
         let img = test_image_4x4();
-        let resized = resize(&img, 2, 2);
+        let resized = resize(&img, 2, 2).expect("resize");
         assert_eq!(resized.width, 2);
         assert_eq!(resized.height, 2);
         assert_eq!(resized.data.len(), 2 * 2 * 4);
+    }
+
+    #[test]
+    fn resize_zero_returns_original_clone() {
+        // 縦横ゼロは「元画像のクローンを返す」フォールバック動作。
+        // パニックせず Ok を返すことを保証する（リサイズダイアログでの保険）。
+        let img = test_image_4x4();
+        let r = resize(&img, 0, 0).expect("resize zero");
+        assert_eq!(r.width, img.width);
+        assert_eq!(r.height, img.height);
     }
 
     #[test]

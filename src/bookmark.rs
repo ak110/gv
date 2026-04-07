@@ -29,12 +29,18 @@ pub fn save_bookmark(
     current_index: Option<usize>,
 ) -> Result<()> {
     let dir = bookmark_dir();
-    let _ = std::fs::create_dir_all(&dir);
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        eprintln!(
+            "警告: ブックマークディレクトリ作成失敗: {} ({e})",
+            dir.display()
+        );
+    }
 
     // デフォルトファイル名: 日付ベース
+    // システムクロックが UNIX epoch より前にずれている場合は 0 にフォールバック
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .unwrap_or(std::time::Duration::ZERO)
         .as_secs();
     let default_name = format!("bookmark_{now}.gvbm");
 

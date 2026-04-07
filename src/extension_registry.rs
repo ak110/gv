@@ -1,7 +1,10 @@
 use std::collections::HashSet;
 
-/// 画像・アーカイブ拡張子のレジストリ
-/// Susieプラグイン等から動的に拡張子を登録できる
+/// 画像・アーカイブ拡張子のレジストリ。
+///
+/// 起動時にデフォルト拡張子で初期化され、`Susie` プラグインがロードされた際に
+/// `register_image_extensions` / `register_archive_extensions` を通じて追加登録される。
+/// `is_image_extension` / `is_archive_extension` でファイル名が画像/アーカイブかを判定する。
 pub struct ExtensionRegistry {
     image_extensions: HashSet<String>,
     archive_extensions: HashSet<String>,

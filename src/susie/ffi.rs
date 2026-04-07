@@ -83,15 +83,7 @@ impl ArchiveFileInfo {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn archive_file_info_size() {
-        // ArchiveFileInfoは固定サイズであるべき
-        // method(8) + position(8) + compsize(8) + filesize(8) + timestamp(8)
-        // + path(200) + filename(200) + crc(4) = 444
-        assert_eq!(std::mem::size_of::<ArchiveFileInfo>(), 444);
-    }
-}
+// ArchiveFileInfo のサイズ検証 (compile-time)
+// method(8) + position(8) + compsize(8) + filesize(8) + timestamp(8)
+// + path(200) + filename(200) + crc(4) = 444
+const _: () = assert!(std::mem::size_of::<ArchiveFileInfo>() == 444);

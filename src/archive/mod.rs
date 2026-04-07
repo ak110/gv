@@ -240,27 +240,16 @@ mod tests {
         assert!(mgr.find_handler(Path::new("a.rar")).is_ok());
         assert!(mgr.find_handler(Path::new("a.cbr")).is_ok());
         assert!(mgr.find_handler(Path::new("a.7z")).is_ok());
+        // 大文字小文字の正規化も find_handler 経由で確認 (normalized_extension の置き換え)
+        assert!(mgr.find_handler(Path::new("a.ZIP")).is_ok());
+        assert!(mgr.find_handler(Path::new("a.Rar")).is_ok());
+        // 拡張子なしは失敗
+        assert!(mgr.find_handler(Path::new("noext")).is_err());
     }
 
-    #[test]
-    fn normalized_extension_handles_various_cases() {
-        // 大文字を小文字に正規化
-        assert_eq!(
-            ArchiveManager::normalized_extension(Path::new("a.ZIP")),
-            ".zip"
-        );
-        assert_eq!(
-            ArchiveManager::normalized_extension(Path::new("a.Rar")),
-            ".rar"
-        );
-        // 拡張子なし → 空文字列
-        assert_eq!(ArchiveManager::normalized_extension(Path::new("noext")), "");
-        // 通常ケース
-        assert_eq!(
-            ArchiveManager::normalized_extension(Path::new("file.7z")),
-            ".7z"
-        );
-    }
+    // normalized_extension の単体テストは削除済み:
+    // 上の find_handler_succeeds_for_supported_extensions が大文字小文字混在の代表的な
+    // 入力で結合的にカバーしており、private 関数の単独テストは冗長。
 
     #[test]
     fn list_images_from_buffer_empty_zip() {

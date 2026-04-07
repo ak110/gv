@@ -104,81 +104,58 @@ mod tests {
         }
     }
 
+    /// CRUD + メモリ予算 + evict + clear のシナリオを 1 関数にまとめた統合テスト。
+    /// agent.md「テスト方針」: CRUD は 1 関数に。境界条件は維持。
     #[test]
-    fn insert_and_get() {
+    fn page_cache_crud_scenario() {
         let mut cache = PageCache::new(1024);
-        let img = make_image(100);
-        assert!(cache.insert(0, img));
+
+        // insert + get + contains
+        assert!(cache.insert(0, make_image(100)));
         assert!(cache.contains(0));
         assert!(cache.get(0).is_some());
-    }
 
-    #[test]
-    fn take_removes_entry() {
-        let mut cache = PageCache::new(1024);
-        cache.insert(0, make_image(100));
+        // 同一 index への上書き (古いエントリのメモリ解放を確認)
+        assert!(cache.insert(0, make_image(150)));
+        assert_eq!(cache.current_memory, 150);
 
+        // take: 取り出し後はキャッシュから消えメモリ使用量も戻る
         let taken = cache.take(0);
         assert!(taken.is_some());
         assert!(!cache.contains(0));
         assert_eq!(cache.current_memory, 0);
-    }
 
-    #[test]
-    fn insert_rejects_when_over_budget() {
-        let mut cache = PageCache::new(200);
-        assert!(cache.insert(0, make_image(150)));
-        // 150 + 100 = 250 > 200
-        assert!(!cache.insert(1, make_image(100)));
-        assert!(!cache.contains(1));
-    }
+        // 存在しない index の take は None
+        assert!(cache.take(99).is_none());
 
-    #[test]
-    fn insert_replaces_same_index() {
-        let mut cache = PageCache::new(200);
-        assert!(cache.insert(0, make_image(100)));
-        // 既存の100を除去してから150を追加 → 150 <= 200
-        assert!(cache.insert(0, make_image(150)));
-        assert_eq!(cache.current_memory, 150);
-    }
+        // メモリ予算超過時は insert が false を返し、エントリは追加されない
+        let mut tight = PageCache::new(200);
+        assert!(tight.insert(0, make_image(150)));
+        assert!(!tight.insert(1, make_image(100))); // 150 + 100 > 200
+        assert!(!tight.contains(1));
 
-    #[test]
-    fn evict_outside_removes_distant_entries() {
-        let mut cache = PageCache::new(10000);
+        // evict_outside: center=5, back=2, fwd=2 → keep 3..=7
+        let mut wide = PageCache::new(10000);
         for i in 0..10 {
-            cache.insert(i, make_image(100));
+            wide.insert(i, make_image(100));
         }
-
-        // center=5, back=2, fwd=2 → keep 3..=7
-        cache.evict_outside(5, 2, 2);
-
+        wide.evict_outside(5, 2, 2);
         for i in 0..3 {
-            assert!(!cache.contains(i), "index {i} should be evicted");
+            assert!(!wide.contains(i), "index {i} should be evicted");
         }
         for i in 3..=7 {
-            assert!(cache.contains(i), "index {i} should remain");
+            assert!(wide.contains(i), "index {i} should remain");
         }
         for i in 8..10 {
-            assert!(!cache.contains(i), "index {i} should be evicted");
+            assert!(!wide.contains(i), "index {i} should be evicted");
         }
-        assert_eq!(cache.current_memory, 500); // 5 entries × 100
-    }
+        assert_eq!(wide.current_memory, 500); // 5 entries × 100
 
-    #[test]
-    fn clear_resets_all() {
-        let mut cache = PageCache::new(1024);
-        cache.insert(0, make_image(100));
-        cache.insert(1, make_image(200));
-
-        cache.clear();
-        assert!(!cache.contains(0));
-        assert!(!cache.contains(1));
-        assert_eq!(cache.current_memory, 0);
-    }
-
-    #[test]
-    fn take_nonexistent_returns_none() {
-        let mut cache = PageCache::new(1024);
-        assert!(cache.take(99).is_none());
+        // clear で全削除
+        wide.clear();
+        for i in 0..10 {
+            assert!(!wide.contains(i));
+        }
+        assert_eq!(wide.current_memory, 0);
     }
 }
