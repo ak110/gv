@@ -224,7 +224,10 @@ impl AppWindow {
         }
 
         // 初期ファイルがあれば開く
-        if !initial_files.is_empty() {
+        if initial_files.is_empty() {
+            // ファイル未指定起動: バージョン入りタイトルを反映
+            app.update_title();
+        } else {
             let result = if initial_files.len() > 1 {
                 // 複数パス: フォルダ・コンテナ・画像の混在をすべてフラットに展開
                 app.document.open_multiple(initial_files)
@@ -361,7 +364,7 @@ impl AppWindow {
             };
             format!("{loading_prefix}{display}{page_info}{sel_info}{expand_info} - ぐらびゅ\0")
         } else {
-            "ぐらびゅ\0".to_string()
+            concat!("ぐらびゅ v", env!("CARGO_PKG_VERSION"), "\0").to_string()
         };
 
         let wide: Vec<u16> = title.encode_utf16().collect();
