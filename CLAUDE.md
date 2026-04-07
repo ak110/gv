@@ -18,6 +18,10 @@
   - `Send` / `Sync` を手で実装している型
   - COM オブジェクトの非自明な所有権遷移
 
+### unsafe-reviewer の必須呼び出し
+
+`unsafe` ブロックを含む `.rs` ファイルを編集・新規作成した直後は、必ず `Task` ツールで `subagent_type=unsafe-reviewer` を呼び出し、対象ファイルの絶対パスを与えてレビューを受けること。これは `.claude/hooks/post-edit-rust.sh` の stderr リマインダとペアになっている恒久ルールであり、`unsafe` を 1 行も触っていない場合でも、編集したファイルに既存の `unsafe` が含まれていれば対象となる。
+
 ### Mutex / RwLock の poison 扱い
 
 - `Mutex::lock()` / `RwLock::read()` / `RwLock::write()` の poison は「他スレッドがロック保持中にパニックした」ことを示し、これは不変条件違反とみなしてプロセスを止めるのが安全。
