@@ -27,7 +27,7 @@ pub fn copy_text_to_clipboard(hwnd: HWND, text: &str) -> Result<()> {
     //   byte_len バイトが確保済みで領域は重ならない。
     // - SetClipboardData 成功後はクリップボードがメモリの所有権を取るため呼び出し元では解放しない。
     unsafe {
-        OpenClipboard(Some(hwnd)).context("クリップボードを開けません")?;
+        OpenClipboard(Some(hwnd)).context("クリップボードを開けない")?;
         let _ = EmptyClipboard();
 
         let hmem = GlobalAlloc(GMEM_MOVEABLE, byte_len).context("GlobalAlloc失敗")?;
@@ -47,7 +47,7 @@ pub fn copy_text_to_clipboard(hwnd: HWND, text: &str) -> Result<()> {
     Ok(())
 }
 
-/// 画像をクリップボードにコピーする（CF_DIB形式）
+/// 画像をクリップボードにコピーする (CF_DIB形式)
 pub fn copy_image_to_clipboard(hwnd: HWND, image: &DecodedImage) -> Result<()> {
     let header_size: usize = 40;
     let row_stride = (image.width as usize * 3).div_ceil(4) * 4;
@@ -81,7 +81,7 @@ pub fn copy_image_to_clipboard(hwnd: HWND, image: &DecodedImage) -> Result<()> {
     //   確保した領域に同じバイト数だけコピーするので両側のバウンドは満たされる。
     // - SetClipboardData 成功後はクリップボードがメモリの所有権を取るため呼び出し元では解放しない。
     unsafe {
-        OpenClipboard(Some(hwnd)).context("クリップボードを開けません")?;
+        OpenClipboard(Some(hwnd)).context("クリップボードを開けない")?;
         let _ = EmptyClipboard();
 
         let hmem = GlobalAlloc(GMEM_MOVEABLE, total_size).context("GlobalAlloc失敗")?;
@@ -100,7 +100,7 @@ pub fn copy_image_to_clipboard(hwnd: HWND, image: &DecodedImage) -> Result<()> {
     Ok(())
 }
 
-/// クリップボードから画像を取得する（CF_DIB形式）
+/// クリップボードから画像を取得する (CF_DIB形式)
 pub fn paste_image_from_clipboard(hwnd: HWND) -> Result<Option<DecodedImage>> {
     // SAFETY:
     // - GetClipboardData の戻り値 HGLOBAL に GlobalLock してから読み取る。GlobalSize で
@@ -110,7 +110,7 @@ pub fn paste_image_from_clipboard(hwnd: HWND) -> Result<Option<DecodedImage>> {
     // - ピクセルデータの読み込みも src_row + x*bytes_per_pixel が required_size 内に収まる
     //   ことを上で検証済みなので、`*src.add(...)` は確保領域内。
     unsafe {
-        OpenClipboard(Some(hwnd)).context("クリップボードを開けません")?;
+        OpenClipboard(Some(hwnd)).context("クリップボードを開けない")?;
 
         let handle = GetClipboardData(CF_DIB.0 as u32);
         let Ok(handle) = handle else {
@@ -130,7 +130,7 @@ pub fn paste_image_from_clipboard(hwnd: HWND) -> Result<Option<DecodedImage>> {
         if data_size < 40 {
             let _ = GlobalUnlock(hglobal);
             let _ = CloseClipboard();
-            bail!("DIBデータが不正（サイズ不足）");
+            bail!("DIBデータが不正 (サイズ不足)");
         }
 
         let header: *const u8 = ptr.cast();
@@ -168,7 +168,7 @@ pub fn paste_image_from_clipboard(hwnd: HWND) -> Result<Option<DecodedImage>> {
         if required_size > data_size {
             let _ = GlobalUnlock(hglobal);
             let _ = CloseClipboard();
-            bail!("DIBデータが不正（ピクセルデータ不足）");
+            bail!("DIBデータが不正 (ピクセルデータ不足)");
         }
 
         let mut rgba = vec![0u8; width as usize * abs_height as usize * 4];

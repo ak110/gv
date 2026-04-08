@@ -29,8 +29,8 @@ const BUTTON_WIDTH: i32 = 80;
 const BUTTON_HEIGHT: i32 = 28;
 const MARGIN: i32 = 12;
 
-/// 角度指定回転ダイアログを表示する（モーダル）
-/// 戻り値: 入力された角度（度数法）。キャンセル時は `None`。
+/// 角度指定回転ダイアログを表示する (モーダル)
+/// 戻り値: 入力された角度 (度数法)。キャンセル時は `None`。
 pub fn show_rotate_dialog(parent: HWND) -> Option<f64> {
     unsafe {
         REGISTER_ONCE.call_once(|| {
@@ -82,7 +82,7 @@ pub fn show_rotate_dialog(parent: HWND) -> Option<f64> {
         let client_w = DIALOG_WIDTH - frame_w * 2;
 
         // ラベル
-        let label: Vec<u16> = "回転角度（度）\0".encode_utf16().collect();
+        let label: Vec<u16> = "回転角度 (度)\0".encode_utf16().collect();
         let _label_hwnd = CreateWindowExW(
             WINDOW_EX_STYLE::default(),
             windows::core::w!("STATIC"),

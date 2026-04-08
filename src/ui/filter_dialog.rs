@@ -15,7 +15,7 @@ const EM_SETSEL: u32 = 0x00B1;
 pub struct FieldDef {
     pub label: &'static str,
     pub default: String,
-    /// trueならES_NUMBERを適用（整数のみ）
+    /// trueならES_NUMBERを適用 (整数のみ)
     pub integer_only: bool,
 }
 
@@ -36,7 +36,7 @@ const DIALOG_WIDTH: i32 = 320;
 const BUTTON_WIDTH: i32 = 80;
 const BUTTON_HEIGHT: i32 = 28;
 const MARGIN: i32 = 12;
-const FIELD_HEIGHT: i32 = 48; // ラベル(20) + EDIT(24) + gap(4)
+const FIELD_HEIGHT: i32 = 48; // ラベル (20) + EDIT (24) + gap (4)
 
 /// フィルタパラメータダイアログを表示する
 /// 戻り値: 各フィールドの入力値。キャンセル時はNone。

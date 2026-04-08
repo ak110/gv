@@ -30,15 +30,15 @@ impl ZipHandler {
         Ok(Self::list_images_from_archive(archive, registry))
     }
 
-    /// インメモリバッファからエントリを読み出す（Stored最適化付き）
+    /// インメモリバッファからエントリを読み出す (Stored最適化付き)
     pub fn read_entry_from_buffer(buffer: &[u8], entry_name: &str) -> Result<Vec<u8>> {
         let cursor = std::io::Cursor::new(buffer);
         let mut archive = zip::ZipArchive::new(cursor).context("ZIPバッファの読み取りに失敗")?;
         let mut entry = archive
             .by_name(entry_name)
-            .with_context(|| format!("エントリが見つかりません: {entry_name}"))?;
+            .with_context(|| format!("エントリが見つからない: {entry_name}"))?;
 
-        // Storedエントリ: バッファから直接スライス（zip Readerのオーバーヘッド回避）
+        // Storedエントリ: バッファから直接スライス (zip Readerのオーバーヘッド回避)
         if entry.compression() == zip::CompressionMethod::Stored {
             let start = entry.data_start().context("データ開始位置の取得に失敗")? as usize;
             let size = entry.size() as usize;
@@ -56,7 +56,7 @@ impl ZipHandler {
     #[cfg(test)]
     pub fn list_images(&self, archive_path: &Path) -> Result<Vec<super::ArchiveImageEntry>> {
         let file = File::open(archive_path)
-            .with_context(|| format!("アーカイブを開けません: {}", archive_path.display()))?;
+            .with_context(|| format!("アーカイブを開けない: {}", archive_path.display()))?;
         let archive = zip::ZipArchive::new(file)
             .with_context(|| format!("ZIP読み取り失敗: {}", archive_path.display()))?;
         Ok(Self::list_images_from_archive(archive, &self.registry))
@@ -105,12 +105,12 @@ impl ArchiveHandler for ZipHandler {
 
     fn read_entry(&self, archive_path: &Path, entry_name: &str) -> Result<Vec<u8>> {
         let file = File::open(archive_path)
-            .with_context(|| format!("アーカイブを開けません: {}", archive_path.display()))?;
+            .with_context(|| format!("アーカイブを開けない: {}", archive_path.display()))?;
         let mut archive = zip::ZipArchive::new(file)
             .with_context(|| format!("ZIP読み取り失敗: {}", archive_path.display()))?;
         let mut entry = archive
             .by_name(entry_name)
-            .with_context(|| format!("エントリが見つかりません: {entry_name}"))?;
+            .with_context(|| format!("エントリが見つからない: {entry_name}"))?;
         let mut data = Vec::with_capacity(entry.size() as usize);
         entry.read_to_end(&mut data)?;
         Ok(data)
@@ -122,7 +122,7 @@ impl ArchiveHandler for ZipHandler {
         target_dir: &Path,
     ) -> Result<Vec<ExtractedEntry>> {
         let file = File::open(archive_path)
-            .with_context(|| format!("アーカイブを開けません: {}", archive_path.display()))?;
+            .with_context(|| format!("アーカイブを開けない: {}", archive_path.display()))?;
         let mut archive = zip::ZipArchive::new(file)
             .with_context(|| format!("ZIP読み取り失敗: {}", archive_path.display()))?;
 
@@ -157,7 +157,7 @@ impl ArchiveHandler for ZipHandler {
                 continue;
             }
 
-            // target_dirに書き出し（重複時はリネーム）
+            // target_dirに書き出し (重複時はリネーム)
             let out_path = resolve_filename(target_dir, filename);
             if std::fs::write(&out_path, &data).is_ok() {
                 results.push((out_path, entry_name));

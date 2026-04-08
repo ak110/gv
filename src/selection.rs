@@ -5,7 +5,7 @@
 
 use crate::render::layout::DrawRect;
 
-/// 画像ピクセル座標の矩形（正規化済み: width/height >= 0）
+/// 画像ピクセル座標の矩形 (正規化済み: width/height >= 0)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PixelRect {
     pub x: i32,
@@ -15,7 +15,7 @@ pub struct PixelRect {
 }
 
 impl PixelRect {
-    /// 2点から正規化された矩形を生成（左上・右下に正規化）
+    /// 2点から正規化された矩形を生成 (左上・右下に正規化)
     pub fn from_two_points(x1: i32, y1: i32, x2: i32, y2: i32) -> Self {
         let (lx, rx) = if x1 <= x2 { (x1, x2) } else { (x2, x1) };
         let (ty, by) = if y1 <= y2 { (y1, y2) } else { (y2, y1) };
@@ -51,7 +51,7 @@ impl PixelRect {
         self.y + self.height
     }
 
-    /// 矩形が有効（面積 > 0）か
+    /// 矩形が有効 (面積 > 0) か
     pub fn is_valid(&self) -> bool {
         self.width > 0 && self.height > 0
     }
@@ -75,7 +75,7 @@ pub enum HandleKind {
 pub enum SelectionState {
     /// 選択なし
     None,
-    /// ドラッグ中（新規選択）
+    /// ドラッグ中 (新規選択)
     Drawing {
         start_px: i32,
         start_py: i32,
@@ -106,9 +106,9 @@ pub struct Selection {
     state: SelectionState,
 }
 
-/// ハンドルのヒット判定半径（スクリーンピクセル）
+/// ハンドルのヒット判定半径 (スクリーンピクセル)
 const HANDLE_HIT_RADIUS: f32 = 6.0;
-/// ハンドル描画サイズ（スクリーンピクセル）
+/// ハンドル描画サイズ (スクリーンピクセル)
 pub const HANDLE_DRAW_SIZE: f32 = 5.0;
 
 impl Selection {
@@ -118,12 +118,12 @@ impl Selection {
         }
     }
 
-    #[allow(dead_code)] // 将来のPhase（フィルタ適用時の選択領域判定等）で使用予定
+    #[allow(dead_code)] // 将来のPhase (フィルタ適用時の選択領域判定等) で使用予定
     pub fn state(&self) -> &SelectionState {
         &self.state
     }
 
-    /// 確定済み選択矩形を返す（Drawing中は未確定の矩形を返す）
+    /// 確定済み選択矩形を返す (Drawing中は未確定の矩形を返す)
     pub fn current_rect(&self) -> Option<PixelRect> {
         match &self.state {
             SelectionState::None => None,
@@ -143,12 +143,12 @@ impl Selection {
         }
     }
 
-    /// 選択が確定状態（Selected）か
+    /// 選択が確定状態 (Selected) か
     pub fn is_selected(&self) -> bool {
         matches!(self.state, SelectionState::Selected { .. })
     }
 
-    /// ドラッグ操作中（Drawing/Resizing/Moving）か
+    /// ドラッグ操作中 (Drawing/Resizing/Moving) か
     pub fn is_dragging(&self) -> bool {
         matches!(
             self.state,
@@ -305,7 +305,7 @@ impl Selection {
         }
     }
 
-    /// 指定スクリーン座標がハンドル上にあるかを返す（カーソル形状の決定用）
+    /// 指定スクリーン座標がハンドル上にあるかを返す (カーソル形状の決定用)
     pub fn hit_test_at(
         &self,
         sx: f32,
@@ -474,7 +474,7 @@ mod tests {
     use super::*;
 
     fn test_draw_rect() -> DrawRect {
-        // 画像100x100を画面の(10,10)-(210,210)に描画している想定
+        // 画像100x100を画面の (10,10)-(210,210) に描画している想定
         DrawRect {
             x: 10.0,
             y: 10.0,
@@ -486,7 +486,7 @@ mod tests {
     #[test]
     fn screen_to_image_basic() {
         let dr = test_draw_rect();
-        // 画面(110, 110) = 画像の中心(50, 50)
+        // 画面 (110, 110) = 画像の中心 (50, 50)
         let (px, py) = screen_to_image(110.0, 110.0, &dr, 100, 100);
         assert_eq!(px, 50);
         assert_eq!(py, 50);
@@ -699,7 +699,7 @@ mod tests {
         assert_eq!(resized.height, 60);
     }
 
-    // --- 反転防止（最小サイズ1）のテスト ---
+    // --- 反転防止 (最小サイズ1) のテスト ---
 
     #[test]
     fn apply_resize_clamps_to_minimum_size() {
@@ -770,7 +770,7 @@ mod tests {
 
         // 同一点でドラッグ
         sel.on_mouse_down(110.0, 110.0, &dr, 100, 100);
-        // 移動しない（same point）
+        // 移動しない (same point)
         sel.on_mouse_up(100, 100);
 
         assert!(!sel.is_selected());
@@ -779,7 +779,7 @@ mod tests {
 
     #[test]
     fn screen_to_image_zero_size_draw_rect() {
-        // draw_rectのwidth/heightが0の場合は(0,0)を返す
+        // draw_rectのwidth/heightが0の場合は (0,0) を返す
         let dr = DrawRect {
             x: 10.0,
             y: 10.0,
@@ -796,7 +796,7 @@ mod tests {
         let dr = test_draw_rect();
         let mut sel = Selection::new();
 
-        // 選択範囲を作成: 画像の(20,20)-(80,80)
+        // 選択範囲を作成: 画像の (20,20)-(80,80)
         sel.on_mouse_down(50.0, 50.0, &dr, 100, 100);
         sel.on_mouse_move(170.0, 170.0, &dr, 100, 100);
         sel.on_mouse_up(100, 100);

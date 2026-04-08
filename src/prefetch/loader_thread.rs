@@ -40,7 +40,7 @@ pub enum LoadResponse {
     },
 }
 
-/// 先読みエンジン（ワーカースレッド管理）
+/// 先読みエンジン (ワーカースレッド管理)
 pub struct PrefetchEngine {
     request_tx: Sender<LoadRequest>,
     response_rx: Receiver<LoadResponse>,
@@ -53,8 +53,8 @@ pub struct PrefetchEngine {
 
 impl PrefetchEngine {
     /// ワーカースレッドを起動する
-    /// `notify`はレスポンス送信後に呼ばれるコールバック（UIスレッドへの通知用）
-    /// `decoder`は画像デコーダチェーン（Susieプラグイン含む）
+    /// `notify`はレスポンス送信後に呼ばれるコールバック (UIスレッドへの通知用)
+    /// `decoder`は画像デコーダチェーン (Susieプラグイン含む)
     pub fn new(
         notify: Box<dyn Fn() + Send>,
         decoder: Arc<DecoderChain>,
@@ -138,7 +138,7 @@ impl PrefetchEngine {
         self.generation
     }
 
-    /// 世代を進行（AtomicU64も更新）
+    /// 世代を進行 (AtomicU64も更新)
     pub fn advance_generation(&mut self) -> u64 {
         self.generation += 1;
         self.current_generation

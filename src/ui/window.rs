@@ -5,7 +5,7 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::PCWSTR;
 
-/// ウィンドウクラス登録（アイコン指定可能）
+/// ウィンドウクラス登録 (アイコン指定可能)
 pub fn register_window_class_with_icon(
     class_name: PCWSTR,
     wnd_proc: WNDPROC,

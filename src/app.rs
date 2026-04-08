@@ -67,9 +67,9 @@ pub struct AppWindow {
     menu_visible: bool,
     // ファイルリストパネル
     file_list_panel: FileListPanel,
-    // パネル表示中のキャッシュ状態追跡（差分更新用）
+    // パネル表示中のキャッシュ状態追跡 (差分更新用)
     cached_indices: HashSet<usize>,
-    // 等幅フォント（ダイアログ・ファイルリスト用）
+    // 等幅フォント (ダイアログ・ファイルリスト用)
     monospace_font: MonospaceFont,
     // 矩形選択
     selection: Selection,
@@ -84,7 +84,7 @@ impl AppWindow {
     pub fn create(config: Config, initial_files: &[PathBuf]) -> Result<Box<Self>> {
         let class_name = windows::core::w!("gv_main");
 
-        // アイコンをリソースからロード（リソースID 1）
+        // アイコンをリソースからロード (リソースID 1)
         let icon = unsafe {
             let hmodule = windows::Win32::System::LibraryLoader::GetModuleHandleW(None).ok();
             let hinstance = hmodule.map(|m| windows::Win32::Foundation::HINSTANCE(m.0));
@@ -96,7 +96,7 @@ impl AppWindow {
 
         let hwnd = window::create_window(class_name, windows::core::w!("ぐらびゅ"), 1024, 768)?;
 
-        // ウィンドウにアイコンを設定（タスクバー表示用）
+        // ウィンドウにアイコンを設定 (タスクバー表示用)
         if let Some(ref icon) = icon {
             unsafe {
                 let _ = SendMessageW(
@@ -135,7 +135,7 @@ impl AppWindow {
 
         let registry = Arc::new(registry);
 
-        // デコーダチェーン: Standard → Susie画像プラグイン（フォールバック順）
+        // デコーダチェーン: Standard → Susie画像プラグイン (フォールバック順)
         let mut decoders: Vec<Box<dyn crate::image::ImageDecoder>> =
             vec![Box::new(StandardDecoder::new())];
         for decoder in susie_manager.create_image_decoders() {
@@ -160,10 +160,10 @@ impl AppWindow {
             .and_then(|p| p.parent().map(|d| d.join("ぐらびゅ.keys.toml")));
         let key_config = KeyConfig::load(key_config_path.as_deref());
 
-        // メニューバー構築（初期状態は非表示）
+        // メニューバー構築 (初期状態は非表示)
         let menu_handle = menu::build_menu_bar();
 
-        // ファイルリストパネル作成（初期状態は非表示）
+        // ファイルリストパネル作成 (初期状態は非表示)
         let file_list_panel = FileListPanel::create(hwnd);
 
         // 等幅フォント作成 + ファイルリストに適用
@@ -197,7 +197,7 @@ impl AppWindow {
             slideshow_repeat: config.slideshow.repeat,
         });
 
-        // GWLP_USERDATAにポインタを格納（WndProcからアクセスするため）
+        // GWLP_USERDATAにポインタを格納 (WndProcからアクセスするため)
         window::set_window_data(hwnd, std::ptr::from_mut(&mut *app));
 
         // 先読みエンジン起動
@@ -284,7 +284,7 @@ impl AppWindow {
 
     /// DocumentEventを処理する
     fn process_document_events(&mut self) {
-        // 先読みレスポンスを処理（キャッシュ格納 + current_image更新）
+        // 先読みレスポンスを処理 (キャッシュ格納 + current_image更新)
         self.document.process_prefetch_responses();
 
         // バックグラウンドコンテナ展開結果を処理
@@ -323,11 +323,11 @@ impl AppWindow {
             self.file_list_panel.set_selection(index);
         }
 
-        // パネル表示中ならキャッシュ状態の差分のみ更新（該当行のみ再描画）
+        // パネル表示中ならキャッシュ状態の差分のみ更新 (該当行のみ再描画)
         if self.file_list_panel.is_visible() {
             let doc = &self.document;
             let len = doc.file_list().len();
-            // 現在のキャッシュ状態をスナップショット（上限6件程度なので軽量）
+            // 現在のキャッシュ状態をスナップショット (上限6件程度なので軽量)
             let mut new_cached = HashSet::new();
             for i in 0..len {
                 if doc.is_cached(i) {
@@ -411,7 +411,7 @@ impl AppWindow {
         }
     }
 
-    /// 現在の画像サイズを返す（zoom操作用）
+    /// 現在の画像サイズを返す (zoom操作用)
     fn current_image_size(&self) -> Option<(u32, u32)> {
         self.document
             .current_image()
@@ -458,7 +458,7 @@ impl AppWindow {
         self.fullscreen.toggle(self.hwnd, self.always_on_top);
 
         if entering {
-            // フルスクリーン開始: メニュー・パネルを非表示（フラグは保持）
+            // フルスクリーン開始: メニュー・パネルを非表示 (フラグは保持)
             unsafe {
                 let _ = SetMenu(self.hwnd, None);
             }
@@ -479,7 +479,7 @@ impl AppWindow {
         }
     }
 
-    /// 最大化トグル（左ダブルクリック）
+    /// 最大化トグル (左ダブルクリック)
     fn toggle_maximize(&self) {
         unsafe {
             let mut placement = WINDOWPLACEMENT {
@@ -577,7 +577,7 @@ impl AppWindow {
                 WM_SIZE => {
                     let mut width = (lparam.0 & 0xFFFF) as u32;
                     let mut height = ((lparam.0 >> 16) & 0xFFFF) as u32;
-                    // パネルのtoggleからSendMessageW(WM_SIZE, 0, 0)で呼ばれる場合
+                    // パネルのtoggleからSendMessageW (WM_SIZE, 0, 0) で呼ばれる場合
                     if width == 0 && height == 0 {
                         let (w, h) = window::get_client_size(hwnd);
                         width = w;
@@ -587,7 +587,7 @@ impl AppWindow {
                     return LRESULT(0);
                 }
                 WM_KEYDOWN | WM_SYSKEYDOWN => {
-                    // Escキー: ドラッグ操作中は選択をキャンセル（key_configより優先）
+                    // Escキー: ドラッグ操作中は選択をキャンセル (key_configより優先)
                     if wparam.0 as u16 == 0x1B && app.selection.is_dragging() {
                         app.selection.deselect();
                         unsafe {
@@ -693,7 +693,7 @@ impl AppWindow {
                     let control_id = (wparam.0 as u32) & 0xFFFF;
                     let control_hwnd = HWND(lparam.0 as *mut _);
 
-                    // メニュー項目（notify_code == 0 かつコントロールなし）
+                    // メニュー項目 (notify_code == 0 かつコントロールなし)
                     if notify_code == 0 && control_hwnd.0.is_null() {
                         if let Some(action) = menu::menu_id_to_action(control_id as u16) {
                             app.execute_action(action);
@@ -753,7 +753,7 @@ impl AppWindow {
             // D2Dレンダーターゲットは全体サイズでリサイズ
             self.renderer.resize(width, height);
 
-            // 描画オフセットを設定（パネル幅分だけ右にずらす）
+            // 描画オフセットを設定 (パネル幅分だけ右にずらす)
             self.renderer.set_draw_offset(panel_width as f32);
 
             self.invalidate();
@@ -770,7 +770,7 @@ impl AppWindow {
         self.process_document_events();
     }
 
-    /// パラメータなしフィルタの共通パターン（選択範囲対応）
+    /// パラメータなしフィルタの共通パターン (選択範囲対応)
     fn apply_simple_filter(&mut self, f: fn(&DecodedImage, Option<&PixelRect>) -> DecodedImage) {
         if let Some(img) = self.document.current_image() {
             let sel = self.selection.current_rect();
@@ -780,7 +780,7 @@ impl AppWindow {
         }
     }
 
-    /// 画像全体に適用する変形操作の共通パターン（選択解除付き）
+    /// 画像全体に適用する変形操作の共通パターン (選択解除付き)
     fn apply_transform(&mut self, f: fn(&DecodedImage) -> DecodedImage) {
         if let Some(img) = self.document.current_image() {
             let result = f(img);
@@ -790,7 +790,7 @@ impl AppWindow {
         }
     }
 
-    /// 永続フィルタのトグル（既存なら削除、なければ追加）
+    /// 永続フィルタのトグル (既存なら削除、なければ追加)
     fn toggle_persistent_filter(&mut self, op: crate::persistent_filter::FilterOperation) {
         let pf = self.document.persistent_filter_mut();
         if !pf.remove_operation_type(&op) {
@@ -800,7 +800,7 @@ impl AppWindow {
         self.process_document_events();
     }
 
-    /// パラメータ付き永続フィルタのトグル（既存なら削除してtrue、なければfalse）
+    /// パラメータ付き永続フィルタのトグル (既存なら削除してtrue、なければfalse)
     fn remove_persistent_filter_if_exists(
         &mut self,
         probe: &crate::persistent_filter::FilterOperation,
@@ -815,10 +815,10 @@ impl AppWindow {
         }
     }
 
-    // === アクションハンドラ（execute_action から呼び出される個別メソッド） ===
+    // === アクションハンドラ (execute_action から呼び出される個別メソッド) ===
 
     fn action_mark_set(&mut self) {
-        // mark_current()は内部でnavigate_relative(1)するのでマーク元indexを先に取得
+        // mark_current() は内部でnavigate_relative(1) するのでマーク元indexを先に取得
         let mark_idx = self.document.file_list().current_index();
         self.document.mark_current();
         self.process_document_events();
@@ -888,7 +888,7 @@ impl AppWindow {
     }
 
     fn action_delete_file(&mut self) {
-        // コンテナ内（アーカイブ/PDF）のファイル削除は無効
+        // コンテナ内 (アーカイブ/PDF) のファイル削除は無効
         if let Some(source) = self.document.current_source()
             && source.is_contained()
         {
@@ -946,13 +946,13 @@ impl AppWindow {
                     match crate::file_ops::move_single_file(self.hwnd, &path, &dest) {
                         Ok(true) => {
                             if let Err(e) = self.document.rename_current_in_list(&dest) {
-                                self.show_error_title(&format!("リスト更新失敗: {e}"));
+                                self.show_error_title(&format!("リストの更新に失敗しました: {e}"));
                             }
                             self.process_document_events();
                         }
                         Ok(false) => {} // ユーザーキャンセル
                         Err(e) => {
-                            self.show_error_title(&format!("ファイル移動失敗: {e}"));
+                            self.show_error_title(&format!("ファイルの移動に失敗しました: {e}"));
                         }
                     }
                     // Shell APIがフォーカスを奪うことがあるため復帰
@@ -961,7 +961,7 @@ impl AppWindow {
                     }
                 }
                 crate::file_info::FileSource::ArchiveEntry { on_demand, .. } => {
-                    // アーカイブエントリ: 書き出し（リスト除去なし）
+                    // アーカイブエントリ: 書き出し (リスト除去なし)
                     let result = if *on_demand {
                         self.document.read_file_data_current().and_then(|data| {
                             std::fs::write(&dest, &data).map_err(anyhow::Error::from)
@@ -972,7 +972,7 @@ impl AppWindow {
                             .map_err(anyhow::Error::from)
                     };
                     if let Err(e) = result {
-                        self.show_error_title(&format!("ファイル書き出し失敗: {e}"));
+                        self.show_error_title(&format!("ファイルの書き出しに失敗しました: {e}"));
                     }
                 }
                 crate::file_info::FileSource::PdfPage { .. }
@@ -1014,14 +1014,14 @@ impl AppWindow {
                         .map_err(anyhow::Error::from)
                 };
                 if let Err(e) = result {
-                    self.show_error_title(&format!("ファイルコピー失敗: {e}"));
+                    self.show_error_title(&format!("ファイルのコピーに失敗しました: {e}"));
                 }
             }
         }
     }
 
     fn action_marked_delete(&mut self) {
-        // コンテナ内（アーカイブ/PDF）は無効
+        // コンテナ内 (アーカイブ/PDF) は無効
         if let Some(source) = self.document.current_source()
             && source.is_contained()
         {
@@ -1070,7 +1070,7 @@ impl AppWindow {
         ) {
             let path_refs: Vec<&Path> = paths.iter().map(PathBuf::as_path).collect();
             if let Ok(true) = crate::file_ops::move_files(self.hwnd, &path_refs, &dest) {
-                // パス更新失敗時は従来通りリストから削除（フォールバック）
+                // パス更新失敗時は従来通りリストから削除 (フォールバック)
                 if let Err(e) = self.document.update_marked_paths(&dest) {
                     eprintln!("パス更新失敗、リストから削除: {e}");
                     self.document.remove_marked_from_list();
@@ -1104,7 +1104,7 @@ impl AppWindow {
         ) {
             let path_refs: Vec<&Path> = paths.iter().map(PathBuf::as_path).collect();
             if let Err(e) = crate::file_ops::copy_files(self.hwnd, &path_refs, &dest) {
-                self.show_error_title(&format!("ファイルコピー失敗: {e}"));
+                self.show_error_title(&format!("ファイルのコピーに失敗しました: {e}"));
             }
             // Shell APIがフォーカスを奪うことがあるため復帰
             unsafe {
@@ -1124,7 +1124,7 @@ impl AppWindow {
         if !names.is_empty() {
             let text = names.join("\r\n");
             if let Err(e) = crate::clipboard::copy_text_to_clipboard(self.hwnd, &text) {
-                self.show_error_title(&format!("マークファイル名コピー失敗: {e}"));
+                self.show_error_title(&format!("マークファイル名のコピーに失敗しました: {e}"));
             }
         }
     }
@@ -1143,7 +1143,7 @@ impl AppWindow {
                     && img_buf.save(&temp_path).is_ok()
                 {
                     if let Err(e) = self.document.open_single(&temp_path) {
-                        self.show_error_title(&format!("貼り付け失敗: {e}"));
+                        self.show_error_title(&format!("貼り付けに失敗しました: {e}"));
                     }
                     self.process_document_events();
                 }
@@ -1157,7 +1157,7 @@ impl AppWindow {
         if let Ok(exe) = std::env::current_exe() {
             // 引数なしで空のウィンドウを起動
             if let Err(e) = std::process::Command::new(&exe).spawn() {
-                self.show_error_title(&format!("新規ウィンドウ起動失敗: {e}"));
+                self.show_error_title(&format!("新規ウィンドウの起動に失敗しました: {e}"));
             }
         }
     }
@@ -1187,7 +1187,7 @@ impl AppWindow {
                 .raw_arg(&arg)
                 .spawn()
             {
-                self.show_error_title(&format!("エクスプローラ起動失敗: {e}"));
+                self.show_error_title(&format!("エクスプローラの起動に失敗しました: {e}"));
             }
         }
     }
@@ -1197,7 +1197,7 @@ impl AppWindow {
             && let Some(dir) = exe.parent()
             && let Err(e) = std::process::Command::new("explorer.exe").arg(dir).spawn()
         {
-            self.show_error_title(&format!("エクスプローラ起動失敗: {e}"));
+            self.show_error_title(&format!("エクスプローラの起動に失敗しました: {e}"));
         }
     }
 
@@ -1212,7 +1212,7 @@ impl AppWindow {
             );
         }
         if let Err(e) = std::process::Command::new("explorer.exe").arg(&dir).spawn() {
-            self.show_error_title(&format!("エクスプローラ起動失敗: {e}"));
+            self.show_error_title(&format!("エクスプローラの起動に失敗しました: {e}"));
         }
     }
 
@@ -1231,7 +1231,7 @@ impl AppWindow {
                 .arg(&spi_dir)
                 .spawn()
             {
-                self.show_error_title(&format!("エクスプローラ起動失敗: {e}"));
+                self.show_error_title(&format!("エクスプローラの起動に失敗しました: {e}"));
             }
         }
     }
@@ -1239,7 +1239,7 @@ impl AppWindow {
     fn action_open_temp_folder(&mut self) {
         let dir = std::env::temp_dir();
         if let Err(e) = std::process::Command::new("explorer.exe").arg(&dir).spawn() {
-            self.show_error_title(&format!("エクスプローラ起動失敗: {e}"));
+            self.show_error_title(&format!("エクスプローラの起動に失敗しました: {e}"));
         }
     }
 
@@ -1457,7 +1457,7 @@ impl AppWindow {
         match crate::bookmark::load_bookmark(self.hwnd) {
             Ok(Some(data)) => {
                 if let Err(e) = self.document.load_bookmark_data(data) {
-                    self.show_error_title(&format!("ブックマーク読み込み失敗: {e}"));
+                    self.show_error_title(&format!("ブックマークの読み込みに失敗しました: {e}"));
                 }
                 self.process_document_events();
             }
@@ -1467,7 +1467,7 @@ impl AppWindow {
     }
 
     fn action_pfilter_levels(&mut self) {
-        // 既存なら削除（トグルオフ）
+        // 既存なら削除 (トグルオフ)
         let probe = FilterOperation::Levels { low: 0, high: 0 };
         if self.remove_persistent_filter_if_exists(&probe) {
             return;
@@ -1598,7 +1598,7 @@ impl AppWindow {
 
     fn action_toggle_file_list(&mut self) {
         self.file_list_panel.toggle();
-        // パネルが表示状態になったら全同期（非表示中の変更を反映）
+        // パネルが表示状態になったら全同期 (非表示中の変更を反映)
         if self.file_list_panel.is_visible() {
             let doc = &self.document;
             let len = doc.file_list().len();
@@ -1683,7 +1683,7 @@ impl AppWindow {
         }
     }
 
-    /// ファイルリストパネルの同期ヘルパー（MarkInvertAll / MarkInvertToHere で共通）
+    /// ファイルリストパネルの同期ヘルパー(MarkInvertAll / MarkInvertToHere で共通)
     fn sync_file_list_panel(&mut self) {
         if self.file_list_panel.is_visible() {
             let doc = &self.document;
@@ -1811,7 +1811,7 @@ impl AppWindow {
                 if let Some(image) = self.document.current_image()
                     && let Err(e) = crate::clipboard::copy_image_to_clipboard(self.hwnd, image)
                 {
-                    self.show_error_title(&format!("画像コピー失敗: {e}"));
+                    self.show_error_title(&format!("画像のコピーに失敗しました: {e}"));
                 }
             }
             Action::CopyFileName => {
@@ -1819,7 +1819,7 @@ impl AppWindow {
                     && let Err(e) =
                         crate::clipboard::copy_text_to_clipboard(self.hwnd, &source.display_path())
                 {
-                    self.show_error_title(&format!("ファイル名コピー失敗: {e}"));
+                    self.show_error_title(&format!("ファイル名のコピーに失敗しました: {e}"));
                 }
             }
             Action::MarkedCopyNames => self.action_marked_copy_names(),
@@ -1883,7 +1883,7 @@ impl AppWindow {
             Action::RotateArbitrary => self.action_rotate_arbitrary(),
             Action::Resize => self.action_resize(),
 
-            // --- フィルタ（パラメータあり） ---
+            // --- フィルタ (パラメータあり) ---
             Action::Fill => self.action_fill(),
             Action::Levels => self.action_levels(),
             Action::Gamma => self.action_gamma(),
@@ -1892,7 +1892,7 @@ impl AppWindow {
             Action::GaussianBlur => self.action_gaussian_blur(),
             Action::UnsharpMask => self.action_unsharp_mask(),
 
-            // --- フィルタ（パラメータなし） ---
+            // --- フィルタ (パラメータなし) ---
             Action::InvertColors => self.apply_simple_filter(crate::filter::color::invert_colors),
             Action::GrayscaleSimple => {
                 self.apply_simple_filter(crate::filter::color::grayscale_simple);
@@ -1961,7 +1961,7 @@ impl AppWindow {
 
             // --- ブックマーク ---
             Action::BookmarkSave => {
-                // 未展開コンテナがあれば全て同期展開（ブックマークは完全な状態で保存する）
+                // 未展開コンテナがあれば全て同期展開 (ブックマークは完全な状態で保存する)
                 if self.document.file_list().has_pending() {
                     self.document.expand_all_pending_sync();
                     self.process_document_events();
@@ -1970,7 +1970,7 @@ impl AppWindow {
                 if let Err(e) =
                     crate::bookmark::save_bookmark(self.hwnd, self.document.file_list(), idx)
                 {
-                    self.show_error_title(&format!("ブックマーク保存失敗: {e}"));
+                    self.show_error_title(&format!("ブックマークの保存に失敗しました: {e}"));
                 }
             }
             Action::BookmarkLoad => self.action_bookmark_load(),
@@ -2087,12 +2087,12 @@ impl AppWindow {
         // DecodedImage (RGBA) → image::RgbaImage → encode
         let Some(img_buf) = image::RgbaImage::from_raw(img.width, img.height, img.data.clone())
         else {
-            self.show_error_title("画像バッファ作成失敗");
+            self.show_error_title("画像バッファの作成に失敗しました");
             return;
         };
 
         if let Err(e) = img_buf.save(&save_path) {
-            self.show_error_title(&format!("画像書き出し失敗: {e}"));
+            self.show_error_title(&format!("画像の書き出しに失敗しました: {e}"));
         }
     }
 
@@ -2172,12 +2172,12 @@ impl AppWindow {
         self.process_document_events();
     }
 
-    /// スライドショー間隔を変更（最小500ms、最大30000ms）
+    /// スライドショー間隔を変更 (最小500ms、最大30000ms)
     fn adjust_slideshow_interval(&mut self, delta_ms: i32) {
         let new_val =
             (i64::from(self.slideshow_interval_ms) + i64::from(delta_ms)).clamp(500, 30_000) as u32;
         self.slideshow_interval_ms = new_val;
-        // 実行中ならタイマーを新しい間隔で再設定（同一IDは上書き）
+        // 実行中ならタイマーを新しい間隔で再設定 (同一IDは上書き)
         if self.slideshow_active {
             unsafe {
                 let _ = SetTimer(
@@ -2210,7 +2210,7 @@ impl AppWindow {
             info_lines.push(format!("画像サイズ: {} x {}", img.width, img.height));
         }
 
-        // メタデータ取得（デコーダ経由）
+        // メタデータ取得 (デコーダ経由)
         if let Ok(metadata) = self.document.current_metadata() {
             info_lines.push(format!("フォーマット: {}", metadata.format));
             for comment in &metadata.comments {
@@ -2309,7 +2309,7 @@ Susieプラグイン (.sph/.spi) で拡張可能";
             }
             Ok(info) => {
                 let msg = format!(
-                    "v{} が利用可能です（現在: v{}）。\n更新しますか？\0",
+                    "v{} が利用可能です (現在: v{})。\n更新しますか？\0",
                     info.latest_version, info.current_version
                 );
                 let title = "アップデート確認\0";
@@ -2362,7 +2362,7 @@ Susieプラグイン (.sph/.spi) で拡張可能";
         }
     }
 
-    /// シェル統合（ファイル関連付け・コンテキストメニュー・「送る」）を登録
+    /// シェル統合 (ファイル関連付け・コンテキストメニュー・「送る」) を登録
     fn action_register_shell(&self) {
         let msg = "ファイル関連付け・コンテキストメニュー・「送る」を登録しますか？\0";
         let title = "シェル統合\0";
@@ -2408,7 +2408,7 @@ Susieプラグイン (.sph/.spi) で拡張可能";
         }
     }
 
-    /// シェル統合（ファイル関連付け・コンテキストメニュー・「送る」）を解除
+    /// シェル統合 (ファイル関連付け・コンテキストメニュー・「送る」) を解除
     fn action_unregister_shell(&self) {
         let msg = "ファイル関連付け・コンテキストメニュー・「送る」を解除しますか？\0";
         let title = "シェル統合\0";
@@ -2470,7 +2470,7 @@ Susieプラグイン (.sph/.spi) で拡張可能";
             .on_mouse_down(sx, sy, &draw_rect, img.width, img.height);
 
         if self.selection.is_dragging() {
-            // マウスキャプチャ（ウィンドウ外でもドラッグイベントを受け取る）
+            // マウスキャプチャ (ウィンドウ外でもドラッグイベントを受け取る)
             unsafe {
                 windows::Win32::UI::Input::KeyboardAndMouse::SetCapture(self.hwnd);
             }

@@ -52,7 +52,7 @@ pub fn read_exif_fields(data: &[u8]) -> Vec<(String, String)> {
     fields
 }
 
-/// 文字列フィールドを取得（前後の空白を除去）
+/// 文字列フィールドを取得 (前後の空白を除去)
 fn get_string(exif: &exif::Exif, tag: Tag) -> Option<String> {
     let field = exif.get_field(tag, In::PRIMARY)?;
     let s = field.display_value().to_string();

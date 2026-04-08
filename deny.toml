@@ -2,7 +2,7 @@
 # https://embarkstudios.github.io/cargo-deny/
 
 [advisories]
-# 脆弱性アドバイザリチェック（v2形式）
+# 脆弱性アドバイザリチェック (v2形式)
 version = 2
 
 [licenses]

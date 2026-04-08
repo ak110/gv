@@ -1,4 +1,4 @@
-//! ファイル関連付け登録（OpenWithProgids方式）
+//! ファイル関連付け登録 (OpenWithProgids方式)
 //!
 //! 既存の既定アプリを上書きせず、「プログラムから開く」候補にぐらびゅを追加する安全な方式。
 //! - HKCU\Software\Classes\gv.ImageFile  → 画像用ProgID
@@ -32,7 +32,7 @@ pub(super) fn set_key_value(root: HKEY, subkey: &str, value: &str) -> Result<()>
     let wide_key = to_wide(subkey);
     let wide_val = to_wide(value);
 
-    // RegCreateKeyWでキーを作成（存在すれば開く）
+    // RegCreateKeyWでキーを作成 (存在すれば開く)
     let mut hkey = HKEY::default();
     let result = unsafe {
         RegCreateKeyW(
@@ -85,7 +85,7 @@ fn add_open_with_progid(extension: &str, progid: &str) -> Result<()> {
         anyhow::bail!("OpenWithProgids キー作成失敗: {extension}");
     }
 
-    // 空のREG_NONE値を設定（値の存在がProgID登録を意味する）
+    // 空のREG_NONE値を設定 (値の存在がProgID登録を意味する)
     let result = unsafe {
         RegSetValueExW(
             hkey,
@@ -131,24 +131,24 @@ fn remove_open_with_progid(extension: &str, progid: &str) {
 /// 画像拡張子リスト
 const IMAGE_EXTENSIONS: &[&str] = &[".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"];
 
-/// アーカイブ拡張子リスト（コミック用のみ関連付け）
+/// アーカイブ拡張子リスト (コミック用のみ関連付け)
 const ARCHIVE_EXTENSIONS: &[&str] = &[".cbz", ".cbr"];
 
-/// 汎用アーカイブ拡張子（関連付け解除のみ、登録はしない）
+/// 汎用アーカイブ拡張子 (関連付け解除のみ、登録はしない)
 const GENERIC_ARCHIVE_EXTENSIONS: &[&str] = &[".zip", ".rar", ".7z"];
 
 const IMAGE_PROGID: &str = "gv.ImageFile";
 const ARCHIVE_PROGID: &str = "gv.ArchiveFile";
 const BOOKMARK_PROGID: &str = "gv.Bookmark";
 
-// 旧ProgID（マイグレーション用）
+// 旧ProgID(マイグレーション用)
 const OLD_IMAGE_PROGID: &str = "gv.ImageFile";
 const OLD_ARCHIVE_PROGID: &str = "gv.ArchiveFile";
 const OLD_BOOKMARK_PROGID: &str = "gv3.Bookmark";
 
 /// ブックマーク拡張子
 const BOOKMARK_EXTENSION: &str = ".gvbm";
-/// 旧ブックマーク拡張子（後方互換）
+/// 旧ブックマーク拡張子 (後方互換)
 const OLD_BOOKMARK_EXTENSION: &str = ".gv3bm";
 
 /// ファイル関連付けを登録する
@@ -180,7 +180,7 @@ pub fn register() -> Result<()> {
         &format!("\"{exe}\" \"%1\""),
     )?;
 
-    // DefaultIcon設定（リソースID: 0=icon1, 1=icon2, 2=icon3）
+    // DefaultIcon設定 (リソースID: 0=icon1, 1=icon2, 2=icon3)
     set_key_value(
         HKEY_CURRENT_USER,
         &format!(r"Software\Classes\{IMAGE_PROGID}\DefaultIcon"),
@@ -206,7 +206,7 @@ pub fn register() -> Result<()> {
         &format!("\"{exe}\",2"),
     )?;
 
-    // 汎用アーカイブの既存関連付けをクリーンアップ（再登録時に古い関連付けが残らないように）
+    // 汎用アーカイブの既存関連付けをクリーンアップ (再登録時に古い関連付けが残らないように)
     for ext in GENERIC_ARCHIVE_EXTENSIONS {
         remove_open_with_progid(ext, ARCHIVE_PROGID);
     }
@@ -219,7 +219,7 @@ pub fn register() -> Result<()> {
         add_open_with_progid(ext, ARCHIVE_PROGID)?;
     }
     add_open_with_progid(BOOKMARK_EXTENSION, BOOKMARK_PROGID)?;
-    // 旧ブックマーク拡張子も新ProgIDに関連付け（既存.gv3bmファイルを開けるように）
+    // 旧ブックマーク拡張子も新ProgIDに関連付け (既存.gv3bmファイルを開けるように)
     add_open_with_progid(OLD_BOOKMARK_EXTENSION, BOOKMARK_PROGID)?;
 
     Ok(())

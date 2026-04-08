@@ -7,7 +7,7 @@ use windows::Win32::Graphics::Gdi::{
     OUT_DEFAULT_PRECIS, PROOF_QUALITY,
 };
 
-/// 等幅フォント（RAII管理）
+/// 等幅フォント (RAII管理)
 pub struct MonospaceFont {
     hfont: HFONT,
 }

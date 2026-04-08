@@ -16,11 +16,11 @@ use crate::image::{DecodedImage, DecoderChain};
 use crate::persistent_filter::PersistentFilter;
 use crate::prefetch::{LoadResponse, PageCache, PrefetchEngine};
 
-/// ZIPファイルのバッファ（mmapまたはメモリ読み込み）
+/// ZIPファイルのバッファ (mmapまたはメモリ読み込み)
 pub(crate) enum ZipBuffer {
-    /// メモリマップドファイル（OSがページフォルト駆動で必要部分のみロード）
+    /// メモリマップドファイル (OSがページフォルト駆動で必要部分のみロード)
     Mmap(memmap2::Mmap),
-    /// ヒープ上のバイト列（mmapフォールバック用）
+    /// ヒープ上のバイト列 (mmapフォールバック用)
     Memory(Vec<u8>),
 }
 
@@ -33,7 +33,7 @@ impl AsRef<[u8]> for ZipBuffer {
     }
 }
 
-/// DocumentからUIへの通知イベント（loader_threadから構築され、app.rsで受信される）
+/// DocumentからUIへの通知イベント (loader_threadから構築され、app.rsで受信される)
 #[derive(Debug)]
 pub enum DocumentEvent {
     /// 画像のデコード完了、再描画可能
@@ -43,14 +43,14 @@ pub enum DocumentEvent {
     /// 表示位置変更
     NavigationChanged {
         index: usize,
-        #[allow(dead_code)] // イベント情報として保持（将来のステータスバー表示等で使用予定）
+        #[allow(dead_code)] // イベント情報として保持 (将来のステータスバー表示等で使用予定)
         count: usize,
     },
     /// エラー通知
     Error(String),
 }
 
-/// コンテナ（ZIP/PDF/RAR/7z）の並列読み込み結果
+/// コンテナ (ZIP/PDF/RAR/7z) の並列読み込み結果
 enum ContainerResult {
     Pdf {
         path: PathBuf,
@@ -75,7 +75,7 @@ enum ContainerResult {
 /// コンテナの展開状態
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ContainerState {
-    /// 未展開（プレースホルダとしてリストに存在、バックグラウンドキュー未投入）
+    /// 未展開 (プレースホルダとしてリストに存在、バックグラウンドキュー未投入)
     Pending,
     /// バックグラウンド展開中
     InFlight,
@@ -95,7 +95,7 @@ enum ContainerExpandEvent {
     AllDone { generation: u64 },
 }
 
-/// 単一コンテナを処理する（rayon workerから呼ばれる）
+/// 単一コンテナを処理する (rayon workerから呼ばれる)
 fn process_single_container(path: &Path, archive_manager: &ArchiveManager) -> ContainerResult {
     if Document::is_pdf(path) {
         match crate::pdf_renderer::get_pdf_page_count_safe(path) {
@@ -180,7 +180,7 @@ fn process_single_container(path: &Path, archive_manager: &ArchiveManager) -> Co
     }
 }
 
-/// 画像・ファイルリスト・状態管理（モデル層）
+/// 画像・ファイルリスト・状態管理 (モデル層)
 /// Win32 APIやHWNDへの依存は一切持たない
 pub struct Document {
     event_sender: Sender<DocumentEvent>,
@@ -196,25 +196,25 @@ pub struct Document {
     archive_manager: Arc<ArchiveManager>,
     archive_temp_dirs: Vec<PathBuf>,
     current_containers: Vec<PathBuf>,
-    /// ZIPファイルのバッファキャッシュ（オンデマンド読み出し用、先読みスレッドと共有）
+    /// ZIPファイルのバッファキャッシュ (オンデマンド読み出し用、先読みスレッドと共有)
     zip_buffers: Arc<RwLock<HashMap<PathBuf, ZipBuffer>>>,
-    /// 編集セッション（編集中のみSome）
+    /// 編集セッション (編集中のみSome)
     editing_session: Option<EditingSession>,
     /// 永続フィルタ設定
     persistent_filter: PersistentFilter,
     /// バックグラウンド展開の受信チャネル
     expand_rx: Option<Receiver<ContainerExpandEvent>>,
-    /// バックグラウンド展開の世代番号（openごとにインクリメント）
+    /// バックグラウンド展開の世代番号 (openごとにインクリメント)
     expand_generation: u64,
     /// コンテナの展開状態
     container_states: HashMap<PathBuf, ContainerState>,
-    /// 直近のナビゲーション操作の方向（PendingContainer 到達時の intent 構築に使う）
+    /// 直近のナビゲーション操作の方向 (PendingContainer 到達時の intent 構築に使う)
     last_navigation_direction: NavigationDirection,
     /// 待機中の PendingContainer ナビゲーション意図
     /// `(container_path, 到達時の方向)` を保持し、バックグラウンド展開完了時に
     /// direction-aware な current_index 配置に使う
     pending_navigation_intent: Option<(PathBuf, NavigationDirection)>,
-    /// UIスレッド通知コールバック（PostMessageW経由でUIを起こす）
+    /// UIスレッド通知コールバック (PostMessageW経由でUIを起こす)
     ui_notify: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
@@ -250,8 +250,8 @@ impl Document {
     }
 
     /// 先読みエンジンを起動する
-    /// `notify`: レスポンス受信時のコールバック（UIスレッド通知用）
-    /// `cache_budget`: キャッシュメモリ予算（バイト）
+    /// `notify`: レスポンス受信時のコールバック (UIスレッド通知用)
+    /// `cache_budget`: キャッシュメモリ予算 (バイト)
     /// `base_image_size`: キャッシュ枚数計算の基準となる1枚あたりのバイト数
     ///
     /// ワーカースレッドの起動に失敗した場合は `Err` を返す。呼び出し元で
@@ -276,9 +276,9 @@ impl Document {
 
     /// キャッシュ範囲を再計算する
     /// 前方4枚・後方2枚を上限とし、スロット数で枚数を制御する。
-    /// メモリ予算はcache_budget（空きメモリの50%）をそのまま使う。
-    /// base_image_sizeはスロット数の計算にのみ使用する（実画像が大きい場合でも
-    /// キャッシュが機能するよう、予算の追加制限はかけない）。
+    /// メモリ予算はcache_budget (空きメモリの50%) をそのまま使う。
+    /// base_image_sizeはスロット数の計算にのみ使用する (実画像が大きい場合でも
+    /// キャッシュが機能するよう、予算の追加制限はかけない)。
     fn update_cache_range(&mut self, cache_budget: usize, base_image_size: usize) {
         const MAX_CACHE_FORWARD: usize = 4;
         const MAX_CACHE_BACKWARD: usize = 2;
@@ -292,7 +292,7 @@ impl Document {
         self.cache.set_max_memory(cache_budget);
     }
 
-    /// 先読みレスポンスを処理する（キャッシュ格納 + current_image更新）
+    /// 先読みレスポンスを処理する (キャッシュ格納 + current_image更新)
     pub fn process_prefetch_responses(&mut self) {
         let Some(prefetch) = &self.prefetch else {
             return;
@@ -329,7 +329,7 @@ impl Document {
                     if generation != current_gen {
                         continue;
                     }
-                    // 先読みの失敗ではmark_failedしない（一時的なエラーの可能性）
+                    // 先読みの失敗ではmark_failedしない (一時的なエラーの可能性)
                     let _ = self.event_sender.send(DocumentEvent::Error(error));
                 }
             }
@@ -349,7 +349,7 @@ impl Document {
         self.cache
             .evict_outside(center, self.cache_backward, self.cache_forward);
 
-        // 世代を進行（前回のin-flightリクエストを無効化）
+        // 世代を進行 (前回のin-flightリクエストを無効化)
         prefetch.advance_generation();
 
         let files = self.file_list.files();
@@ -359,12 +359,12 @@ impl Document {
         let mut indices = Vec::new();
         let max_dist = self.cache_forward.max(self.cache_backward);
         for dist in 1..=max_dist {
-            // 前方（次のページ）
+            // 前方 (次のページ)
             let fwd = center + dist;
             if dist <= self.cache_forward && fwd < len {
                 indices.push(fwd);
             }
-            // 後方（前のページ）
+            // 後方 (前のページ)
             if dist <= self.cache_backward && dist <= center {
                 indices.push(center - dist);
             }
@@ -396,7 +396,7 @@ impl Document {
         }
     }
 
-    /// キャッシュを無効化する（フォルダ切替、再読み込み時）
+    /// キャッシュを無効化する (フォルダ切替、再読み込み時)
     fn invalidate_cache(&mut self) {
         self.cache.clear();
         self.file_list.clear_failed();
@@ -405,7 +405,7 @@ impl Document {
         }
     }
 
-    /// ファイルを開く（親フォルダの画像を列挙し、指定ファイルを表示）
+    /// ファイルを開く (親フォルダの画像を列挙し、指定ファイルを表示)
     /// PDF/アーカイブファイルの場合はそれぞれの専用パスで開く
     pub fn open(&mut self, path: &Path) -> Result<()> {
         let path = Self::canonicalize(path)?;
@@ -434,7 +434,7 @@ impl Document {
         self.load_current()
     }
 
-    /// 単一ファイルを開く（フォルダスキャンしない）
+    /// 単一ファイルを開く (フォルダスキャンしない)
     /// クリップボード貼り付けなど、tempディレクトリ内の単一ファイルを開く場合に使用
     pub fn open_single(&mut self, path: &Path) -> Result<()> {
         let path = Self::canonicalize(path)?;
@@ -445,17 +445,17 @@ impl Document {
         self.load_current()
     }
 
-    /// アーカイブを開く（単一アーカイブ）
+    /// アーカイブを開く (単一アーカイブ)
     fn open_archive(&mut self, archive_path: &Path) -> Result<()> {
         self.open_containers(&[archive_path.to_path_buf()])
     }
 
-    /// PDFファイルを開く（単一PDF）
+    /// PDFファイルを開く (単一PDF)
     fn open_pdf(&mut self, pdf_path: &Path) -> Result<()> {
         self.open_containers(&[pdf_path.to_path_buf()])
     }
 
-    /// 複数コンテナ（アーカイブ/PDF混在）をまとめて開く
+    /// 複数コンテナ (アーカイブ/PDF混在) をまとめて開く
     /// 最初のコンテナのみ即座に展開し、残りはプレースホルダとして登録後バックグラウンドで展開する。
     pub fn open_containers(&mut self, paths: &[PathBuf]) -> Result<()> {
         self.cleanup_archive_temp();
@@ -471,7 +471,7 @@ impl Document {
         // エラー処理: 部分成功を許容、全失敗のみエラー返却
         if self.file_list.len() == 0 {
             if errors.is_empty() {
-                anyhow::bail!("コンテナ内に画像ファイルがありません");
+                anyhow::bail!("コンテナ内に画像ファイルが存在しない");
             }
             anyhow::bail!("全てのコンテナの読み込みに失敗:\n{}", errors.join("\n"));
         }
@@ -493,7 +493,7 @@ impl Document {
         self.load_current()
     }
 
-    /// 複数パス（フォルダ・コンテナ・画像ファイル混在）をフラットに展開して開く
+    /// 複数パス (フォルダ・コンテナ・画像ファイル混在) をフラットに展開して開く
     pub fn open_multiple(&mut self, paths: &[PathBuf]) -> Result<()> {
         self.cleanup_archive_temp();
         self.invalidate_cache();
@@ -541,9 +541,9 @@ impl Document {
         // エラー処理
         if self.file_list.len() == 0 {
             if errors.is_empty() {
-                anyhow::bail!("画像ファイルがありません");
+                anyhow::bail!("画像ファイルが存在しない");
             }
-            anyhow::bail!("読み込みに失敗しました:\n{}", errors.join("\n"));
+            anyhow::bail!("読み込みに失敗:\n{}", errors.join("\n"));
         }
         if !errors.is_empty() {
             let msg = format!("{}件のコンテナを開けませんでした", errors.len());
@@ -706,7 +706,7 @@ impl Document {
         }
     }
 
-    /// ContainerResult からエントリのVecを生成する（展開結果の置換用）
+    /// ContainerResult からエントリのVecを生成する (展開結果の置換用)
     fn entries_from_container_result(result: &ContainerResult) -> Vec<crate::file_info::FileInfo> {
         let mut entries = Vec::new();
         match result {
@@ -794,7 +794,7 @@ impl Document {
             return;
         }
 
-        // 現在位置からの距離でソート（近い順に展開する）
+        // 現在位置からの距離でソート (近い順に展開する)
         pending_paths.sort_by_key(|(idx, _)| (*idx as isize - current_idx as isize).unsigned_abs());
 
         let paths: Vec<PathBuf> = pending_paths.into_iter().map(|(_, p)| p).collect();
@@ -838,7 +838,7 @@ impl Document {
                         result,
                         generation,
                     });
-                    // UIスレッドを起こす（PostMessageW経由）
+                    // UIスレッドを起こす (PostMessageW経由)
                     if let Some(notify) = &ui_notify {
                         notify();
                     }
@@ -948,7 +948,7 @@ impl Document {
         })
     }
 
-    /// バックグラウンド展開の進捗を返す（展開済み / 全体）
+    /// バックグラウンド展開の進捗を返す (展開済み / 全体)
     pub fn expand_progress(&self) -> Option<(usize, usize)> {
         let total = self.container_states.len();
         if total == 0 {
@@ -1015,11 +1015,11 @@ impl Document {
         }
     }
 
-    /// 全未展開コンテナを同期展開する（ブックマーク保存前等で全展開が必要な経路用）
+    /// 全未展開コンテナを同期展開する (ブックマーク保存前等で全展開が必要な経路用)
     /// バックグラウンド展開と並走する可能性があるため、まず世代を進めて旧結果を破棄してから
     /// 残った PendingContainer を1つずつ直接同期展開する。
     pub fn expand_all_pending_sync(&mut self) {
-        // 旧バックグラウンドジョブの結果を破棄（世代不一致で次回 process_expand_results が捨てる）
+        // 旧バックグラウンドジョブの結果を破棄 (世代不一致で次回 process_expand_results が捨てる)
         self.expand_rx = None;
         self.expand_generation += 1;
 
@@ -1074,7 +1074,7 @@ impl Document {
     fn cleanup_archive_temp(&mut self) {
         for temp_dir in self.archive_temp_dirs.drain(..) {
             // ワーカーのin-flight fs::readがファイルを掴んでいる可能性があるため、
-            // 削除失敗は無視する（ユニークdir名なので次回openに影響しない）
+            // 削除失敗は無視する (ユニークdir名なので次回openに影響しない)
             let _ = std::fs::remove_dir_all(&temp_dir);
         }
         self.current_containers.clear();
@@ -1084,7 +1084,7 @@ impl Document {
             .clear();
     }
 
-    /// フォルダを開く（先頭画像を表示）
+    /// フォルダを開く (先頭画像を表示)
     pub fn open_folder(&mut self, folder: &Path) -> Result<()> {
         let folder = Self::canonicalize(folder)?;
         self.cleanup_archive_temp();
@@ -1168,7 +1168,7 @@ impl Document {
         // 通常ファイルに到達したので、待機していた intent はクリアする
         self.pending_navigation_intent = None;
 
-        // 1. キャッシュヒット → 瞬時切替（永続フィルタはキャッシュ時に既に適用済み）
+        // 1. キャッシュヒット → 瞬時切替 (永続フィルタはキャッシュ時に既に適用済み)
         if let Some(image) = self.cache.take(index) {
             self.current_image = Some(image);
             let _ = self.event_sender.send(DocumentEvent::ImageReady);
@@ -1177,7 +1177,7 @@ impl Document {
             return Ok(());
         }
 
-        // 2. キャッシュミス → 同期デコード（フォールバック）
+        // 2. キャッシュミス → 同期デコード (フォールバック)
         let current = self.file_list.current().expect("current_index was Some");
         let path = current.path.clone();
         let source = current.source.clone();
@@ -1199,14 +1199,14 @@ impl Document {
 
         match decode_result {
             Ok(image) => {
-                // 永続フィルタを適用（有効な場合のみ）
+                // 永続フィルタを適用 (有効な場合のみ)
                 let image = self.persistent_filter.apply(&image).unwrap_or(image);
                 self.current_image = Some(image);
                 let _ = self.event_sender.send(DocumentEvent::ImageReady);
             }
             Err(e) => {
                 self.current_image = None;
-                // 同期デコード失敗時はfailedマーク（ナビゲーション時にスキップ対象）
+                // 同期デコード失敗時はfailedマーク (ナビゲーション時にスキップ対象)
                 self.file_list.mark_failed(index);
                 let msg = format!("{}: {}", path.display(), e);
                 let _ = self.event_sender.send(DocumentEvent::Error(msg));
@@ -1228,15 +1228,15 @@ impl Document {
         }
     }
 
-    /// パスを正規化する（相対パスやUNCパス対応）
-    /// Rustのcanonicalize()は\\?\プレフィックスを付与するが、
+    /// パスを正規化する (相対パスやUNCパス対応)
+    /// Rustのcanonicalize() は\\?\プレフィックスを付与するが、
     /// SHFileOperationW等のShell APIが非対応のため除去する
     fn canonicalize(path: &Path) -> Result<PathBuf> {
         match std::fs::canonicalize(path) {
             Ok(canonical) => Ok(crate::util::strip_extended_length_prefix(&canonical)),
             Err(e) => {
-                // UNCパスではcanonicalize()が失敗する場合がある
-                // （ネットワーク遅延、DFS等）。ファイルが存在するならそのまま使う
+                // UNCパスではcanonicalize() が失敗する場合がある
+                // (ネットワーク遅延、DFS等)。ファイルが存在するならそのまま使う
                 if path.exists() {
                     Ok(path.to_path_buf())
                 } else {
@@ -1246,7 +1246,7 @@ impl Document {
         }
     }
 
-    /// FileInfoからファイルデータを読み出す（オンデマンドアーカイブ対応）
+    /// FileInfoからファイルデータを読み出す (オンデマンドアーカイブ対応)
     fn read_file_data(&self, info: &crate::file_info::FileInfo) -> Result<Vec<u8>> {
         match &info.source {
             FileSource::ArchiveEntry {
@@ -1254,30 +1254,30 @@ impl Document {
                 entry,
                 on_demand: true,
             } => {
-                // キャッシュされたZIPバッファから読み出し（Stored最適化付き）
+                // キャッシュされたZIPバッファから読み出し (Stored最適化付き)
                 let buffers = self.zip_buffers.read().expect("zip_buffers lock poisoned");
                 if let Some(buffer) = buffers.get(archive) {
                     crate::archive::zip::ZipHandler::read_entry_from_buffer(buffer.as_ref(), entry)
                 } else {
-                    // キャッシュミス（通常発生しない）: ファイルから直接読み出し
+                    // キャッシュミス (通常発生しない): ファイルから直接読み出し
                     drop(buffers);
                     self.archive_manager.read_entry(archive, entry)
                 }
             }
             FileSource::PendingContainer { .. } => {
-                anyhow::bail!("未展開コンテナからは読み出せません")
+                anyhow::bail!("未展開コンテナからは読み出せない")
             }
             _ => std::fs::read(&info.path)
                 .with_context(|| format!("ファイル読み込み失敗: {}", info.path.display())),
         }
     }
 
-    /// 現在のファイルのデータを読み出す（app.rsのファイル操作用）
+    /// 現在のファイルのデータを読み出す (app.rsのファイル操作用)
     pub fn read_file_data_current(&self) -> Result<Vec<u8>> {
         let current = self
             .file_list
             .current()
-            .ok_or_else(|| anyhow::anyhow!("ファイルが選択されていません"))?;
+            .ok_or_else(|| anyhow::anyhow!("ファイルが選択されていない"))?;
         self.read_file_data(current)
     }
 
@@ -1296,7 +1296,7 @@ impl Document {
         &self.file_list
     }
 
-    /// パスがコンテナ（アーカイブまたはPDF）か判定する
+    /// パスがコンテナ (アーカイブまたはPDF) か判定する
     pub fn is_container(&self, path: &Path) -> bool {
         self.archive_manager.is_archive(path) || Self::is_pdf(path)
     }
@@ -1385,7 +1385,7 @@ impl Document {
         self.after_list_change();
     }
 
-    /// グループ順をシャッフル（グループ内順序は保持）
+    /// グループ順をシャッフル (グループ内順序は保持)
     pub fn shuffle_groups(&mut self) {
         self.file_list.shuffle_groups();
         self.after_list_change();
@@ -1400,7 +1400,7 @@ impl Document {
         }
     }
 
-    /// 現在のファイルをリストから削除する（ファイル自体は残る）
+    /// 現在のファイルをリストから削除する (ファイル自体は残る)
     pub fn remove_current_from_list(&mut self) {
         if let Some(index) = self.file_list.current_index() {
             self.file_list.remove_at(index);
@@ -1424,13 +1424,13 @@ impl Document {
         Ok(())
     }
 
-    /// 現在のファイルをリスト内でリネーム（同一フォルダ内の移動後）
+    /// 現在のファイルをリスト内でリネーム (同一フォルダ内の移動後)
     /// 先読みキャッシュを無効化し、リスト内の位置はそのまま維持する
     pub fn rename_current_in_list(&mut self, new_path: &Path) -> Result<()> {
         let index = self
             .file_list
             .current_index()
-            .ok_or_else(|| anyhow::anyhow!("ファイルが選択されていません"))?;
+            .ok_or_else(|| anyhow::anyhow!("ファイルが選択されていない"))?;
         self.file_list.update_file_at(index, new_path)?;
         self.invalidate_cache();
         let _ = self.event_sender.send(DocumentEvent::FileListChanged);
@@ -1440,7 +1440,7 @@ impl Document {
         Ok(())
     }
 
-    /// リスト変更後の共通処理（キャッシュ無効化+再読込+イベント送信）
+    /// リスト変更後の共通処理 (キャッシュ無効化+再読込+イベント送信)
     /// 並べ替えで PendingContainer の位置関係が変わっている可能性があるため、
     /// バックグラウンド展開を再優先度付け (現在位置基準) する。
     pub fn after_list_change(&mut self) {
@@ -1502,12 +1502,12 @@ impl Document {
             }
 
             if container_paths.is_empty() {
-                anyhow::bail!("ブックマーク内のコンテナが見つかりません");
+                anyhow::bail!("ブックマーク内のコンテナが見つからない");
             }
 
             self.open_containers(&container_paths)?;
 
-            // 位置復元: source同一性で検索（PDF/Archive両対応）
+            // 位置復元: source同一性で検索 (PDF/Archive両対応)
             if let Some(target_source) = data.entries.get(data.index) {
                 let target_idx = self
                     .file_list
@@ -1550,7 +1550,7 @@ impl Document {
         let current = self
             .file_list
             .current()
-            .ok_or_else(|| anyhow::anyhow!("ファイルが選択されていません"))?;
+            .ok_or_else(|| anyhow::anyhow!("ファイルが選択されていない"))?;
 
         // PDFページの場合はcurrent_imageからメタデータを生成
         if matches!(current.source, FileSource::PdfPage { .. }) {
@@ -1563,7 +1563,7 @@ impl Document {
                     exif: Vec::new(),
                 })
             } else {
-                anyhow::bail!("PDFページがまだレンダリングされていません")
+                anyhow::bail!("PDFページが未レンダリング")
             };
         }
 
@@ -1592,7 +1592,7 @@ impl Document {
             .is_some_and(EditingSession::has_unsaved_changes)
     }
 
-    /// 編集セッションを開始する（まだ開始していない場合）
+    /// 編集セッションを開始する (まだ開始していない場合)
     /// 現在の画像をバックアップとして保持する
     fn ensure_editing_session(&mut self) {
         if self.editing_session.is_some() {
@@ -1608,7 +1608,7 @@ impl Document {
         }
     }
 
-    /// 編集セッションを破棄する（未保存の変更を捨てる）
+    /// 編集セッションを破棄する (未保存の変更を捨てる)
     pub fn discard_editing_session(&mut self) {
         self.editing_session = None;
     }
@@ -1868,7 +1868,7 @@ mod tests {
         cleanup_test_dir(&dir);
     }
 
-    /// テスト用ZIPファイルを作成する（PNG画像を指定数含む）
+    /// テスト用ZIPファイルを作成する (PNG画像を指定数含む)
     fn create_test_zip(path: &Path, image_count: usize) {
         let png_data = create_1x1_white_png();
         let file = std::fs::File::create(path).unwrap();
@@ -1897,7 +1897,7 @@ mod tests {
         let (mut doc, _rx) = test_document();
         doc.open_containers(&zip_paths).unwrap();
 
-        // 最初のZIPは即展開(2エントリ) + 残り2つはプレースホルダ(2エントリ)
+        // 最初のZIPは即展開 (2エントリ) + 残り2つはプレースホルダ (2エントリ)
         assert_eq!(doc.file_list().len(), 4);
         assert_eq!(doc.file_list().current_index(), Some(0));
         assert!(doc.current_image().is_some());
@@ -1923,7 +1923,7 @@ mod tests {
         let (mut doc, rx) = test_document();
         doc.open_containers(&[valid_zip, bad_path]).unwrap();
 
-        // 有効なZIPは即展開(2エントリ)、存在しないZIPはプレースホルダ(1エントリ)
+        // 有効なZIPは即展開 (2エントリ)、存在しないZIPはプレースホルダ (1エントリ)
         assert_eq!(doc.file_list().len(), 3);
 
         // 全展開すると存在しないZIPのプレースホルダは削除される

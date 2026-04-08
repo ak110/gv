@@ -8,8 +8,8 @@ use super::{DecodedImage, ImageDecoder, ImageMetadata};
 /// Susie画像プラグインをImageDecoderとして使うアダプタ
 pub struct SusieImageDecoder {
     plugin: SharedPlugin,
-    /// キャッシュした拡張子リスト（supported_extensions()から参照）
-    #[allow(dead_code)] // dyn経由のsupported_extensions()呼び出しがないため警告される
+    /// キャッシュした拡張子リスト (supported_extensions() から参照)
+    #[allow(dead_code)] // dyn経由のsupported_extensions() 呼び出しがないため警告される
     extensions: Vec<String>,
 }
 
@@ -46,7 +46,7 @@ impl ImageDecoder for SusieImageDecoder {
     fn metadata(&self, data: &[u8], filename_hint: &str) -> Result<ImageMetadata> {
         // Susieプラグインにはメタデータ専用APIがないため、デコードして取得
         let image = self.decode(data, filename_hint)?;
-        // EXIFメタデータ（Susie経由でもraw bytesからEXIFを読み取れる）
+        // EXIFメタデータ (Susie経由でもraw bytesからEXIFを読み取れる)
         let exif = super::read_exif_fields(data);
         Ok(ImageMetadata {
             width: image.width,
@@ -64,6 +64,6 @@ impl ImageDecoder for SusieImageDecoder {
     }
 }
 
-// SusieImageDecoderはSend + Sync（内部のSharedPlugin = Arc<Mutex<>>がSend + Sync）
+// SusieImageDecoderはSend + Sync(内部のSharedPlugin = Arc<Mutex<>>がSend + Sync)
 unsafe impl Send for SusieImageDecoder {}
 unsafe impl Sync for SusieImageDecoder {}

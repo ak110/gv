@@ -30,7 +30,7 @@ const BUTTON_WIDTH: i32 = 80;
 const BUTTON_HEIGHT: i32 = 28;
 const MARGIN: i32 = 12;
 
-/// 解像度変更ダイアログを表示する（モーダル）
+/// 解像度変更ダイアログを表示する (モーダル)
 /// `current_width`, `current_height`: 現在の画像サイズ
 /// 戻り値: (新幅, 新高さ)。キャンセル時は `None`。
 pub fn show_resize_dialog(

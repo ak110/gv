@@ -1,4 +1,4 @@
-//! 画像の幾何変換（トリミング等）
+//! 画像の幾何変換 (トリミング等)
 
 use anyhow::{Context as _, Result};
 
@@ -130,7 +130,7 @@ pub fn rotate_270(image: &DecodedImage) -> DecodedImage {
     }
 }
 
-/// 任意角度回転（度数法、時計回り）
+/// 任意角度回転 (度数法、時計回り)
 /// 回転後の画像は元画像を包む最小矩形サイズになる
 pub fn rotate_arbitrary(image: &DecodedImage, degrees: f64) -> DecodedImage {
     let rad = degrees.to_radians();
@@ -212,9 +212,9 @@ pub fn rotate_arbitrary(image: &DecodedImage, degrees: f64) -> DecodedImage {
     }
 }
 
-/// 解像度変更（Lanczos3リサイズ、SIMD加速）
+/// 解像度変更 (Lanczos3リサイズ、SIMD加速)
 ///
-/// 入力サイズが極端な場合（ゼロや fast_image_resize が受け付けないサイズ）は
+/// 入力サイズが極端な場合 (ゼロや fast_image_resize が受け付けないサイズ) は
 /// `Err` を返す。呼び出し側で `show_error_title` 等に流すこと。
 pub fn resize(image: &DecodedImage, new_width: u32, new_height: u32) -> Result<DecodedImage> {
     if new_width == 0 || new_height == 0 {
@@ -251,7 +251,7 @@ pub fn resize(image: &DecodedImage, new_width: u32, new_height: u32) -> Result<D
 mod tests {
     use super::*;
 
-    /// 4x4のテスト画像を作成（各ピクセルが座標で識別可能）
+    /// 4x4のテスト画像を作成 (各ピクセルが座標で識別可能)
     fn test_image_4x4() -> DecodedImage {
         let mut data = Vec::with_capacity(4 * 4 * 4);
         for y in 0..4u8 {
@@ -279,7 +279,7 @@ mod tests {
         assert_eq!(cropped.width, 2);
         assert_eq!(cropped.height, 2);
         assert_eq!(cropped.data.len(), 2 * 2 * 4);
-        // (1,1)のピクセル: R=60, G=60
+        // (1,1) のピクセル: R=60, G=60
         assert_eq!(cropped.data[0], 60);
         assert_eq!(cropped.data[1], 60);
     }
@@ -394,7 +394,7 @@ mod tests {
     #[test]
     fn resize_zero_returns_original_clone() {
         // 縦横ゼロは「元画像のクローンを返す」フォールバック動作。
-        // パニックせず Ok を返すことを保証する（リサイズダイアログでの保険）。
+        // パニックせず Ok を返すことを保証する (リサイズダイアログでの保険)。
         let img = test_image_4x4();
         let r = resize(&img, 0, 0).expect("resize zero");
         assert_eq!(r.width, img.width);
@@ -408,8 +408,8 @@ mod tests {
         let rotated = rotate_arbitrary(&img, 0.0);
         assert_eq!(rotated.width, img.width);
         assert_eq!(rotated.height, img.height);
-        // 内部ピクセルも概ね一致（バイリニア補間で端は除外）
-        // ピクセル(row=1, col=1)のバイトオフセット
+        // 内部ピクセルも概ね一致 (バイリニア補間で端は除外)
+        // ピクセル (row=1, col=1) のバイトオフセット
         let center_src = (4 + 1) * 4;
         let center_dst = (rotated.width as usize + 1) * 4;
         for ch in 0..4 {
@@ -433,7 +433,7 @@ mod tests {
         assert_eq!(cropped.width, 1);
         assert_eq!(cropped.height, 1);
         assert_eq!(cropped.data.len(), 4);
-        // (3,3)のピクセル: R=3*60=180, G=3*60=180
+        // (3,3) のピクセル: R=3*60=180, G=3*60=180
         assert_eq!(cropped.data[0], 180);
         assert_eq!(cropped.data[1], 180);
     }

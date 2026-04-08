@@ -1,5 +1,5 @@
 fn main() {
-    // アイコンリソースをコンパイル（.rcファイル経由で複数アイコンを登録）
+    // アイコンリソースをコンパイル (.rcファイル経由で複数アイコンを登録)
     let mut res = winresource::WindowsResource::new();
     res.set_resource_file("resources/gv.rc");
 

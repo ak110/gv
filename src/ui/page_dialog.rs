@@ -9,7 +9,7 @@ use windows::Win32::Graphics::Gdi::{COLOR_BTNFACE, UpdateWindow};
 use windows::Win32::UI::Input::KeyboardAndMouse::{EnableWindow, SetFocus};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-/// EM_SETSEL メッセージ（EDIT コントロールの選択範囲設定）
+/// EM_SETSEL メッセージ (EDIT コントロールの選択範囲設定)
 const EM_SETSEL: u32 = 0x00B1;
 
 /// ダイアログの内部状態
@@ -19,7 +19,7 @@ struct DialogData {
     closed: bool,
 }
 
-/// ウィンドウクラス登録（一度だけ）
+/// ウィンドウクラス登録 (一度だけ)
 static REGISTER_ONCE: Once = Once::new();
 const CLASS_NAME: &str = "gv_page_dialog\0";
 
@@ -36,13 +36,13 @@ const BUTTON_WIDTH: i32 = 80;
 const BUTTON_HEIGHT: i32 = 28;
 const MARGIN: i32 = 12;
 
-/// ページ指定ダイアログを表示する（モーダル）
+/// ページ指定ダイアログを表示する (モーダル)
 ///
 /// `parent`: 親ウィンドウ
-/// `current`: 現在のページ番号（1-based）
+/// `current`: 現在のページ番号 (1-based)
 /// `total`: 総ページ数
 ///
-/// 戻り値: 入力されたページ番号（1-based）。キャンセル時は `None`。
+/// 戻り値: 入力されたページ番号 (1-based)。キャンセル時は `None`。
 pub fn show_page_dialog(parent: HWND, current: usize, total: usize) -> Option<usize> {
     unsafe {
         // ウィンドウクラス登録
@@ -150,7 +150,7 @@ pub fn show_page_dialog(parent: HWND, current: usize, total: usize) -> Option<us
         let buttons_total = BUTTON_WIDTH * 2 + gap;
         let button_x = (client_w - buttons_total) / 2;
 
-        // OKボタン（BS_DEFPUSHBUTTON: Enterキーで発火）
+        // OKボタン (BS_DEFPUSHBUTTON: Enterキーで発火)
         let ok_label: Vec<u16> = "OK\0".encode_utf16().collect();
         let _ok_hwnd = CreateWindowExW(
             WINDOW_EX_STYLE::default(),

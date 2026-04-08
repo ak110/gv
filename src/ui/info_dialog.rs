@@ -1,4 +1,4 @@
-//! 情報表示ダイアログ（画像情報・ヘルプ用）
+//! 情報表示ダイアログ (画像情報・ヘルプ用)
 //!
 //! MessageBoxWの代わりに、readonly EDIT コントロールを持つモーダルダイアログを表示する。
 //! テキストの選択・コピーが可能。
@@ -15,7 +15,7 @@ struct DialogData {
     closed: bool,
 }
 
-/// ウィンドウクラス登録（一度だけ）
+/// ウィンドウクラス登録 (一度だけ)
 static REGISTER_ONCE: Once = Once::new();
 const CLASS_NAME: &str = "gv_info_dialog\0";
 
@@ -26,12 +26,12 @@ const ID_EDIT: u16 = 0x200;
 const DIALOG_WIDTH: i32 = 640;
 const DIALOG_HEIGHT: i32 = 480;
 
-/// 情報ダイアログを表示する（モーダル）
+/// 情報ダイアログを表示する (モーダル)
 ///
 /// `parent`: 親ウィンドウ
 /// `title`: ダイアログタイトル
 /// `text`: 表示テキスト
-/// `font`: EDITコントロールに適用するフォント（HFONTが無効ならデフォルトフォント）
+/// `font`: EDITコントロールに適用するフォント (HFONTが無効ならデフォルトフォント)
 pub fn show_info_dialog(parent: HWND, title: &str, text: &str, font: HFONT) {
     unsafe {
         // ウィンドウクラス登録
@@ -130,7 +130,7 @@ pub fn show_info_dialog(parent: HWND, title: &str, text: &str, font: HFONT) {
         let _ = ShowWindow(hwnd, SW_SHOW);
         let _ = UpdateWindow(hwnd);
 
-        // モーダルループ（data.closedはWndProc内でポインタ経由で変更される）
+        // モーダルループ (data.closedはWndProc内でポインタ経由で変更される)
         let _ = EnableWindow(parent, false);
         let mut msg = MSG::default();
         #[allow(clippy::while_immutable_condition)]
@@ -173,7 +173,7 @@ unsafe extern "system" fn dialog_wnd_proc(
             }
             WM_COMMAND => {
                 let control_id = (wparam.0 as u32) & 0xFFFF;
-                // Esc（IsDialogMessageWがIDCANCEL=2に変換）
+                // Esc(IsDialogMessageWがIDCANCEL=2に変換)
                 if control_id == 2 {
                     if let Some(data) = get_dialog_data(hwnd) {
                         data.closed = true;

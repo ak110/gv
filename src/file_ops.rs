@@ -12,7 +12,7 @@ use windows::Win32::UI::Shell::{
 
 use crate::util::to_wide;
 
-/// IFileOperationによるファイル削除（ごみ箱経由）
+/// IFileOperationによるファイル削除 (ごみ箱経由)
 pub fn delete_to_recycle_bin(hwnd: HWND, paths: &[&Path]) -> Result<bool> {
     if paths.is_empty() {
         return Ok(false);
@@ -28,7 +28,7 @@ pub fn delete_to_recycle_bin(hwnd: HWND, paths: &[&Path]) -> Result<bool> {
     }
 }
 
-/// IFileOperationによるファイル移動（複数→ディレクトリ）
+/// IFileOperationによるファイル移動 (複数→ディレクトリ)
 pub fn move_files(hwnd: HWND, paths: &[&Path], dest: &Path) -> Result<bool> {
     if paths.is_empty() {
         return Ok(false);
@@ -48,7 +48,7 @@ pub fn move_files(hwnd: HWND, paths: &[&Path], dest: &Path) -> Result<bool> {
     }
 }
 
-/// IFileOperationによるファイルコピー（複数→ディレクトリ）
+/// IFileOperationによるファイルコピー(複数→ディレクトリ)
 pub fn copy_files(hwnd: HWND, paths: &[&Path], dest: &Path) -> Result<bool> {
     if paths.is_empty() {
         return Ok(false);
@@ -65,7 +65,7 @@ pub fn copy_files(hwnd: HWND, paths: &[&Path], dest: &Path) -> Result<bool> {
     }
 }
 
-/// 単一ファイルの移動（リネーム対応）
+/// 単一ファイルの移動 (リネーム対応)
 /// 移動先の親ディレクトリをIShellItemにし、ファイル名をMoveItemの引数で指定する
 pub fn move_single_file(hwnd: HWND, src: &Path, dest: &Path) -> Result<bool> {
     unsafe {
@@ -73,9 +73,9 @@ pub fn move_single_file(hwnd: HWND, src: &Path, dest: &Path) -> Result<bool> {
         let src_item = create_shell_item_strict(src)?;
         let dest_parent = dest
             .parent()
-            .context("移動先の親ディレクトリがありません")?;
+            .context("移動先の親ディレクトリが存在しない")?;
         let dest_folder = create_shell_item_strict(dest_parent)?;
-        let new_name = dest.file_name().context("移動先のファイル名がありません")?;
+        let new_name = dest.file_name().context("移動先のファイル名が存在しない")?;
         let new_name_wide: Vec<u16> = new_name.encode_wide().chain(std::iter::once(0)).collect();
         op.MoveItem(
             &src_item,
@@ -95,7 +95,7 @@ pub fn move_single_file(hwnd: HWND, src: &Path, dest: &Path) -> Result<bool> {
     }
 }
 
-/// ファイル選択ダイアログ（IFileOpenDialog）
+/// ファイル選択ダイアログ (IFileOpenDialog)
 pub fn open_file_dialog(hwnd: HWND, initial_dir: Option<&Path>) -> Result<Option<PathBuf>> {
     unsafe {
         let dialog: IFileOpenDialog = windows::Win32::System::Com::CoCreateInstance(
@@ -149,12 +149,12 @@ pub fn open_file_dialog(hwnd: HWND, initial_dir: Option<&Path>) -> Result<Option
     }
 }
 
-/// フォルダ選択ダイアログ（IFileOpenDialog + FOS_PICKFOLDERS）
+/// フォルダ選択ダイアログ (IFileOpenDialog + FOS_PICKFOLDERS)
 pub fn open_folder_dialog(hwnd: HWND, initial_dir: Option<&Path>) -> Result<Option<PathBuf>> {
     select_folder_dialog(hwnd, "フォルダを開く", initial_dir)
 }
 
-/// フォルダ選択ダイアログ（移動/コピー先選択用）
+/// フォルダ選択ダイアログ (移動/コピー先選択用)
 pub fn select_folder_dialog(
     hwnd: HWND,
     title: &str,
@@ -195,7 +195,7 @@ pub fn select_folder_dialog(
     }
 }
 
-/// 保存先ダイアログ（IFileSaveDialog）
+/// 保存先ダイアログ (IFileSaveDialog)
 /// `initial_dir`が指定されていればそのフォルダを初期表示する
 /// `title`/`ok_button_label`でダイアログのタイトルとOKボタンのラベルをカスタマイズ可能
 pub fn save_file_dialog(
@@ -262,7 +262,7 @@ pub fn save_file_dialog(
     }
 }
 
-/// ブックマーク読み込みダイアログ（.gvbmフィルタ + bookmarksフォルダ初期表示）
+/// ブックマーク読み込みダイアログ (.gvbmフィルタ + bookmarksフォルダ初期表示)
 pub fn open_bookmark_dialog(hwnd: HWND) -> Result<Option<PathBuf>> {
     unsafe {
         let dialog: IFileOpenDialog = windows::Win32::System::Com::CoCreateInstance(
@@ -354,7 +354,7 @@ unsafe fn perform_operations(
     }
 }
 
-/// SHCreateItemFromParsingNameでIShellItemを取得する（エラー時はResult）
+/// SHCreateItemFromParsingNameでIShellItemを取得する (エラー時はResult)
 /// ファイル操作用: 対象パスが存在しない場合はエラーとして扱う
 fn create_shell_item_strict(path: &Path) -> Result<windows::Win32::UI::Shell::IShellItem> {
     let path = crate::util::strip_extended_length_prefix(path);

@@ -9,9 +9,9 @@ use windows::Win32::System::Threading::PROCESS_QUERY_LIMITED_INFORMATION;
 /// %TEMP% 配下の孤立した gv_archive_* / gv3_archive_* ディレクトリを削除する
 ///
 /// ディレクトリ名の形式: gv_archive_{pid}_{timestamp_ms}
-/// - 自プロセスのPIDにマッチ → スキップ（自分のtempは触らない）
-/// - PIDのプロセスが生存中 → スキップ（他のgvインスタンスかもしれない）
-/// - PIDのプロセスが死亡済み → 削除（孤立temp）
+/// - 自プロセスのPIDにマッチ → スキップ (自分のtempは触らない)
+/// - PIDのプロセスが生存中 → スキップ (他のgvインスタンスかもしれない)
+/// - PIDのプロセスが死亡済み → 削除 (孤立temp)
 pub fn cleanup_orphaned_temp_dirs() {
     let temp_dir = std::env::temp_dir();
     let my_pid = std::process::id();
@@ -45,7 +45,7 @@ pub fn cleanup_orphaned_temp_dirs() {
             continue;
         }
 
-        // 孤立temp → 削除（エラー無視）
+        // 孤立temp → 削除 (エラー無視)
         let _ = std::fs::remove_dir_all(entry.path());
     }
 }

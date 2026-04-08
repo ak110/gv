@@ -22,7 +22,7 @@ pub struct SusieManager {
 
 impl SusieManager {
     /// spiディレクトリからプラグインを自動検出・ロードする
-    /// ロード失敗は警告表示してスキップ（アプリ起動は止めない）
+    /// ロード失敗は警告表示してスキップ (アプリ起動は止めない)
     pub fn discover(spi_dir: &Path) -> Self {
         let mut plugins = Vec::new();
 

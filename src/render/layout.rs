@@ -1,11 +1,11 @@
 /// 表示モード
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DisplayMode {
-    /// ウィンドウに収まるよう縮小（拡大はしない）
+    /// ウィンドウに収まるよう縮小 (拡大はしない)
     AutoShrink,
     /// ウィンドウに合わせて拡大・縮小
     AutoFit,
-    /// ウィンドウに合わせて拡大のみ（小さい画像は原寸）
+    /// ウィンドウに合わせて拡大のみ (小さい画像は原寸)
     AutoEnlarge,
     /// 原寸大表示
     Original,
@@ -26,7 +26,7 @@ pub struct Layout {
     pub mode: DisplayMode,
     /// 余白の有効/無効
     pub margin_enabled: bool,
-    /// 余白量（ピクセル）
+    /// 余白量 (ピクセル)
     pub margin_amount: f32,
 }
 
@@ -84,7 +84,7 @@ impl Layout {
             DisplayMode::AutoEnlarge => {
                 let scale_x = avail_w / img_w;
                 let scale_y = avail_h / img_h;
-                // 拡大のみ（1.0未満にはしない）
+                // 拡大のみ (1.0未満にはしない)
                 scale_x.min(scale_y).max(1.0)
             }
             DisplayMode::Original => 1.0,
@@ -115,7 +115,7 @@ impl Layout {
         rect.width / image_width as f32
     }
 
-    /// 倍率を1.4倍にする（Fixed modeに切替）
+    /// 倍率を1.4倍にする (Fixed modeに切替)
     pub fn zoom_in(
         &mut self,
         image_width: u32,
@@ -127,7 +127,7 @@ impl Layout {
         self.mode = DisplayMode::Fixed(current * 1.4);
     }
 
-    /// 倍率を0.7倍にする（Fixed modeに切替）
+    /// 倍率を0.7倍にする (Fixed modeに切替)
     pub fn zoom_out(
         &mut self,
         image_width: u32,
@@ -139,7 +139,7 @@ impl Layout {
         self.mode = DisplayMode::Fixed(current * 0.7);
     }
 
-    /// 倍率を1.0にリセット（Fixed modeに切替）
+    /// 倍率を1.0にリセット (Fixed modeに切替)
     pub fn zoom_reset(&mut self) {
         self.mode = DisplayMode::Fixed(1.0);
     }
@@ -222,7 +222,7 @@ mod tests {
         // 小さい画像 → 拡大
         let rect = layout.calculate(100, 100, 800.0, 600.0);
         assert!((rect.width - 600.0).abs() < 0.01);
-        // 大きい画像 → そのまま（1.0を下回らない）
+        // 大きい画像 → そのまま (1.0を下回らない)
         let rect2 = layout.calculate(2000, 1000, 800.0, 600.0);
         assert!((rect2.width - 2000.0).abs() < 0.01);
     }

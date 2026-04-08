@@ -1,6 +1,6 @@
 # コンセプト
 
-Windows用の軽量な画像ビューアーです。
+Windows用の軽量な画像ビューアーである。
 
 ## 設計方針
 
@@ -10,11 +10,11 @@ Windows用の軽量な画像ビューアーです。
 
 ### 高速な画像切り替え
 
-先読み（プリフェッチ）エンジンを中核に据え、前後の画像をバックグラウンドでデコード・キャッシュすることで、画像切り替えを瞬時に行う。
+先読み (プリフェッチ) エンジンを中核に据え、前後の画像をバックグラウンドでデコード・キャッシュすることで、画像切り替えを瞬時に行う。
 
 ### モダンな開発環境
 
-`rustup` + テキストエディタ（VSCode推奨）で開発できる。Visual Studioは不要（Build Toolsのみ必要）。
+`rustup` + テキストエディタ (VSCode推奨) で開発できる。Visual Studioは不要 (Build Toolsのみ必要)。
 
 ## 技術選定
 
@@ -27,5 +27,5 @@ Windows用の軽量な画像ビューアーです。
 
 ### GUI: windows-rs (Win32 API) + Direct2D
 
-- **windows-rs**: Microsoft公式のRust用Win32バインディング。型安全にWin32 API、COM、Direct2Dを呼び出せる
-- **Direct2D**: GPU加速による高速な画像描画
+- windows-rs: Microsoft公式のRust用Win32バインディング。型安全にWin32 API、COM、Direct2Dを呼び出せる
+- Direct2D: GPU加速による高速な画像描画

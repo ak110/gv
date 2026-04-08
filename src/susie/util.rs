@@ -5,7 +5,7 @@ use windows::Win32::System::Memory::{LocalLock, LocalSize, LocalUnlock};
 
 use crate::image::DecodedImage;
 
-/// Rust文字列をANSI（CP_ACP）バイト列に変換する
+/// Rust文字列をANSI (CP_ACP) バイト列に変換する
 /// Susieプラグインは ANSI 文字列を要求する
 pub fn to_ansi(s: &str) -> Vec<u8> {
     use windows::Win32::Globalization::{CP_ACP, WC_NO_BEST_FIT_CHARS, WideCharToMultiByte};
@@ -104,7 +104,7 @@ pub fn hlocal_from_isize(val: isize) -> HLOCAL {
 /// 計算した `src_row` と `x * bytes_per_pixel` のオフセットでのみメモリを参照する。
 pub fn dib_to_rgba(bmi_ptr: *const u8, bits_ptr: *const u8) -> Result<DecodedImage> {
     if bmi_ptr.is_null() || bits_ptr.is_null() {
-        bail!("DIBポインタがnullです");
+        bail!("DIBポインタがnull");
     }
 
     // BITMAPINFOHEADERを読み取り
@@ -124,7 +124,7 @@ pub fn dib_to_rgba(bmi_ptr: *const u8, bits_ptr: *const u8) -> Result<DecodedIma
     let w = width as u32;
     let h = abs_height;
 
-    // パレット取得（1/4/8bit時）
+    // パレット取得 (1/4/8bit時)
     let palette = if bit_count <= 8 {
         let colors_used = if bih.bi_clr_used > 0 {
             bih.bi_clr_used as usize
@@ -146,7 +146,7 @@ pub fn dib_to_rgba(bmi_ptr: *const u8, bits_ptr: *const u8) -> Result<DecodedIma
         Vec::new()
     };
 
-    // ソース行ストライド（4バイトアライン）
+    // ソース行ストライド (4バイトアライン)
     let stride = (width as usize * bit_count as usize).div_ceil(32) * 4;
 
     let mut rgba = vec![0u8; w as usize * h as usize * 4];

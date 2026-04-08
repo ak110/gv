@@ -1,4 +1,4 @@
-//! ブックマーク機能（ファイルリストの保存/復元）
+//! ブックマーク機能 (ファイルリストの保存/復元)
 
 use std::fmt::Write as _;
 use std::path::PathBuf;
@@ -14,7 +14,7 @@ pub struct BookmarkData {
     pub index: usize,
 }
 
-/// ブックマークフォルダのパスを返す（exeと同じディレクトリの"bookmarks"）
+/// ブックマークフォルダのパスを返す (exeと同じディレクトリの"bookmarks")
 pub fn bookmark_dir() -> PathBuf {
     std::env::current_exe()
         .ok()
@@ -68,7 +68,7 @@ pub fn save_bookmark(
                 let _ = writeln!(content, "file\t{}", path.display());
             }
             FileSource::ArchiveEntry { archive, entry, .. } => {
-                // on_demandフラグは保存しない（復元時にopen_containersで再判定）
+                // on_demandフラグは保存しない (復元時にopen_containersで再判定)
                 let _ = writeln!(content, "archive\t{}\t{}", archive.display(), entry);
             }
             FileSource::PdfPage {
@@ -78,7 +78,7 @@ pub fn save_bookmark(
                 let _ = writeln!(content, "pdf\t{}\t{}", pdf_path.display(), page_index);
             }
             FileSource::PendingContainer { .. } => {
-                // 未展開コンテナはスキップ（保存前にexpand_all_pending_syncで展開済みのはず）
+                // 未展開コンテナはスキップ (保存前にexpand_all_pending_syncで展開済みのはず)
             }
         }
     }
@@ -271,7 +271,7 @@ pdf	C:\docs\test.pdf	2
     fn parse_bookmark_whitespace_lines_ignored() {
         let content = "   \n\tfile\ta.jpg\n   \n";
         let data = parse_bookmark(content);
-        // "file\ta.jpg" はtrim後に正しくパースされるはず…
+        // "file\ta.jpg" はtrim後に正しくパースされる想定。
         // ただし "\tfile\ta.jpg" をtrimすると "file\ta.jpg" になり、
         // splitn(3, '\t') → ["file", "a.jpg"] にマッチ
         assert_eq!(data.entries.len(), 1);

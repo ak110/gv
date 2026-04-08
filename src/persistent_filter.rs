@@ -1,4 +1,4 @@
-//! 永続フィルタ（全画像に自動適用されるフィルタ）
+//! 永続フィルタ (全画像に自動適用されるフィルタ)
 //!
 //! 「フィルタ」メニューで設定した操作を、全画像閲覧時に自動適用する。
 //! フィルタ設定変更時はキャッシュを全無効化して再描画する。
@@ -37,7 +37,7 @@ pub enum FilterOperation {
 pub struct PersistentFilter {
     /// フィルタの有効/無効
     enabled: bool,
-    /// 適用するフィルタ操作のリスト（順序通りに適用）
+    /// 適用するフィルタ操作のリスト (順序通りに適用)
     operations: Vec<FilterOperation>,
     /// 設定変更時にインクリメントされる世代番号
     generation: u64,
@@ -108,7 +108,7 @@ impl PersistentFilter {
     }
 
     /// フィルタが有効な場合、画像にフィルタを適用して返す
-    /// 無効またはフィルタがない場合はNoneを返す（元画像をそのまま使う）
+    /// 無効またはフィルタがない場合はNoneを返す (元画像をそのまま使う)
     pub fn apply(&self, image: &DecodedImage) -> Option<DecodedImage> {
         if !self.enabled || self.operations.is_empty() {
             return None;
@@ -240,7 +240,7 @@ mod tests {
         pf.add_operation(FilterOperation::Levels { low: 0, high: 255 });
 
         let result = pf.apply(&test_image()).unwrap();
-        // グレースケール → 反転 → レベル補正(フルレンジ)が順に適用される
+        // グレースケール → 反転 → レベル補正 (フルレンジ) が順に適用される
         assert_eq!(result.width, 1);
         assert_eq!(result.height, 1);
         assert_eq!(result.data.len(), 4);
@@ -298,7 +298,7 @@ mod tests {
         let result = pf.apply(&img).unwrap();
         assert_eq!(result.width, 2);
         assert_eq!(result.height, 1);
-        // 180°回転で順序が反転: 元(赤,緑)→(緑,赤)
+        // 180°回転で順序が反転: 元 (赤,緑) → (緑,赤)
         assert_eq!(&result.data[0..4], &[0, 255, 0, 255]);
         assert_eq!(&result.data[4..8], &[255, 0, 0, 255]);
     }
@@ -487,7 +487,7 @@ mod tests {
         pf.add_operation(FilterOperation::FlipVertical);
         pf.add_operation(FilterOperation::Rotate90CW);
         pf.add_operation(FilterOperation::Rotate90CCW);
-        // 最終結果: 180°回転（水平+垂直反転の効果）
+        // 最終結果: 180°回転 (水平+垂直反転の効果)
         let result = pf.apply(&img).unwrap();
         assert_eq!(result.width, 2);
         assert_eq!(result.height, 2);

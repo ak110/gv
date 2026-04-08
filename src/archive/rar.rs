@@ -30,7 +30,7 @@ impl ArchiveHandler for RarHandler {
     ) -> Result<Vec<ExtractedEntry>> {
         let mut archive = unrar::Archive::new(archive_path)
             .open_for_processing()
-            .map_err(|e| anyhow::anyhow!("RARアーカイブを開けません: {e}"))?;
+            .map_err(|e| anyhow::anyhow!("RARアーカイブを開けない: {e}"))?;
 
         let mut results = Vec::new();
 

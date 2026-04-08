@@ -8,7 +8,7 @@ use crate::document::{Document, DocumentEvent, ZipBuffer};
 use crate::extension_registry::ExtensionRegistry;
 use crate::image::{DecoderChain, StandardDecoder};
 
-/// テスト用DecoderChainを生成する（StandardDecoderのみ）
+/// テスト用DecoderChainを生成する (StandardDecoderのみ)
 pub fn test_decoder() -> Arc<DecoderChain> {
     Arc::new(DecoderChain::new(vec![Box::new(StandardDecoder::new())]))
 }

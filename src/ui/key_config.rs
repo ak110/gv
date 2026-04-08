@@ -27,7 +27,7 @@ pub enum MouseButton {
     MiddleClick,
 }
 
-/// 入力イベント（キー/ホイール/マウスを統一的に扱う）
+/// 入力イベント (キー/ホイール/マウスを統一的に扱う)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum InputChord {
     Key {
@@ -127,7 +127,7 @@ pub enum Action {
     RotateArbitrary,
     Resize,
 
-    // --- フィルタ（画像メニュー） ---
+    // --- フィルタ (画像メニュー) ---
     Fill,
     Levels,
     Gamma,
@@ -207,7 +207,7 @@ impl KeyConfig {
             if let Ok(config) = Self::parse_toml(&content) {
                 return config;
             }
-            eprintln!("キーバインド設定のパースに失敗しました。デフォルトを使用します。");
+            eprintln!("キーバインド設定のパースに失敗。デフォルトを使用する。");
         }
         Self::with_defaults()
     }
@@ -261,7 +261,7 @@ impl KeyConfig {
         Ok(Self { bindings })
     }
 
-    /// デフォルトのキーバインディング（ぐらびゅ.keys.default.tomlと同期）
+    /// デフォルトのキーバインディング (ぐらびゅ.keys.default.tomlと同期)
     fn default_bindings() -> HashMap<InputChord, Action> {
         let mut m = HashMap::new();
 
@@ -372,7 +372,7 @@ impl KeyConfig {
     }
 }
 
-/// バインドヘルパー（カンマ区切り対応）
+/// バインドヘルパー(カンマ区切り対応)
 fn bind(map: &mut HashMap<InputChord, Action>, keys: &str, action: Action) {
     for part in keys.split(',') {
         let part = part.trim();

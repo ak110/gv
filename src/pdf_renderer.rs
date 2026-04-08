@@ -13,10 +13,10 @@ use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx, CoUninit
 
 use crate::image::DecodedImage;
 
-/// レンダリング解像度スケール（150 DPI / 96 DPI ≈ 1.5625）
+/// レンダリング解像度スケール (150 DPI / 96 DPI ≈ 1.5625)
 const DPI_SCALE: f64 = 1.5625;
 
-/// PDFのページ数を取得する（高速: ページデータはロードしない）
+/// PDFのページ数を取得する (高速: ページデータはロードしない)
 pub fn get_pdf_page_count(pdf_path: &Path) -> Result<u32> {
     let clean_path = crate::util::strip_extended_length_prefix(pdf_path);
     let path_str = clean_path.to_str().unwrap_or("");
@@ -38,7 +38,7 @@ pub fn get_pdf_page_count(pdf_path: &Path) -> Result<u32> {
     doc.PageCount().context("ページ数取得失敗")
 }
 
-/// 単一PDFページをDecodedImageにレンダリングする（150 DPI）
+/// 単一PDFページをDecodedImageにレンダリングする (150 DPI)
 pub fn render_pdf_page(pdf_path: &Path, page_index: u32) -> Result<DecodedImage> {
     let clean_path = crate::util::strip_extended_length_prefix(pdf_path);
     let path_str = clean_path.to_str().unwrap_or("");
@@ -79,7 +79,7 @@ pub fn render_pdf_page(pdf_path: &Path, page_index: u32) -> Result<DecodedImage>
         .SetDestinationHeight(render_height)
         .context("高さ設定失敗")?;
 
-    // メモリストリームにレンダリング（PNG形式で出力される）
+    // メモリストリームにレンダリング (PNG形式で出力される)
     let stream = InMemoryRandomAccessStream::new().context("ストリーム作成失敗")?;
     page.RenderWithOptionsToStreamAsync(&stream, &options)
         .context("レンダリング開始失敗")?
@@ -101,7 +101,7 @@ pub fn render_pdf_page(pdf_path: &Path, page_index: u32) -> Result<DecodedImage>
         .ReadBytes(&mut png_data)
         .context("バイト読み出し失敗")?;
 
-    // PNG → RGBA デコード（image crateを使用）
+    // PNG → RGBA デコード (image crateを使用)
     let img = image::load_from_memory_with_format(&png_data, image::ImageFormat::Png)
         .context("PNGデコード失敗")?;
     let rgba = img.into_rgba8();

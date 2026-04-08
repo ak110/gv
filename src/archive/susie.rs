@@ -53,7 +53,7 @@ impl ArchiveHandler for SusieArchiveHandler {
         let mut results = Vec::new();
 
         for entry in &entries {
-            // ファイル名を取得（ANSI → UTF-8）
+            // ファイル名を取得 (ANSI → UTF-8)
             let raw_filename = from_ansi(&entry.filename);
             let filename = extract_filename(&raw_filename);
 

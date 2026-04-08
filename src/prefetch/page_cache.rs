@@ -37,7 +37,7 @@ impl PageCache {
         true
     }
 
-    /// 参照取得（テスト・デバッグ用API）
+    /// 参照取得 (テスト・デバッグ用API)
     #[allow(dead_code)] // テスト用APIとして維持
     pub fn get(&self, index: usize) -> Option<&DecodedImage> {
         self.cache.get(&index)
@@ -57,7 +57,7 @@ impl PageCache {
         self.cache.contains_key(&index)
     }
 
-    /// キャッシュ済みインデックスの一覧を返す（テスト・デバッグ用API）
+    /// キャッシュ済みインデックスの一覧を返す (テスト・デバッグ用API)
     #[allow(dead_code)] // テスト用APIとして維持
     pub fn cached_indices(&self) -> Vec<usize> {
         self.cache.keys().copied().collect()

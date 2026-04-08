@@ -1,19 +1,19 @@
 # ぐらびゅ3 設定ファイル
-# このファイルを gv3.toml にコピーまたはリネームして使用してください。
-# 未指定の項目はデフォルト値が使われます。
+# このファイルを gv3.toml にコピーまたはリネームして使用する。
+# 未指定の項目はデフォルト値が適用される。
 
 [display]
 # 表示モード: "shrink" (自動縮小), "fit" (自動縮小・拡大), "enlarge" (自動拡大), "original" (原寸大), "fixed" (固定倍率)
 auto_scale = "fit"
-# 固定倍率（auto_scale = "fixed" のとき使用）
+# 固定倍率 (auto_scale = "fixed" のときに使用)
 fixed_scale = 1.0
-# 余白量（ピクセル）
+# 余白量 (ピクセル単位)
 margin = 64.0
 # αチャネル背景: "white", "black", "checker"
 alpha_background = "checker"
 
 [prefetch]
-# キャッシュ枚数計算の基準画像サイズ（幅×高さ）
+# キャッシュ枚数計算の基準画像サイズ (幅 x 高さ)
 cache_base_width = 1024
 cache_base_height = 1536
 
@@ -22,23 +22,23 @@ cache_base_height = 1536
 default_sort = "name"
 
 [window]
-# ウィンドウ位置を記憶する
+# ウィンドウ位置の記憶
 remember_position = false
-# ウィンドウサイズを記憶する
+# ウィンドウサイズの記憶
 remember_size = false
 # 常に手前に表示
 always_on_top = false
 
 [susie]
-# Susieプラグインディレクトリ（exeからの相対パス）
+# Susie プラグインディレクトリ (exe からの相対パス)
 plugin_dir = "spi"
-# 画像プラグイン優先度（上が高優先、空=自動検出順）
+# 画像プラグイン優先度 (上ほど高優先、空は自動検出順)
 image_plugins = []
 # アーカイブプラグイン優先度
 archive_plugins = []
 
 [slideshow]
-# スライドショー間隔（ミリ秒）
+# スライドショー間隔 (ミリ秒)
 interval_ms = 3000
-# 最後の画像の後に最初に戻る
+# 最後の画像の後に最初へ戻る
 repeat = true

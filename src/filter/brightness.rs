@@ -61,7 +61,7 @@ pub fn brightness_contrast(
     })
 }
 
-/// 選択領域内のピクセルに変換関数を適用する（選択なしなら全画像）
+/// 選択領域内のピクセルに変換関数を適用する (選択なしなら全画像)
 fn apply_to_region(
     image: &DecodedImage,
     region: Option<&PixelRect>,

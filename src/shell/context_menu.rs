@@ -1,4 +1,4 @@
-//! エクスプローラのコンテキストメニュー（右クリックメニュー）への登録
+//! エクスプローラのコンテキストメニュー (右クリックメニュー) への登録
 //!
 //! - HKCU\Software\Classes\*\shell\gv — 全ファイル対象
 //! - HKCU\Software\Classes\Directory\shell\gv — フォルダ対象
@@ -11,11 +11,11 @@ const FILE_MENU_KEY: &str = r"Software\Classes\*\shell\gv";
 /// フォルダ対象のメニューキー
 const DIR_MENU_KEY: &str = r"Software\Classes\Directory\shell\gv";
 
-// 旧メニューキー（マイグレーション用）
+// 旧メニューキー(マイグレーション用)
 const OLD_FILE_MENU_KEY: &str = r"Software\Classes\*\shell\gv3";
 const OLD_DIR_MENU_KEY: &str = r"Software\Classes\Directory\shell\gv3";
 
-/// 表示名（アクセスキー G）
+/// 表示名 (アクセスキー G)
 const DISPLAY_NAME: &str = "ぐらびゅで開く(&G)";
 
 /// 指定キーにメニュー項目を登録する
@@ -34,7 +34,7 @@ fn register_menu_key(menu_key: &str, exe_str: &str) -> Result<()> {
     Ok(())
 }
 
-/// コンテキストメニューを登録する（ファイル + フォルダ）
+/// コンテキストメニューを登録する (ファイル + フォルダ)
 pub fn register() -> Result<()> {
     // 旧メニューキーのクリーンアップ
     let _ = super::association::delete_key_tree(HKEY_CURRENT_USER, OLD_FILE_MENU_KEY);
@@ -49,7 +49,7 @@ pub fn register() -> Result<()> {
     Ok(())
 }
 
-/// コンテキストメニューを解除する（ファイル + フォルダ）
+/// コンテキストメニューを解除する (ファイル + フォルダ)
 pub fn unregister() -> Result<()> {
     // 旧メニューキーも削除
     let _ = super::association::delete_key_tree(HKEY_CURRENT_USER, OLD_FILE_MENU_KEY);

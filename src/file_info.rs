@@ -19,14 +19,14 @@ pub enum FileSource {
     },
     /// PDFのページ
     PdfPage { pdf_path: PathBuf, page_index: u32 },
-    /// 未展開コンテナ（遅延読み込み用プレースホルダ）
+    /// 未展開コンテナ (遅延読み込み用プレースホルダ)
     PendingContainer { container_path: PathBuf },
 }
 
 impl FileSource {
     /// 表示用パスを生成する。
     ///
-    /// 戻り値は **OS パスではなく UI 表示専用の論理パス文字列** であり、
+    /// 戻り値は OS パスではなく UI 表示専用の論理パス文字列であり、
     /// `Path::join` で組み立てる対象ではない (`/` 区切り固定で Windows パスとも混在しうる)。
     /// ファイルシステム操作には `parent_dir()` / `default_save_name()` 等の専用メソッドを使うこと。
     pub fn display_path(&self) -> String {
@@ -47,8 +47,8 @@ impl FileSource {
         }
     }
 
-    /// コンテナ内のエントリかどうか（アーカイブまたはPDF）
-    /// 破壊的ファイル操作（削除・移動等）のガードに使用
+    /// コンテナ内のエントリかどうか (アーカイブまたはPDF)
+    /// 破壊的ファイル操作 (削除・移動等) のガードに使用
     pub fn is_contained(&self) -> bool {
         matches!(
             self,
@@ -110,7 +110,7 @@ impl FileSource {
         }
     }
 
-    /// ダイアログ用デフォルトstem（拡張子なし）を返す（エクスポート用）
+    /// ダイアログ用デフォルトstem (拡張子なし) を返す (エクスポート用)
     pub fn default_save_stem(&self) -> String {
         let name = self.default_save_name();
         Path::new(&name)
@@ -129,17 +129,17 @@ impl fmt::Display for FileSource {
 
 /// 個々のファイル情報
 pub struct FileInfo {
-    pub path: PathBuf,      // 実ファイルパス（デコード/描画用。アーカイブ時はtempパス）
-    pub source: FileSource, // 論理ソース（表示・保存・ブックマーク用）
+    pub path: PathBuf,      // 実ファイルパス (デコード/描画用。アーカイブ時はtempパス)
+    pub source: FileSource, // 論理ソース (表示・保存・ブックマーク用)
     pub file_name: String,  // ソート用キャッシュ
     pub file_size: u64,
     pub modified: SystemTime,
     pub marked: bool,
-    pub load_failed: bool, // デコード失敗フラグ（ナビゲーション時にスキップ）
+    pub load_failed: bool, // デコード失敗フラグ (ナビゲーション時にスキップ)
 }
 
 impl FileInfo {
-    /// パスからFileInfoを構築する（通常ファイル用）
+    /// パスからFileInfoを構築する (通常ファイル用)
     pub fn from_path(path: &Path) -> Result<Self> {
         let metadata = std::fs::metadata(path)
             .with_context(|| format!("メタデータ取得失敗: {}", path.display()))?;
@@ -166,7 +166,7 @@ impl FileInfo {
 
 #[cfg(test)]
 impl FileSource {
-    /// アーカイブパスを返す（アーカイブエントリ/PDFの場合）
+    /// アーカイブパスを返す (アーカイブエントリ/PDFの場合)
     pub fn archive_path(&self) -> Option<&Path> {
         match self {
             FileSource::ArchiveEntry { archive, .. } => Some(archive),

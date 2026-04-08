@@ -15,9 +15,9 @@ pub type ExtractedEntry = (PathBuf, String);
 
 /// オンデマンド読み出し用のアーカイブ内画像エントリ情報
 pub struct ArchiveImageEntry {
-    /// アーカイブ内パス（例: "subfolder/image.png"）
+    /// アーカイブ内パス (例: "subfolder/image.png")
     pub entry_name: String,
-    /// フラット化したファイル名（ソート用）
+    /// フラット化したファイル名 (ソート用)
     pub file_name: String,
     /// 非圧縮サイズ
     pub file_size: u64,
@@ -62,12 +62,12 @@ impl ArchiveManager {
         }
     }
 
-    /// ハンドラを追加する（Susieプラグイン等の動的追加用）
+    /// ハンドラを追加する (Susieプラグイン等の動的追加用)
     pub fn add_handler(&mut self, handler: Box<dyn ArchiveHandler>) {
         self.handlers.push(handler);
     }
 
-    /// パスの拡張子を正規化する（例: "test.ZIP" → ".zip"）
+    /// パスの拡張子を正規化する (例: "test.ZIP" → ".zip")
     fn normalized_extension(path: &Path) -> String {
         path.extension()
             .and_then(|e| e.to_str())
@@ -108,13 +108,13 @@ impl ArchiveManager {
             .is_ok_and(ArchiveHandler::supports_on_demand)
     }
 
-    /// アーカイブから指定エントリのデータを読み出す（オンデマンド用）
+    /// アーカイブから指定エントリのデータを読み出す (オンデマンド用)
     pub fn read_entry(&self, archive_path: &Path, entry_name: &str) -> Result<Vec<u8>> {
         self.find_handler(archive_path)?
             .read_entry(archive_path, entry_name)
     }
 
-    /// インメモリバッファからエントリ一覧を取得する（ZIPキャッシュ用）
+    /// インメモリバッファからエントリ一覧を取得する (ZIPキャッシュ用)
     pub fn list_images_from_buffer(
         &self,
         buffer: &[u8],
@@ -157,7 +157,7 @@ pub fn resolve_filename(target_dir: &Path, original_name: &str) -> std::path::Pa
         }
     }
 
-    // 万が一9999まで使い切った場合（実質ありえない）
+    // 万が一9999まで使い切った場合 (実質ありえない)
     target_dir.join(format!("{original_name}_overflow"))
 }
 
@@ -409,7 +409,7 @@ mod tests {
     fn is_archive_rejects_path_without_filename() {
         let reg = Arc::new(ExtensionRegistry::new());
         let mgr = ArchiveManager::new(reg);
-        // パスの末尾が区切り文字（file_name()がNone）
+        // パスの末尾が区切り文字 (file_name() がNone)
         assert!(!mgr.is_archive(Path::new("/")));
     }
 }

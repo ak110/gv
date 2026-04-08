@@ -3,17 +3,17 @@
 use crate::image::DecodedImage;
 use crate::selection::PixelRect;
 
-/// 3x3 ぼかし（平均フィルタ）
+/// 3x3 ぼかし (平均フィルタ)
 pub fn blur(image: &DecodedImage, region: Option<&PixelRect>) -> DecodedImage {
     box_blur(image, region, 1)
 }
 
-/// 5x5 ぼかし（強）
+/// 5x5 ぼかし (強)
 pub fn blur_strong(image: &DecodedImage, region: Option<&PixelRect>) -> DecodedImage {
     box_blur(image, region, 2)
 }
 
-/// メディアンフィルタ（3x3）
+/// メディアンフィルタ (3x3)
 pub fn median_filter(image: &DecodedImage, region: Option<&PixelRect>) -> DecodedImage {
     // ループ範囲は i32 (clamp で負値を扱うため)、インデックス計算は usize で行う
     // (大きな画像で `i32` の `(ny * w + nx) * 4` が overflow するのを防ぐ)
@@ -49,7 +49,7 @@ pub fn median_filter(image: &DecodedImage, region: Option<&PixelRect>) -> Decode
     }
 }
 
-/// ボックスブラー（半径指定）
+/// ボックスブラー(半径指定)
 fn box_blur(image: &DecodedImage, region: Option<&PixelRect>, radius: i32) -> DecodedImage {
     // ループ範囲は i32 (clamp で負値を扱うため)、インデックス計算は usize で行う。
     let w_u = image.width as usize;
@@ -149,13 +149,13 @@ pub fn mosaic(image: &DecodedImage, region: Option<&PixelRect>, block_size: u32)
     }
 }
 
-/// ガウスぼかし（近似: 2パスのボックスブラー）
+/// ガウスぼかし (近似: 2パスのボックスブラー)
 pub fn gaussian_blur(
     image: &DecodedImage,
     region: Option<&PixelRect>,
     radius: f64,
 ) -> DecodedImage {
-    // σ ≈ radius/3 でボックスブラーを3パス（ガウシアンの近似）
+    // σ ≈ radius/3 でボックスブラーを3パス (ガウシアンの近似)
     let r = (radius.max(0.1) * 1.0).round() as i32;
     let r = r.max(1);
     let pass1 = box_blur(image, region, r);
@@ -244,7 +244,7 @@ mod tests {
         assert_eq!(result.data[3], 128);
     }
 
-    /// チェッカーパターン画像を生成（偶数座標=c1, 奇数座標=c2）
+    /// チェッカーパターン画像を生成 (偶数座標=c1, 奇数座標=c2)
     fn checker_image(w: u32, h: u32, c1: u8, c2: u8) -> DecodedImage {
         let mut data = vec![0u8; (w * h * 4) as usize];
         for y in 0..h {
@@ -301,7 +301,7 @@ mod tests {
         let center_val = result.data[center] as i32;
         assert!(
             (center_val - 100).abs() < 30,
-            "中央ピクセルが平均値(100)に近いはず: got {center_val}"
+            "中央ピクセルが平均値 (100) に近いはず: got {center_val}"
         );
     }
 
@@ -310,7 +310,7 @@ mod tests {
         // チェッカーパターンにぼかしをかけると差が縮まる
         let img = checker_image(8, 8, 0, 200);
         let result = gaussian_blur(&img, None, 2.0);
-        // 結果のピクセル値の最大・最小差が元（200）より小さくなる
+        // 結果のピクセル値の最大・最小差が元 (200) より小さくなる
         let mut min_val = 255u8;
         let mut max_val = 0u8;
         for pixel in result.data.chunks_exact(4) {
@@ -348,7 +348,7 @@ mod tests {
 
     #[test]
     fn unsharp_mask_min_radius() {
-        // radius=0.1（最小境界値）
+        // radius=0.1(最小境界値)
         let img = uniform_image(4, 4, 100);
         let result = unsharp_mask(&img, None, 0.1);
         assert_eq!(result.width, 4);
@@ -360,7 +360,7 @@ mod tests {
 
     #[test]
     fn unsharp_mask_large_radius() {
-        // radius=10.0（大きな値）でも正常に動作する
+        // radius=10.0 (大きな値) でも正常に動作する
         let img = checker_image(8, 8, 50, 200);
         let result = unsharp_mask(&img, None, 10.0);
         assert_eq!(result.width, 8);
@@ -391,7 +391,7 @@ mod tests {
 
     #[test]
     fn unsharp_mask_clamps_values() {
-        // 極端な入力（0と255のチェッカー）でもパニックせず正常に完了することを確認
+        // 極端な入力 (0と255のチェッカー) でもパニックせず正常に完了することを確認
         let img = checker_image(4, 4, 0, 255);
         let result = unsharp_mask(&img, None, 2.0);
         // 結果のデータ長が正しいこと

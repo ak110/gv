@@ -24,14 +24,14 @@ pub enum SusiePluginType {
 /// `Library`をDrop順で最後に解放するためフィールド順序に注意
 pub struct SusiePlugin {
     pub plugin_type: SusiePluginType,
-    /// プラグインDLLのパス（画像情報表示等で使用）
+    /// プラグインDLLのパス (画像情報表示等で使用)
     pub path: std::path::PathBuf,
     get_plugin_info: GetPluginInfoFn,
     is_supported: IsSupportedFn,
     get_picture: Option<GetPictureFn>,
     get_archive_info: Option<GetArchiveInfoFn>,
     get_file: Option<GetFileFn>,
-    /// DLLハンドル（最後にDropされる）
+    /// DLLハンドル (最後にDropされる)
     _lib: Library,
 }
 
@@ -56,14 +56,14 @@ impl SusiePlugin {
         // 読み込んだ場合は呼び出し時に未定義動作になりうるが、これは Susie 規格自体の仮定。
         let get_plugin_info: GetPluginInfoFn = unsafe {
             *lib.get::<GetPluginInfoFn>(b"GetPluginInfo\0")
-                .with_context(|| "GetPluginInfoが見つかりません")?
+                .with_context(|| "GetPluginInfoが見つからない")?
         };
         let is_supported: IsSupportedFn = unsafe {
             *lib.get::<IsSupportedFn>(b"IsSupported\0")
-                .with_context(|| "IsSupportedが見つかりません")?
+                .with_context(|| "IsSupportedが見つからない")?
         };
 
-        // プラグイン種別を判定（GetPluginInfo(0) → type string）
+        // プラグイン種別を判定 (GetPluginInfo(0) → type string)
         let type_str = Self::call_get_plugin_info_static(get_plugin_info, 0);
         let plugin_type = if type_str.starts_with("00IN") || type_str.starts_with("00in") {
             SusiePluginType::Image
@@ -77,7 +77,7 @@ impl SusiePlugin {
         let get_picture: Option<GetPictureFn> = if plugin_type == SusiePluginType::Image {
             Some(unsafe {
                 *lib.get::<GetPictureFn>(b"GetPicture\0")
-                    .with_context(|| "画像プラグインにGetPictureがありません")?
+                    .with_context(|| "画像プラグインにGetPictureが存在しない")?
             })
         } else {
             None
@@ -87,7 +87,7 @@ impl SusiePlugin {
         {
             Some(unsafe {
                 *lib.get::<GetArchiveInfoFn>(b"GetArchiveInfo\0")
-                    .with_context(|| "アーカイブプラグインにGetArchiveInfoがありません")?
+                    .with_context(|| "アーカイブプラグインにGetArchiveInfoが存在しない")?
             })
         } else {
             None
@@ -96,7 +96,7 @@ impl SusiePlugin {
         let get_file: Option<GetFileFn> = if plugin_type == SusiePluginType::Archive {
             Some(unsafe {
                 *lib.get::<GetFileFn>(b"GetFile\0")
-                    .with_context(|| "アーカイブプラグインにGetFileがありません")?
+                    .with_context(|| "アーカイブプラグインにGetFileが存在しない")?
             })
         } else {
             None
@@ -114,7 +114,7 @@ impl SusiePlugin {
         })
     }
 
-    /// GetPluginInfoを呼び出す（staticバージョン、初期化時用）
+    /// GetPluginInfoを呼び出す (staticバージョン、初期化時用)
     fn call_get_plugin_info_static(func: GetPluginInfoFn, info_no: i32) -> String {
         let mut buf = vec![0u8; 256];
         let len = unsafe { func(info_no, buf.as_mut_ptr(), buf.len() as i32) };
@@ -131,10 +131,10 @@ impl SusiePlugin {
     }
 
     /// プラグインが対応する拡張子のリストを取得する
-    /// GetPluginInfo(2n+2) → フィルタ文字列（例: "*.jpg;*.jpeg"）から拡張子を抽出
+    /// GetPluginInfo(2n+2) → フィルタ文字列 (例: "*.jpg;*.jpeg") から拡張子を抽出
     pub fn supported_extensions(&self) -> Vec<String> {
         let mut exts = Vec::new();
-        // info_no=2,4,6,...でフィルタを列挙（空文字が返されたら終了）
+        // info_no=2,4,6,...でフィルタを列挙 (空文字が返されたら終了)
         let mut info_no = 2;
         loop {
             let filter = self.get_plugin_info_str(info_no);
@@ -163,17 +163,17 @@ impl SusiePlugin {
         result != 0
     }
 
-    /// GetPictureを呼び出して画像をデコードする（メモリイメージモード）
+    /// GetPictureを呼び出して画像をデコードする (メモリイメージモード)
     pub fn get_picture(&self, data: &[u8], filename: &str) -> Result<DecodedImage> {
         let get_picture = self
             .get_picture
-            .context("このプラグインはGetPictureをサポートしていません")?;
+            .context("このプラグインはGetPictureをサポートしない")?;
 
         let _ansi_filename = to_ansi(filename);
         let mut h_bm_info: isize = 0;
         let mut h_bm: isize = 0;
 
-        // flag=1: メモリイメージモード（bufはデータポインタ、lenはデータサイズ）
+        // flag=1: メモリイメージモード (bufはデータポインタ、lenはデータサイズ)
         let result = unsafe {
             get_picture(
                 data.as_ptr(),
@@ -210,7 +210,7 @@ impl SusiePlugin {
     pub fn get_archive_info(&self, archive_path: &str) -> Result<Vec<ArchiveFileInfo>> {
         let get_archive_info = self
             .get_archive_info
-            .context("このプラグインはGetArchiveInfoをサポートしていません")?;
+            .context("このプラグインはGetArchiveInfoをサポートしない")?;
 
         let ansi_path = to_ansi(archive_path);
         let mut h_inf: isize = 0;
@@ -265,7 +265,7 @@ impl SusiePlugin {
     pub fn get_file_to_memory(&self, archive_path: &str, position: u64) -> Result<Vec<u8>> {
         let get_file = self
             .get_file
-            .context("このプラグインはGetFileをサポートしていません")?;
+            .context("このプラグインはGetFileをサポートしない")?;
 
         let ansi_path = to_ansi(archive_path);
         // dest: メモリ出力モードではHLOCAL*として扱われる
@@ -305,7 +305,7 @@ impl SusiePlugin {
         });
 
         if data.is_empty() {
-            bail!("GetFile: データが空です");
+            bail!("GetFile: データが空");
         }
 
         Ok(data)

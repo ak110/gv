@@ -1,4 +1,4 @@
-//! ファイルリストパネル（左側 ListView 仮想モード）
+//! ファイルリストパネル (左側 ListView 仮想モード)
 //!
 //! メインウィンドウ左側にファイル一覧を表示する。
 //! `SysListView32` の仮想モード (`LVS_OWNERDATA`) を使うことで、ファイル数が
@@ -19,10 +19,10 @@ use crate::file_info::FileInfo;
 /// ファイルリストパネルのコントロールID
 pub const FILE_LIST_CONTROL_ID: u16 = 0x100;
 
-/// デフォルトのパネル幅（px）
+/// デフォルトのパネル幅 (px)
 const DEFAULT_WIDTH: i32 = 250;
 
-/// ListView のサブクラスID（SetWindowSubclass用）
+/// ListView のサブクラスID(SetWindowSubclass用)
 const SUBCLASS_ID: usize = 1;
 
 /// ファイルリストパネル
@@ -66,7 +66,7 @@ impl FileListPanel {
                 0,
                 0,
                 DEFAULT_WIDTH,
-                600, // 初期高さ（WM_SIZEで上書きされる）
+                600, // 初期高さ (WM_SIZEで上書きされる)
                 Some(parent),
                 Some(HMENU(FILE_LIST_CONTROL_ID as *mut _)),
                 None,
@@ -164,7 +164,7 @@ impl FileListPanel {
         }
     }
 
-    /// 単一項目を再描画要求する（マーク・キャッシュ状態の変更用）
+    /// 単一項目を再描画要求する (マーク・キャッシュ状態の変更用)
     /// 仮想モードでは項目データを LV が保持しないので、行のみ無効化すれば
     /// 次回描画時に親ウィンドウへ再度 LVN_GETDISPINFO で問い合わせが行く。
     pub fn update_item(&self, index: usize) {
@@ -225,7 +225,7 @@ impl FileListPanel {
         }
     }
 
-    /// ListView の HWND を返す（WM_NOTIFY 判定用）
+    /// ListView の HWND を返す (WM_NOTIFY 判定用)
     pub fn listview_hwnd(&self) -> HWND {
         self.listview
     }
@@ -240,14 +240,14 @@ impl FileListPanel {
         self.visible
     }
 
-    /// 非表示にするがフラグは保持する（フルスクリーン開始時用）
+    /// 非表示にするがフラグは保持する (フルスクリーン開始時用)
     pub fn hide_preserve_state(&self) {
         unsafe {
             let _ = ShowWindow(self.listview, SW_HIDE);
         }
     }
 
-    /// 表示する（フルスクリーン解除時用、visibleフラグがtrueの場合のみ呼ぶ）
+    /// 表示する (フルスクリーン解除時用、visibleフラグがtrueの場合のみ呼ぶ)
     pub fn show(&self) {
         unsafe {
             let _ = ShowWindow(self.listview, SW_SHOW);

@@ -37,7 +37,7 @@ use windows::Win32::UI::HiDpi::{
 };
 
 fn main() -> Result<()> {
-    // CLIフラグの分岐（DPI/COM初期化前に処理: 副作用不要なもの）
+    // CLIフラグの分岐 (DPI/COM初期化前に処理: 副作用不要なもの)
     if let Some(arg) = std::env::args().nth(1) {
         match arg.as_str() {
             "--help" | "-h" => {
@@ -48,7 +48,7 @@ fn main() -> Result<()> {
         }
     }
 
-    // DPI awareness設定（COM初期化より先に呼ぶ必要がある）
+    // DPI awareness設定 (COM初期化より先に呼ぶ必要がある)
     unsafe {
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     }
@@ -63,7 +63,7 @@ fn main() -> Result<()> {
     temp_cleanup::cleanup_orphaned_temp_dirs();
     updater::cleanup_old_exe();
 
-    // CLI分岐（--register / --unregister: COM初期化後に実行）
+    // CLI分岐 (--register / --unregister: COM初期化後に実行)
     if let Some(arg) = std::env::args().nth(1) {
         match arg.as_str() {
             "--register" => return shell::register_all(),
@@ -75,7 +75,7 @@ fn main() -> Result<()> {
     // 設定ファイル読み込み
     let config = config::Config::load();
 
-    // コマンドライン引数からファイルパスを収集（--で始まるフラグは除外）
+    // コマンドライン引数からファイルパスを収集 (--で始まるフラグは除外)
     let initial_files: Vec<PathBuf> = std::env::args_os()
         .skip(1)
         .filter(|arg| !arg.to_str().is_some_and(|s| s.starts_with("--")))
@@ -83,7 +83,7 @@ fn main() -> Result<()> {
         .collect();
 
     // メインウィンドウ作成
-    // _appはメッセージループ中に生存する必要がある（Box<AppWindow>のドロップ防止）
+    // _appはメッセージループ中に生存する必要がある (Box<AppWindow>のドロップ防止)
     let _app = app::AppWindow::create(config, &initial_files)?;
 
     // メッセージループ
@@ -91,7 +91,7 @@ fn main() -> Result<()> {
     std::process::exit(exit_code);
 }
 
-/// 旧ファイル名(gv3.*)を新ファイル名(ぐらびゅ.*)にリネームする
+/// 旧ファイル名 (gv3.*) を新ファイル名 (ぐらびゅ.*) にリネームする
 fn migrate_old_filenames() {
     let Some(dir) = std::env::current_exe()
         .ok()
@@ -124,15 +124,15 @@ fn print_help() {
   ぐらびゅ.exe [オプション] [ファイルパス]
 
 オプション:
-  --help, -h        このヘルプを表示
-  --register        ファイル関連付け・コンテキストメニュー・送るを一括登録
-  --unregister      一括解除
+  --help, -h        このヘルプを表示します
+  --register        ファイル関連付け・コンテキストメニュー・送るを一括登録します
+  --unregister      一括解除します
 
 対応フォーマット:
   画像:     JPEG, PNG, GIF, BMP, WebP
   ドキュメント: PDF
   アーカイブ: ZIP/cbz, RAR/cbr, 7z
-  ※ 64bit Susieプラグイン (.sph/.spi) で拡張可能
+  ※ 64bit Susieプラグイン (.sph/.spi) で拡張できます
 
 主要キーバインド:
   ← / →              前後の画像に移動

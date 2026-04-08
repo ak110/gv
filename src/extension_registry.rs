@@ -46,7 +46,7 @@ impl ExtensionRegistry {
             .any(|ext| lower.ends_with(ext))
     }
 
-    /// 画像拡張子を追加登録する（ドット付き小文字、例: ".psd"）
+    /// 画像拡張子を追加登録する (ドット付き小文字、例: ".psd")
     pub fn register_image_extensions(&mut self, exts: &[String]) {
         for ext in exts {
             self.image_extensions.insert(ext.clone());

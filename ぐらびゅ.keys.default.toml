@@ -1,9 +1,9 @@
 # ぐらびゅ3 キーバインド設定ファイル
-# このファイルを gv3.keys.toml にコピーまたはリネームして使用してください。
-# 未指定の操作はデフォルトバインドが使われます。
+# このファイルを gv3.keys.toml にコピーまたはリネームして使用する。
+# 未指定の操作にはデフォルトバインドが適用される。
 #
 # キー名の記法:
-#   修飾キー: Ctrl+, Shift+, Alt+ （組み合わせ可）
+#   修飾キー: Ctrl+, Shift+, Alt+ (組み合わせ可)
 #   矢印: ←, →, ↑, ↓ または Left, Right, Up, Down
 #   テンキー: Num0〜Num9, Num +, Num -, Num *, Num /
 #   特殊キー: Enter, Space, Tab, Esc, BackSpace, Delete, Home, End, PageUp, PageDown
@@ -11,7 +11,7 @@
 #   英数字: A〜Z, 0〜9
 #   ホイール: WheelUp, WheelDown
 #   マウス: LeftDoubleClick, MiddleClick
-#   複数割り当て: カンマ区切り（例: "Ctrl+Num -, Ctrl+WheelUp"）
+#   複数割り当て: カンマ区切り (例: "Ctrl+Num -, Ctrl+WheelUp")
 
 [navigation]
 back = "←, ↑, WheelUp"

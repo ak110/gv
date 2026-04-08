@@ -53,14 +53,14 @@ pub type GetFileFn = unsafe extern "system" fn(
     l_data: isize,
 ) -> SusieResult;
 
-/// アーカイブファイル情報構造体（Susie API定義）
-/// packed(1)で200+200+...のフィールドが隙間なく並ぶ
+/// アーカイブファイル情報構造体 (Susie API定義)
+/// packed(1) で200+200+...のフィールドが隙間なく並ぶ
 #[repr(C, packed(1))]
 #[derive(Clone)]
 pub struct ArchiveFileInfo {
     /// method: 圧縮法の種類
     pub method: [u8; 8],
-    /// position: ファイル内での位置（GetFileで使用）
+    /// position: ファイル内での位置 (GetFileで使用)
     pub position: u64,
     /// compsize: 圧縮サイズ
     pub compsize: u64,
@@ -77,7 +77,7 @@ pub struct ArchiveFileInfo {
 }
 
 impl ArchiveFileInfo {
-    /// 終端エントリか判定（methodが全て0）
+    /// 終端エントリか判定 (methodが全て0)
     pub fn is_terminator(&self) -> bool {
         self.method.iter().all(|&b| b == 0) && self.filename.iter().all(|&b| b == 0)
     }

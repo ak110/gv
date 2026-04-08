@@ -29,7 +29,7 @@ impl ArchiveHandler for SevenZHandler {
         target_dir: &Path,
     ) -> Result<Vec<ExtractedEntry>> {
         let file = File::open(archive_path)
-            .with_context(|| format!("アーカイブを開けません: {}", archive_path.display()))?;
+            .with_context(|| format!("アーカイブを開けない: {}", archive_path.display()))?;
         let len = file.metadata()?.len();
 
         let mut results: Vec<ExtractedEntry> = Vec::new();

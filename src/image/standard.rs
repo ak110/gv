@@ -4,7 +4,7 @@ use anyhow::Context as _;
 
 use super::{DecodedImage, ImageDecoder, ImageMetadata};
 
-/// image crateによる標準デコーダ（JPEG/PNG/GIF/BMP/WebP）
+/// image crateによる標準デコーダ (JPEG/PNG/GIF/BMP/WebP)
 pub struct StandardDecoder;
 
 impl StandardDecoder {
@@ -27,7 +27,7 @@ impl ImageDecoder for StandardDecoder {
 
     fn decode(&self, data: &[u8], _filename_hint: &str) -> anyhow::Result<DecodedImage> {
         let img = image::load_from_memory(data).context("画像のデコードに失敗")?;
-        let rgba = img.into_rgba8(); // moveセマンティクス（PNGのRGBA画像でコピー削減）
+        let rgba = img.into_rgba8(); // moveセマンティクス (PNGのRGBA画像でコピー削減)
         let (width, height) = rgba.dimensions();
 
         Ok(DecodedImage {
@@ -41,17 +41,17 @@ impl ImageDecoder for StandardDecoder {
         let format =
             image::guess_format(data).map_or_else(|_| "Unknown".to_string(), |f| format!("{f:?}"));
 
-        // サイズ取得のためにデコード（ヘッダだけ読むAPIが限定的なため）
+        // サイズ取得のためにデコード (ヘッダだけ読むAPIが限定的なため)
         let img = image::load_from_memory(data).context("メタデータの取得に失敗")?;
 
-        // PNGのテキストチャンク（tEXt/zTXt/iTXt）を取得
+        // PNGのテキストチャンク (tEXt/zTXt/iTXt) を取得
         let comments = if matches!(image::guess_format(data), Ok(image::ImageFormat::Png)) {
             Self::read_png_text_chunks(data)
         } else {
             Vec::new()
         };
 
-        // EXIFメタデータ（JPEG/TIFF/WebP等、フォーマット問わず試行）
+        // EXIFメタデータ (JPEG/TIFF/WebP等、フォーマット問わず試行)
         let exif = super::read_exif_fields(data);
 
         Ok(ImageMetadata {
@@ -65,7 +65,7 @@ impl ImageDecoder for StandardDecoder {
 }
 
 impl StandardDecoder {
-    /// PNGのテキストチャンク（tEXt/zTXt/iTXt）を読み取る
+    /// PNGのテキストチャンク (tEXt/zTXt/iTXt) を読み取る
     fn read_png_text_chunks(data: &[u8]) -> Vec<String> {
         let decoder = png::Decoder::new(Cursor::new(data));
         let Ok(reader) = decoder.read_info() else {
@@ -74,17 +74,17 @@ impl StandardDecoder {
         let info = reader.info();
         let mut texts = Vec::new();
 
-        // tEXt（非圧縮Latin-1テキスト）
+        // tEXt(非圧縮Latin-1テキスト)
         for chunk in &info.uncompressed_latin1_text {
             texts.push(format!("{}: {}", chunk.keyword, chunk.text));
         }
-        // zTXt（圧縮Latin-1テキスト）
+        // zTXt(圧縮Latin-1テキスト)
         for chunk in &info.compressed_latin1_text {
             if let Ok(text) = chunk.get_text() {
                 texts.push(format!("{}: {}", chunk.keyword, text));
             }
         }
-        // iTXt（国際化テキスト、UTF-8）
+        // iTXt(国際化テキスト、UTF-8)
         for chunk in &info.utf8_text {
             if let Ok(text) = chunk.get_text() {
                 texts.push(format!("{}: {}", chunk.keyword, text));

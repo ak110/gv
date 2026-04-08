@@ -32,7 +32,7 @@ pub enum AlphaBackground {
 
 /// プリスケール済みビットマップのキャッシュエントリ
 struct PrescaledEntry {
-    source_key: usize, // 元画像データのポインタ（同一性判定用）
+    source_key: usize, // 元画像データのポインタ (同一性判定用)
     width: u32,        // プリスケール後の幅
     height: u32,       // プリスケール後の高さ
     bitmap: ID2D1Bitmap,
@@ -44,17 +44,17 @@ pub struct D2DRenderer {
     factory: ID2D1Factory,
     render_target: ID2D1HwndRenderTarget,
     layout: Layout,
-    /// 現在キャッシュ中のD2Dビットマップとそのソースポインタ（同一画像の再描画を高速化）
+    /// 現在キャッシュ中のD2Dビットマップとそのソースポインタ (同一画像の再描画を高速化)
     cached_bitmap: Option<(usize, ID2D1Bitmap)>,
     /// CPU Lanczos3プリスケール済みビットマップのキャッシュ
     prescaled: Option<PrescaledEntry>,
     /// αチャネル背景モード
     alpha_bg: AlphaBackground,
-    /// チェッカーパターンブラシ（遅延初期化）
+    /// チェッカーパターンブラシ (遅延初期化)
     checker_brush: Option<ID2D1BitmapBrush>,
-    /// 描画領域の左オフセット（ファイルリストパネル分）
+    /// 描画領域の左オフセット (ファイルリストパネル分)
     draw_offset_x: f32,
-    /// 最後に描画した画像の描画矩形（選択の座標変換用）
+    /// 最後に描画した画像の描画矩形 (選択の座標変換用)
     last_draw_rect: Option<DrawRect>,
 }
 
@@ -137,7 +137,7 @@ impl D2DRenderer {
             let size = self.render_target.GetSize();
 
             // ファイルリストパネルの右側のみに描画を制限
-            // Clear()前にクリップを設定し、パネル領域を塗りつぶさないようにする
+            // Clear() 前にクリップを設定し、パネル領域を塗りつぶさないようにする
             let has_clip = self.draw_offset_x > 0.0;
             if has_clip {
                 let clip = D2D_RECT_F {
@@ -152,7 +152,7 @@ impl D2DRenderer {
                 );
             }
 
-            // クリップ設定後にクリア（パネル領域は保護される）
+            // クリップ設定後にクリア (パネル領域は保護される)
             self.render_target.Clear(Some(&BG_COLOR));
 
             if let Some(img) = image {
@@ -164,7 +164,7 @@ impl D2DRenderer {
                 // オフセットを加算して実際の描画位置に変換
                 draw_rect.x += self.draw_offset_x;
 
-                // last_draw_rectを更新（選択の座標変換用）
+                // last_draw_rectを更新 (選択の座標変換用)
                 self.last_draw_rect = Some(draw_rect);
 
                 // αチャネル背景を画像領域に描画
@@ -177,7 +177,7 @@ impl D2DRenderer {
                     self.draw_bitmap(&bitmap, &draw_rect);
                 }
 
-                // ピクセルグリッド（8倍以上で表示）
+                // ピクセルグリッド (8倍以上で表示)
                 let scale = draw_rect.width / img.width as f32;
                 if scale >= 8.0 {
                     self.draw_pixel_grid(&draw_rect, img.width, img.height, scale);
@@ -195,12 +195,12 @@ impl D2DRenderer {
                 self.render_target.PopAxisAlignedClip();
             }
 
-            // EndDrawのエラーはリカバリ不要（次フレームで再試行される）
+            // EndDrawのエラーはリカバリ不要 (次フレームで再試行される)
             let _ = self.render_target.EndDraw(None, None);
         }
     }
 
-    /// DecodedImageからD2Dビットマップを取得（キャッシュ付き）
+    /// DecodedImageからD2Dビットマップを取得 (キャッシュ付き)
     unsafe fn get_or_create_bitmap(&mut self, image: &DecodedImage) -> Result<ID2D1Bitmap> {
         // ソースデータのポインタで同一性を判定
         let key = image.data.as_ptr() as usize;
@@ -215,7 +215,7 @@ impl D2DRenderer {
         Ok(bitmap)
     }
 
-    /// 表示サイズにプリスケールしたD2Dビットマップを取得（キャッシュ付き）
+    /// 表示サイズにプリスケールしたD2Dビットマップを取得 (キャッシュ付き)
     /// 原寸表示の場合はプリスケールせず原画像のビットマップを返す
     unsafe fn get_prescaled_bitmap(
         &mut self,
@@ -239,7 +239,7 @@ impl D2DRenderer {
             return unsafe { self.get_or_create_bitmap(image) };
         }
 
-        // 縮小時はSuperSampling（モアレ・リンギング抑制）、拡大時はLanczos3
+        // 縮小時はSuperSampling(モアレ・リンギング抑制)、拡大時はLanczos3
         let is_shrink = target_width <= image.width && target_height <= image.height;
         let resize_alg = if is_shrink {
             fr::ResizeAlg::SuperSampling(fr::FilterType::Lanczos3, 2)
@@ -307,7 +307,7 @@ impl D2DRenderer {
         }
     }
 
-    /// αチャネル背景を描画（画像領域のみ）
+    /// αチャネル背景を描画 (画像領域のみ)
     unsafe fn draw_alpha_background(&mut self, rect: &DrawRect) {
         let dest = D2D_RECT_F {
             left: rect.x,
@@ -454,17 +454,17 @@ impl D2DRenderer {
         };
     }
 
-    /// 描画領域の左オフセットを設定（ファイルリストパネル幅）
+    /// 描画領域の左オフセットを設定 (ファイルリストパネル幅)
     pub fn set_draw_offset(&mut self, offset_x: f32) {
         self.draw_offset_x = offset_x;
     }
 
-    /// 最後に描画した画像の描画矩形を返す（選択の座標変換用）
+    /// 最後に描画した画像の描画矩形を返す (選択の座標変換用)
     pub fn last_draw_rect(&self) -> Option<&DrawRect> {
         self.last_draw_rect.as_ref()
     }
 
-    /// ピクセルグリッドを描画する（拡大時のピクセル境界表示）
+    /// ピクセルグリッドを描画する (拡大時のピクセル境界表示)
     unsafe fn draw_pixel_grid(
         &self,
         draw_rect: &DrawRect,
@@ -487,7 +487,7 @@ impl D2DRenderer {
 
             let half = 0.25;
 
-            // 垂直線（細い矩形で描画）
+            // 垂直線 (細い矩形で描画)
             for x in 0..=img_width {
                 let sx = draw_rect.x + x as f32 * scale;
                 let rect = D2D_RECT_F {
@@ -500,7 +500,7 @@ impl D2DRenderer {
                     .FillRectangle(std::ptr::from_ref(&rect), &brush);
             }
 
-            // 水平線（細い矩形で描画）
+            // 水平線 (細い矩形で描画)
             for y in 0..=img_height {
                 let sy = draw_rect.y + y as f32 * scale;
                 let rect = D2D_RECT_F {
@@ -515,7 +515,7 @@ impl D2DRenderer {
         }
     }
 
-    /// 選択矩形のオーバーレイを描画する（白+黒の2本線 + ハンドル）
+    /// 選択矩形のオーバーレイを描画する (白+黒の2本線 + ハンドル)
     unsafe fn draw_selection_overlay(
         &self,
         sel_rect: &PixelRect,
@@ -543,7 +543,7 @@ impl D2DRenderer {
                 bottom,
             };
 
-            // 黒線（外側）
+            // 黒線 (外側)
             if let Ok(black_brush) = self.render_target.CreateSolidColorBrush(
                 &D2D1_COLOR_F {
                     r: 0.0,
@@ -561,7 +561,7 @@ impl D2DRenderer {
                 );
             }
 
-            // 白線（内側、破線風に見える）
+            // 白線 (内側、破線風に見える)
             if let Ok(white_brush) = self.render_target.CreateSolidColorBrush(
                 &D2D1_COLOR_F {
                     r: 1.0,
@@ -598,7 +598,7 @@ impl D2DRenderer {
     }
 }
 
-/// RGBA → premultiplied BGRA変換（rayon並列化）
+/// RGBA → premultiplied BGRA変換 (rayon並列化)
 fn rgba_to_premultiplied_bgra(rgba: &[u8]) -> Vec<u8> {
     let mut bgra = rgba.to_vec();
     let row_bytes = 4 * 256; // 256ピクセル単位でチャンク分割
@@ -618,7 +618,7 @@ fn rgba_to_premultiplied_bgra(rgba: &[u8]) -> Vec<u8> {
     bgra
 }
 
-/// fast_image_resizeによるリサイズ（SIMD加速）
+/// fast_image_resizeによるリサイズ (SIMD加速)
 fn fir_resize(
     src: &[u8],
     src_w: u32,
@@ -678,7 +678,7 @@ mod tests {
 
     #[test]
     fn fir_resize_uniform_shrink() {
-        // 均一色画像の縮小 → 結果も同じ色（alpha=255なので誤差なし）
+        // 均一色画像の縮小 → 結果も同じ色 (alpha=255なので誤差なし)
         let src: Vec<u8> = [100, 150, 200, 255].repeat(16);
         let result = fir_resize(
             &src,
@@ -696,8 +696,8 @@ mod tests {
 
     #[test]
     fn fir_resize_alpha_no_halo() {
-        // 半透明境界のリサイズでハロー（白フリンジ）が出ないことを検証
-        // 上半分: 赤(alpha=255)、下半分: 赤(alpha=0)
+        // 半透明境界のリサイズでハロー (白フリンジ) が出ないことを検証
+        // 上半分: 赤 (alpha=255)、下半分: 赤 (alpha=0)
         let mut src = Vec::with_capacity(4 * 4 * 4);
         for y in 0..4u32 {
             for _ in 0..4u32 {

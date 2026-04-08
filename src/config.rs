@@ -7,7 +7,7 @@ use crate::file_list::SortOrder;
 use crate::render::d2d_renderer::AlphaBackground;
 use crate::render::layout::DisplayMode;
 
-/// 設定ファイル上の表示モード（DisplayModeへの中間表現）
+/// 設定ファイル上の表示モード (DisplayModeへの中間表現)
 /// Fixed(f32)はデータ付きバリアントのため、serde直接対応は不可。
 /// config側でfixed_scaleと組み合わせてDisplayModeに変換する。
 #[derive(Debug, Clone, Copy, PartialEq, Default, Deserialize)]
@@ -21,7 +21,7 @@ pub enum DisplayModeConfig {
     Fixed,
 }
 
-/// アプリケーション設定（ぐらびゅ.toml）
+/// アプリケーション設定 (ぐらびゅ.toml)
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -39,9 +39,9 @@ pub struct DisplayConfig {
     /// 表示モード
     #[serde(deserialize_with = "deserialize_display_mode_config")]
     pub auto_scale: DisplayModeConfig,
-    /// 固定倍率（auto_scale = Fixed のとき使用）
+    /// 固定倍率 (auto_scale = Fixed のとき使用)
     pub fixed_scale: f32,
-    /// 余白量（ピクセル）
+    /// 余白量 (ピクセル)
     pub margin: f32,
     /// α背景
     #[serde(deserialize_with = "deserialize_alpha_background")]
@@ -75,7 +75,7 @@ pub struct WindowConfig {
 #[serde(default)]
 pub struct SusieConfig {
     pub plugin_dir: String,
-    /// 画像プラグイン優先度（上が高優先）
+    /// 画像プラグイン優先度 (上が高優先)
     pub image_plugins: Vec<String>,
     /// アーカイブプラグイン優先度
     pub archive_plugins: Vec<String>,
@@ -84,13 +84,13 @@ pub struct SusieConfig {
 #[derive(Debug, Deserialize)]
 #[serde(default)]
 pub struct SlideshowConfig {
-    /// スライドショー間隔（ミリ秒）
+    /// スライドショー間隔 (ミリ秒)
     pub interval_ms: u32,
     /// 最後の画像の後に最初に戻る
     pub repeat: bool,
 }
 
-// --- カスタムデシリアライザ（フィールド単位フォールバック + stderr警告） ---
+// --- カスタムデシリアライザ (フィールド単位フォールバック + stderr警告) ---
 
 fn deserialize_display_mode_config<'de, D>(deserializer: D) -> Result<DisplayModeConfig, D::Error>
 where
@@ -104,9 +104,7 @@ where
         "original" => Ok(DisplayModeConfig::Original),
         "fixed" => Ok(DisplayModeConfig::Fixed),
         unknown => {
-            eprintln!(
-                "警告: auto_scale の値 '{unknown}' は無効です。デフォルト(fit)を使用します。"
-            );
+            eprintln!("警告: auto_scale の値 '{unknown}' は無効。デフォルト (fit) を使用する。");
             Ok(DisplayModeConfig::Fit)
         }
     }
@@ -123,7 +121,7 @@ where
         "checker" => Ok(AlphaBackground::Checker),
         unknown => {
             eprintln!(
-                "警告: alpha_background の値 '{unknown}' は無効です。デフォルト(checker)を使用します。"
+                "警告: alpha_background の値 '{unknown}' は無効。デフォルト (checker) を使用する。"
             );
             Ok(AlphaBackground::Checker)
         }
@@ -142,9 +140,7 @@ where
         "date" => Ok(SortOrder::Date),
         "natural" => Ok(SortOrder::Natural),
         unknown => {
-            eprintln!(
-                "警告: default_sort の値 '{unknown}' は無効です。デフォルト(name)を使用します。"
-            );
+            eprintln!("警告: default_sort の値 '{unknown}' は無効。デフォルト (name) を使用する。");
             Ok(SortOrder::Name)
         }
     }
@@ -194,7 +190,7 @@ impl Default for SlideshowConfig {
 // --- 変換ヘルパー ---
 
 impl DisplayConfig {
-    /// DisplayModeConfigからDisplayModeに変換（Fixed + fixed_scaleの組み合わせが必要なため維持）
+    /// DisplayModeConfigからDisplayModeに変換 (Fixed + fixed_scaleの組み合わせが必要なため維持)
     pub fn to_display_mode(&self) -> DisplayMode {
         match self.auto_scale {
             DisplayModeConfig::Shrink => DisplayMode::AutoShrink,
@@ -207,10 +203,10 @@ impl DisplayConfig {
 }
 
 impl PrefetchConfig {
-    /// キャッシュ基準サイズ（バイト）。
+    /// キャッシュ基準サイズ (バイト)。
     ///
     /// `cache_base_width` / `cache_base_height` に 0 が設定されていても、
-    /// 後段（`Document::update_cache_range` 等）でゼロ除算が起きないよう
+    /// 後段 (`Document::update_cache_range` 等) でゼロ除算が起きないよう
     /// 最低 1 ピクセルにクランプしてから計算する。
     pub fn base_image_size(&self) -> usize {
         let w = self.cache_base_width.max(1) as usize;
@@ -229,7 +225,7 @@ impl Config {
         match Self::load_from(&config_path) {
             Ok(config) => config,
             Err(e) => {
-                eprintln!("警告: 設定ファイルの読み込みに失敗しました: {e}");
+                eprintln!("警告: 設定ファイルの読み込みに失敗: {e}");
                 Config::default()
             }
         }
@@ -242,7 +238,7 @@ impl Config {
         Ok(config)
     }
 
-    /// 設定ファイルのパスを返す（exeと同じディレクトリの ぐらびゅ.toml）
+    /// 設定ファイルのパスを返す (exeと同じディレクトリの ぐらびゅ.toml)
     fn config_path() -> Option<std::path::PathBuf> {
         std::env::current_exe()
             .ok()
@@ -425,8 +421,8 @@ default_sort = "bogus"
 
     #[test]
     fn prefetch_base_image_size_zero_clamps_to_one_pixel() {
-        // ゼロ設定は 1×1 ピクセルにクランプされる（document::update_cache_range の
-        // ゼロ除算防止）。
+        // ゼロ設定は 1×1 ピクセルにクランプされる (document::update_cache_range の
+        // ゼロ除算防止)。
         let p = PrefetchConfig {
             cache_base_width: 0,
             cache_base_height: 0,

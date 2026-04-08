@@ -3,7 +3,7 @@ use windows::Win32::Graphics::Gdi::MONITOR_DEFAULTTONEAREST;
 use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MONITORINFO, MonitorFromWindow};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-/// フルスクリーン状態管理（ボーダーレス最大化）
+/// フルスクリーン状態管理 (ボーダーレス最大化)
 pub struct FullscreenState {
     is_fullscreen: bool,
     saved_style: WINDOW_STYLE,

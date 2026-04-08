@@ -82,9 +82,9 @@ pub fn build_menu_bar() -> HMENU {
             Some((Action::Mosaic, "モザイク\tCtrl+M")),
             None,
             Some((Action::Blur, "ぼかし")),
-            Some((Action::BlurStrong, "ぼかし(強)")),
+            Some((Action::BlurStrong, "ぼかし (強)")),
             Some((Action::Sharpen, "シャープ")),
-            Some((Action::SharpenStrong, "シャープ(強)")),
+            Some((Action::SharpenStrong, "シャープ (強)")),
             Some((Action::GaussianBlur, "ガウスぼかし")),
             Some((Action::UnsharpMask, "アンシャープマスク")),
             Some((Action::MedianFilter, "メディアンフィルタ")),
@@ -126,9 +126,9 @@ pub fn build_menu_bar() -> HMENU {
             Some((Action::PFilterGrayscaleStrict, "厳密グレースケール化")),
             None,
             Some((Action::PFilterBlur, "ぼかし")),
-            Some((Action::PFilterBlurStrong, "ぼかし(強)")),
+            Some((Action::PFilterBlurStrong, "ぼかし (強)")),
             Some((Action::PFilterSharpen, "シャープ")),
-            Some((Action::PFilterSharpenStrong, "シャープ(強)")),
+            Some((Action::PFilterSharpenStrong, "シャープ (強)")),
             Some((Action::PFilterGaussianBlur, "ガウスぼかし")),
             Some((Action::PFilterUnsharpMask, "アンシャープマスク")),
             Some((Action::PFilterMedianFilter, "メディアンフィルタ")),
@@ -278,14 +278,14 @@ unsafe fn append_popup(menu_bar: HMENU, popup: HMENU, label: &str) {
 
 use crate::util::to_wide;
 
-/// インデックスからActionを復元する（Action enumの discriminant を利用）
+/// インデックスからActionを復元する (Action enumの discriminant を利用)
 fn action_from_index(index: u16) -> Option<Action> {
     // Action enumの全バリアントを順番に対応付ける
     let actions = ALL_ACTIONS;
     actions.get(index as usize).copied()
 }
 
-/// 全Actionを列挙順に並べた配列（Action enumのdiscriminantと一致させる）
+/// 全Actionを列挙順に並べた配列 (Action enumのdiscriminantと一致させる)
 const ALL_ACTIONS: &[Action] = &[
     // ナビゲーション
     Action::NavigateBack,
@@ -360,7 +360,7 @@ const ALL_ACTIONS: &[Action] = &[
     Action::Rotate90CCW,
     Action::RotateArbitrary,
     Action::Resize,
-    // フィルタ（画像メニュー）
+    // フィルタ (画像メニュー)
     Action::Fill,
     Action::Levels,
     Action::Gamma,

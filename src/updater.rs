@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context as _, Result};
 
-/// GitHub Pages経由のバージョン情報URL（APIレートリミット回避）
+/// GitHub Pages経由のバージョン情報URL(APIレートリミット回避)
 const VERSION_URL: &str = "https://ak110.github.io/gv/version.json";
 
 /// 更新情報
@@ -21,7 +21,7 @@ pub struct UpdateInfo {
 pub fn check_for_update() -> Result<UpdateInfo> {
     let current_version = env!("CARGO_PKG_VERSION").to_string();
 
-    // GitHub Pages経由でバージョン情報を取得（APIレートリミットの影響を受けない）
+    // GitHub Pages経由でバージョン情報を取得 (APIレートリミットの影響を受けない)
     let body = ureq::get(VERSION_URL)
         .header("User-Agent", &format!("gv/{current_version}"))
         .call()
@@ -34,12 +34,12 @@ pub fn check_for_update() -> Result<UpdateInfo> {
     // tag_name から "v" プレフィクスを除去
     let tag = response["tag_name"]
         .as_str()
-        .ok_or_else(|| anyhow::anyhow!("tag_nameが見つかりません"))?;
+        .ok_or_else(|| anyhow::anyhow!("tag_nameが見つからない"))?;
     let latest_version = tag.strip_prefix('v').unwrap_or(tag).to_string();
 
     let download_url = response["download_url"]
         .as_str()
-        .ok_or_else(|| anyhow::anyhow!("download_urlが見つかりません"))?
+        .ok_or_else(|| anyhow::anyhow!("download_urlが見つからない"))?
         .to_string();
 
     let is_newer = match (
@@ -59,7 +59,7 @@ pub fn check_for_update() -> Result<UpdateInfo> {
 }
 
 /// ダウンロード→ZIP展開→バッチスクリプト生成→起動
-/// 成功すればOk(true)を返し、呼び出し元はアプリを終了する
+/// 成功すればOk(true) を返し、呼び出し元はアプリを終了する
 pub fn perform_update(info: &UpdateInfo) -> Result<bool> {
     let exe_path = std::env::current_exe().context("現在のexeパス取得失敗")?;
     // ダウンロード
@@ -118,7 +118,7 @@ fn download_file(url: &str, dest: &std::path::Path) -> Result<()> {
 struct ExtractedFiles {
     /// 新しいぐらびゅ.exe のパス
     exe_path: PathBuf,
-    /// exe以外のファイル（展開先パス）のリスト
+    /// exe以外のファイル (展開先パス) のリスト
     extra_files: Vec<PathBuf>,
 }
 
@@ -138,7 +138,7 @@ fn extract_files_from_zip(
         if entry.is_dir() {
             continue;
         }
-        // ファイル名部分のみ取得（ZIPのパスにディレクトリが含まれる場合に対応）
+        // ファイル名部分のみ取得 (ZIPのパスにディレクトリが含まれる場合に対応)
         let file_name = std::path::Path::new(entry.name())
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
@@ -154,7 +154,7 @@ fn extract_files_from_zip(
             std::io::copy(&mut entry, &mut out).context("ZIPエントリ展開失敗")?;
             exe_path = Some(dest);
         } else {
-            // exe以外のファイル（*.default.toml, README.md, LICENSE等）
+            // exe以外のファイル (*.default.toml, README.md, LICENSE等)
             let dest = temp_dir.join(&file_name);
             let mut out = std::fs::File::create(&dest).context("展開先ファイル作成失敗")?;
             std::io::copy(&mut entry, &mut out).context("ZIPエントリ展開失敗")?;
@@ -162,8 +162,7 @@ fn extract_files_from_zip(
         }
     }
 
-    let exe_path =
-        exe_path.ok_or_else(|| anyhow::anyhow!("ZIP内にぐらびゅ.exeが見つかりません"))?;
+    let exe_path = exe_path.ok_or_else(|| anyhow::anyhow!("ZIP内にぐらびゅ.exeが見つからない"))?;
     Ok(ExtractedFiles {
         exe_path,
         extra_files,
@@ -174,7 +173,7 @@ fn extract_files_from_zip(
 ///
 /// rename-then-replaceパターン:
 /// 1. 親プロセスの終了を待機
-/// 2. 実行中のexeを.oldにリネーム（Windowsはリネームを許可する）
+/// 2. 実行中のexeを.oldにリネーム (Windowsはリネームを許可する)
 /// 3. 新しいexeを本来の名前で配置
 /// 4. 新exeを起動
 ///
@@ -203,9 +202,9 @@ fn generate_update_batch(
         .join("\n");
 
     // UTF-8 BOM + chcp 65001 でバッチをUTF-8モードで実行する。
-    // ファイル名に日本語（ぐらびゅ.exe等）を含むため、CP932では
+    // ファイル名に日本語 (ぐらびゅ.exe等) を含むため、CP932では
     // DBCSトレイルバイトがcmd.exeの構文解析を破壊する恐れがある。
-    // if ( ... ) ブロックは使わず goto で制御する（DBCS問題の回避策を維持）。
+    // if ( ... ) ブロックは使わず goto で制御する (DBCS問題の回避策を維持)。
     let content = format!(
         r#"@echo off
 chcp 65001 >nul
@@ -275,11 +274,11 @@ del "%~f0" & exit
     std::fs::write(batch_path, encoded).context("バッチスクリプト書き込み失敗")
 }
 
-/// バッチスクリプトを起動する（コンソールウィンドウ表示）
+/// バッチスクリプトを起動する (コンソールウィンドウ表示)
 fn launch_batch(batch_path: &std::path::Path) -> Result<()> {
     use std::os::windows::process::CommandExt;
 
-    // ジョブオブジェクトから分離を試みる（ベストエフォート）
+    // ジョブオブジェクトから分離を試みる (ベストエフォート)
     const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x01000000;
     let result = std::process::Command::new("cmd.exe")
         .args(["/k", &batch_path.display().to_string()])
@@ -296,7 +295,7 @@ fn launch_batch(batch_path: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
-/// UTF-8文字列をシステムのANSIコードページ（日本語環境ではCP932）に変換する
+/// UTF-8文字列をシステムのANSIコードページ (日本語環境ではCP932) に変換する
 #[allow(dead_code)] // バッチはUTF-8 BOM方式に移行したが、将来のCP932出力で使用する可能性あり
 fn utf8_to_ansi(s: &str) -> Vec<u8> {
     use windows::Win32::Globalization::{CP_ACP, WideCharToMultiByte};
@@ -393,7 +392,7 @@ mod tests {
         let mut result = Vec::new();
         let mut pos = 0;
         while pos < bytes.len() {
-            // 行末(次のCRLFまたはEOF)を探す
+            // 行末 (次のCRLFまたはEOF) を探す
             let line_end = bytes[pos..]
                 .windows(2)
                 .position(|w| w == crlf)
@@ -430,7 +429,7 @@ mod tests {
         std::fs::write(&target, b"OLD_CONTENT").unwrap();
         std::fs::write(&update, b"NEW_CONTENT").unwrap();
 
-        // 存在しないPIDでバッチ生成（wait_exitを即通過）
+        // 存在しないPIDでバッチ生成 (wait_exitを即通過)
         let batch_path = dir.join("update.bat");
         generate_update_batch(&batch_path, &update, &target, &[], 1).unwrap();
 
@@ -463,7 +462,7 @@ mod tests {
         );
         assert!(
             target.exists(),
-            "gv.exe が存在するべき（moveで配置される）\nstdout: {stdout}\nstderr: {stderr}"
+            "gv.exe が存在するべき (moveで配置される)\nstdout: {stdout}\nstderr: {stderr}"
         );
         assert_eq!(
             std::fs::read(&target).unwrap(),
@@ -509,7 +508,7 @@ mod tests {
         assert_eq!(
             std::fs::read(&old).unwrap(),
             b"CURRENT",
-            "gv.exe.old は現在のexeであるべき（古い.oldは削除済み）\nstdout: {stdout}\nstderr: {stderr}"
+            "gv.exe.old は現在のexeであるべき (古い.oldは削除済み)\nstdout: {stdout}\nstderr: {stderr}"
         );
         assert_eq!(
             std::fs::read(&target).unwrap(),
@@ -522,7 +521,7 @@ mod tests {
 
     #[test]
     fn batch_execution_copies_extra_files() {
-        // exe更新と同時に追加ファイル（*.default.toml, README.md等）もコピーされることを確認
+        // exe更新と同時に追加ファイル (*.default.toml, README.md等) もコピーされることを確認
         let base_dir = std::env::temp_dir().join("gv_test_batch_extra");
         let _ = std::fs::remove_dir_all(&base_dir);
         // exeのあるディレクトリと、展開先の一時ディレクトリを分離
@@ -536,13 +535,13 @@ mod tests {
         std::fs::write(&target, b"OLD_EXE").unwrap();
         std::fs::write(&update, b"NEW_EXE").unwrap();
 
-        // 追加ファイルを一時ディレクトリに作成（ZIP展開後の状態を再現）
+        // 追加ファイルを一時ディレクトリに作成 (ZIP展開後の状態を再現)
         let extra1 = temp_dir.join("ぐらびゅ.default.toml");
         let extra2 = temp_dir.join("README.md");
         std::fs::write(&extra1, b"NEW_TOML").unwrap();
         std::fs::write(&extra2, b"NEW_README").unwrap();
 
-        // 既存の追加ファイルも配置（上書きされることを確認）
+        // 既存の追加ファイルも配置 (上書きされることを確認)
         std::fs::write(install_dir.join("ぐらびゅ.default.toml"), b"OLD_TOML").unwrap();
         std::fs::write(install_dir.join("README.md"), b"OLD_README").unwrap();
 
