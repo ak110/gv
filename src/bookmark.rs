@@ -46,12 +46,14 @@ pub fn save_bookmark(
 
     let save_path = crate::file_ops::save_file_dialog(
         hwnd,
-        &default_name,
-        "ぐらびゅブックマーク",
-        "*.gvbm",
-        Some(&dir),
-        None,
-        None,
+        crate::file_ops::SaveFileDialogParams {
+            default_name: &default_name,
+            filter_name: "ぐらびゅブックマーク",
+            filter_ext: "*.gvbm",
+            default_ext: "gvbm",
+            initial_dir: Some(&dir),
+            ..Default::default()
+        },
     )?;
 
     let Some(save_path) = save_path else {

@@ -933,12 +933,15 @@ impl AppWindow {
 
         if let Ok(Some(dest)) = crate::file_ops::save_file_dialog(
             self.hwnd,
-            &default_name,
-            "すべてのファイル",
-            "*.*",
-            initial_dir.as_deref(),
-            Some(dialog_title),
-            Some(dialog_button),
+            crate::file_ops::SaveFileDialogParams {
+                default_name: &default_name,
+                filter_name: "すべてのファイル",
+                filter_ext: "*.*",
+                initial_dir: initial_dir.as_deref(),
+                title: Some(dialog_title),
+                ok_button_label: Some(dialog_button),
+                ..Default::default()
+            },
         ) {
             match &source {
                 crate::file_info::FileSource::File(_) => {
@@ -989,12 +992,15 @@ impl AppWindow {
             let initial_dir = current.source.parent_dir().map(Path::to_path_buf);
             if let Ok(Some(dest)) = crate::file_ops::save_file_dialog(
                 self.hwnd,
-                &default_name,
-                "すべてのファイル",
-                "*.*",
-                initial_dir.as_deref(),
-                Some("ファイルを複製"),
-                Some("複製"),
+                crate::file_ops::SaveFileDialogParams {
+                    default_name: &default_name,
+                    filter_name: "すべてのファイル",
+                    filter_ext: "*.*",
+                    initial_dir: initial_dir.as_deref(),
+                    title: Some("ファイルを複製"),
+                    ok_button_label: Some("複製"),
+                    ..Default::default()
+                },
             ) {
                 let result = if matches!(
                     current.source,
@@ -1826,15 +1832,9 @@ impl AppWindow {
             Action::PasteImage => self.action_paste_image(),
 
             // --- 画像書き出し ---
-            Action::ExportJpg => {
-                self.export_image("jpg", "JPEG画像", "*.jpg");
-            }
-            Action::ExportBmp => {
-                self.export_image("bmp", "BMP画像", "*.bmp");
-            }
-            Action::ExportPng => {
-                self.export_image("png", "PNG画像", "*.png");
-            }
+            Action::ExportJpg => self.export_image(ExportFormat::Jpg),
+            Action::ExportBmp => self.export_image(ExportFormat::Bmp),
+            Action::ExportPng => self.export_image(ExportFormat::Png),
 
             // --- ユーティリティ ---
             Action::NewWindow => self.action_new_window(),
@@ -2060,7 +2060,7 @@ impl AppWindow {
     }
 
     /// 画像を指定フォーマットで書き出す
-    fn export_image(&mut self, ext: &str, filter_name: &str, filter_spec: &str) {
+    fn export_image(&mut self, format: ExportFormat) {
         let Some(img) = self.document.current_image() else {
             return;
         };
@@ -2068,31 +2068,26 @@ impl AppWindow {
             || ("image".to_string(), None),
             |s| (s.default_save_stem(), s.parent_dir().map(Path::to_path_buf)),
         );
-        let default_name = format!("{default_stem}.{ext}");
+        let default_name = format!("{default_stem}.{}", format.extension());
 
         let Some(save_path) = crate::file_ops::save_file_dialog(
             self.hwnd,
-            &default_name,
-            filter_name,
-            filter_spec,
-            initial_dir.as_deref(),
-            None,
-            None,
+            crate::file_ops::SaveFileDialogParams {
+                default_name: &default_name,
+                filter_name: format.filter_name(),
+                filter_ext: format.filter_spec(),
+                default_ext: format.extension(),
+                initial_dir: initial_dir.as_deref(),
+                ..Default::default()
+            },
         )
         .ok()
         .flatten() else {
             return;
         };
 
-        // DecodedImage (RGBA) → image::RgbaImage → encode
-        let Some(img_buf) = image::RgbaImage::from_raw(img.width, img.height, img.data.clone())
-        else {
-            self.show_error_title("画像バッファの作成に失敗しました");
-            return;
-        };
-
-        if let Err(e) = img_buf.save(&save_path) {
-            self.show_error_title(&format!("画像の書き出しに失敗しました: {e}"));
+        if let Err(e) = write_image_to_path(img.width, img.height, &img.data, format, &save_path) {
+            self.show_error_title(&format!("{e}"));
         }
     }
 
@@ -2616,5 +2611,151 @@ Susieプラグイン (.sph/.spi) で拡張可能";
         }
 
         self.process_document_events();
+    }
+}
+
+/// 画像書き出しフォーマット。各バリアントが拡張子・フィルタ表示・`image::ImageFormat`
+/// を一元管理する。`Action::Export*` から `export_image` に渡される。
+#[derive(Copy, Clone)]
+enum ExportFormat {
+    Png,
+    Jpg,
+    Bmp,
+}
+
+impl ExportFormat {
+    fn extension(self) -> &'static str {
+        match self {
+            Self::Png => "png",
+            Self::Jpg => "jpg",
+            Self::Bmp => "bmp",
+        }
+    }
+
+    fn filter_name(self) -> &'static str {
+        match self {
+            Self::Png => "PNG画像",
+            Self::Jpg => "JPEG画像",
+            Self::Bmp => "BMP画像",
+        }
+    }
+
+    fn filter_spec(self) -> &'static str {
+        match self {
+            Self::Png => "*.png",
+            Self::Jpg => "*.jpg",
+            Self::Bmp => "*.bmp",
+        }
+    }
+
+    fn image_format(self) -> image::ImageFormat {
+        match self {
+            Self::Png => image::ImageFormat::Png,
+            Self::Jpg => image::ImageFormat::Jpeg,
+            Self::Bmp => image::ImageFormat::Bmp,
+        }
+    }
+}
+
+/// RGBA バッファを指定パスへ指定フォーマットで書き出す。
+///
+/// `image::ImageBuffer<Rgba<u8>, _>` を直接 `save_with_format` に渡すと、JPEG エンコーダ
+/// が RGBA を受け付けず色型エラーで失敗する。`DynamicImage` を経由することで `image`
+/// crate 側が必要な色変換 (RGBA→RGB 等) を自動で行う。フォーマットを引数で明示する
+/// ため、保存先パスの拡張子有無に依存しない。
+fn write_image_to_path(
+    width: u32,
+    height: u32,
+    rgba: &[u8],
+    format: ExportFormat,
+    path: &Path,
+) -> Result<()> {
+    let img_buf = image::RgbaImage::from_raw(width, height, rgba.to_vec())
+        .ok_or_else(|| anyhow::anyhow!("画像バッファの作成に失敗しました"))?;
+    let dynamic = image::DynamicImage::ImageRgba8(img_buf);
+    dynamic
+        .save_with_format(path, format.image_format())
+        .map_err(|e| anyhow::anyhow!("画像の書き出しに失敗しました: {e}"))?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    /// テスト間で衝突しない一時パスを生成する。
+    /// プロセス ID とナノ秒で並列実行に対する競合を避ける。
+    fn unique_temp_path(stem: &str) -> PathBuf {
+        let pid = std::process::id();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        std::env::temp_dir().join(format!("gv_test_{stem}_{pid}_{nanos}"))
+    }
+
+    fn white_pixel() -> (u32, u32, Vec<u8>) {
+        (1, 1, vec![255, 255, 255, 255])
+    }
+
+    /// 拡張子なしパスでも PNG として書き出せる (本バグ修正の回帰テスト)。
+    /// 修正前は `image::RgbaImage::save()` がパスから形式を推定できず
+    /// "The image format could not be determined" で失敗していた。
+    #[test]
+    fn write_png_with_extensionless_path_succeeds() {
+        let (w, h, rgba) = white_pixel();
+        let path = unique_temp_path("png_no_ext");
+        let result = write_image_to_path(w, h, &rgba, ExportFormat::Png, &path);
+        assert!(
+            result.is_ok(),
+            "extensionless path should succeed: {result:?}"
+        );
+        let bytes = fs::read(&path).unwrap();
+        assert_eq!(
+            &bytes[..8],
+            &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]
+        );
+        let _ = fs::remove_file(&path);
+    }
+
+    /// `.txt` のような不一致拡張子でも、指定したフォーマットでバイト列が書かれる
+    /// (`save_with_format` による形式強制の挙動保証)。同時に `DynamicImage` 経由
+    /// による RGBA→RGB 自動変換が JPEG エンコーダで動くことを検証する。
+    #[test]
+    fn write_jpg_with_txt_extension_writes_jpeg_bytes() {
+        let (w, h, rgba) = white_pixel();
+        let path = unique_temp_path("mismatch.txt");
+        let result = write_image_to_path(w, h, &rgba, ExportFormat::Jpg, &path);
+        assert!(
+            result.is_ok(),
+            "txt extension with Jpg format should succeed: {result:?}"
+        );
+        let bytes = fs::read(&path).unwrap();
+        assert_eq!(&bytes[..2], &[0xFF, 0xD8]); // JPEG SOI マーカー
+        let _ = fs::remove_file(&path);
+    }
+
+    /// BMP も拡張子なしパスで成功すること。
+    #[test]
+    fn write_bmp_with_extensionless_path_succeeds() {
+        let (w, h, rgba) = white_pixel();
+        let path = unique_temp_path("bmp_no_ext");
+        let result = write_image_to_path(w, h, &rgba, ExportFormat::Bmp, &path);
+        assert!(
+            result.is_ok(),
+            "bmp extensionless should succeed: {result:?}"
+        );
+        let bytes = fs::read(&path).unwrap();
+        assert_eq!(&bytes[..2], b"BM");
+        let _ = fs::remove_file(&path);
+    }
+
+    /// `ExportFormat` の各バリアントが期待どおりの拡張子を返すこと。
+    #[test]
+    fn export_format_returns_expected_extensions() {
+        assert_eq!(ExportFormat::Png.extension(), "png");
+        assert_eq!(ExportFormat::Jpg.extension(), "jpg");
+        assert_eq!(ExportFormat::Bmp.extension(), "bmp");
     }
 }

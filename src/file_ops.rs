@@ -195,18 +195,37 @@ pub fn select_folder_dialog(
     }
 }
 
-/// 保存先ダイアログ (IFileSaveDialog)
-/// `initial_dir`が指定されていればそのフォルダを初期表示する
-/// `title`/`ok_button_label`でダイアログのタイトルとOKボタンのラベルをカスタマイズ可能
-pub fn save_file_dialog(
-    hwnd: HWND,
-    default_name: &str,
-    filter_name: &str,
-    filter_ext: &str,
-    initial_dir: Option<&Path>,
-    title: Option<&str>,
-    ok_button_label: Option<&str>,
-) -> Result<Option<PathBuf>> {
+/// `save_file_dialog` の設定パラメータ。
+///
+/// - `default_name`: デフォルトファイル名 (拡張子付きを推奨)。
+/// - `filter_name` / `filter_ext`: ファイル種別フィルタの表示名と spec (`"*.png"` 等)。
+/// - `default_ext`: 拡張子文字列 (`"png"` のように先頭ドット無し)。ユーザーがファイル名
+///   から拡張子を消した場合に Windows 側で自動補完される。補完が不要な場合 (`*.*`
+///   フィルタなど) は空文字を渡す。
+/// - `initial_dir`: 指定すればそのフォルダを初期表示する。
+/// - `title` / `ok_button_label`: ダイアログのタイトルと OK ボタンラベルのカスタマイズ。
+#[derive(Default)]
+pub struct SaveFileDialogParams<'a> {
+    pub default_name: &'a str,
+    pub filter_name: &'a str,
+    pub filter_ext: &'a str,
+    pub default_ext: &'a str,
+    pub initial_dir: Option<&'a Path>,
+    pub title: Option<&'a str>,
+    pub ok_button_label: Option<&'a str>,
+}
+
+/// 保存先ダイアログ (`IFileSaveDialog`) を表示してユーザーにパスを選択させる。
+pub fn save_file_dialog(hwnd: HWND, params: SaveFileDialogParams<'_>) -> Result<Option<PathBuf>> {
+    let SaveFileDialogParams {
+        default_name,
+        filter_name,
+        filter_ext,
+        default_ext,
+        initial_dir,
+        title,
+        ok_button_label,
+    } = params;
     unsafe {
         let dialog: IFileSaveDialog = windows::Win32::System::Com::CoCreateInstance(
             &windows::Win32::UI::Shell::FileSaveDialog,
@@ -243,6 +262,14 @@ pub fn save_file_dialog(
             pszSpec: windows::core::PCWSTR(fspec.as_ptr()),
         }];
         dialog.SetFileTypes(&filters)?;
+
+        // デフォルト拡張子の補完設定 (ユーザーがファイル名から拡張子を消した場合に Windows
+        // 側で自動補完される)。先頭ドット無しの拡張子文字列を渡す必要がある。
+        let ext_wide;
+        if !default_ext.is_empty() {
+            ext_wide = to_wide(default_ext);
+            dialog.SetDefaultExtension(windows::core::PCWSTR(ext_wide.as_ptr()))?;
+        }
 
         // デフォルトファイル名
         let name_wide = to_wide(default_name);
