@@ -153,6 +153,18 @@ jobs:
       - name: Generate release notes
         run: git cliff --latest --strip header --output CHANGES.md
 
+      - name: Append changelog link
+        shell: pwsh
+        run: |
+          $version = if ("${{ steps.existing.outputs.rerun }}" -eq "true") {
+            "${{ steps.existing.outputs.version }}"
+          } else {
+            "${{ steps.bump.outputs.version }}"
+          }
+          $tags = git tag --sort=version:refname | Where-Object { $_ -match '^v\d' }
+          $prevTag = $tags[-2]
+          Add-Content CHANGES.md "`n**Full Changelog**: https://github.com/${{ github.repository }}/compare/$prevTag...v$version"
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
