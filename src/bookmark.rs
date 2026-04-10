@@ -1,7 +1,9 @@
 //! ブックマーク機能 (ファイルリストの保存/復元)
 
+mod legacy;
+
 use std::fmt::Write as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result};
 use windows::Win32::Foundation::HWND;
@@ -92,16 +94,33 @@ pub fn save_bookmark(
 }
 
 /// ブックマークを読み込む
-pub fn load_bookmark(hwnd: HWND) -> Result<Option<BookmarkData>> {
+///
+/// `is_archive` は旧形式 (`.gvb`) のパス文字列からアーカイブを検出するために使う。
+/// 新形式 (`.gvbm` / `.gv3bm`) では型情報がタブ区切りで明示されているため使われない。
+pub fn load_bookmark(
+    hwnd: HWND,
+    is_archive: impl Fn(&Path) -> bool,
+) -> Result<Option<BookmarkData>> {
     let path = crate::file_ops::open_bookmark_dialog(hwnd)?;
     let Some(path) = path else {
         return Ok(None);
     };
 
-    let content = std::fs::read_to_string(&path)
+    let bytes = std::fs::read(&path)
         .with_context(|| format!("ブックマーク読み込み失敗: {}", path.display()))?;
 
-    Ok(Some(parse_bookmark(&content)))
+    // UTF-16 LE BOM → 旧形式 (.gvb)
+    if let Some(rest) = bytes.strip_prefix(&[0xFF, 0xFE]) {
+        return Ok(Some(legacy::parse_legacy_bookmark_utf16le(
+            rest,
+            &is_archive,
+        )));
+    }
+
+    // 新形式 (UTF-8)
+    let content = std::str::from_utf8(&bytes)
+        .with_context(|| format!("ブックマークのUTF-8デコード失敗: {}", path.display()))?;
+    Ok(Some(parse_bookmark(content)))
 }
 
 /// ブックマークテキストをパースする

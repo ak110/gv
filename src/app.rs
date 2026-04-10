@@ -1460,7 +1460,13 @@ impl AppWindow {
             return;
         }
         self.selection.deselect();
-        match crate::bookmark::load_bookmark(self.hwnd) {
+        // is_archive クロージャは旧形式 (.gvb) のパース時にのみ使われる。
+        // self.document の共有借用のみなので、後続の load_bookmark_data の可変借用と競合しない。
+        let result = {
+            let is_archive = |p: &std::path::Path| self.document.is_archive_path(p);
+            crate::bookmark::load_bookmark(self.hwnd, is_archive)
+        };
+        match result {
             Ok(Some(data)) => {
                 if let Err(e) = self.document.load_bookmark_data(data) {
                     self.show_error_title(&format!("ブックマークの読み込みに失敗しました: {e}"));

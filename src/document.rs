@@ -1324,6 +1324,11 @@ impl Document {
         self.archive_manager.is_archive(path) || Self::is_pdf(path)
     }
 
+    /// パスがアーカイブ拡張子を持つか判定する (ブックマーク復元時のコンテナ検出用)
+    pub fn is_archive_path(&self, path: &Path) -> bool {
+        self.archive_manager.is_archive(path)
+    }
+
     /// 現在のファイルの論理ソース
     pub fn current_source(&self) -> Option<&FileSource> {
         self.file_list.current().map(|f| &f.source)
@@ -1529,6 +1534,12 @@ impl Document {
             }
 
             self.open_containers(&container_paths)?;
+
+            // 全コンテナを同期展開してから位置復元する。
+            // open_containers は先頭コンテナのみ即時展開し残りは PendingContainer のため、
+            // 非先頭コンテナ内エントリを指す index の source_matches が失敗する。
+            // ブックマーク読み込みはユーザー明示操作なので同期展開のブロッキングは許容する。
+            self.expand_all_pending_sync();
 
             // 位置復元: source同一性で検索 (PDF/Archive両対応)
             if let Some(target_source) = data.entries.get(data.index) {

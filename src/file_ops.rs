@@ -311,7 +311,7 @@ pub fn open_bookmark_dialog(hwnd: HWND) -> Result<Option<PathBuf>> {
 
         // フィルタ: ブックマーク + すべてのファイル
         let filter_name: Vec<u16> = "ぐらびゅブックマーク\0".encode_utf16().collect();
-        let filter_spec: Vec<u16> = "*.gvbm;*.gv3bm\0".encode_utf16().collect();
+        let filter_spec: Vec<u16> = "*.gvbm;*.gv3bm;*.gvb\0".encode_utf16().collect();
         let all_name: Vec<u16> = "すべてのファイル\0".encode_utf16().collect();
         let all_spec: Vec<u16> = "*.*\0".encode_utf16().collect();
 
