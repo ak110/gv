@@ -5,12 +5,17 @@
 
 Windows用画像ビューアー。
 
-ドキュメント: <https://ak110.github.io/gv/>
+## 特徴
+
+- 前後画像の先読みによる高速切り替え
+- 多形式対応: JPEG / PNG / GIF / BMP / WebP / PDF / ZIP / cbz / RAR / cbr / 7z / 64bit Susieプラグイン
+- 設定ファイルとキーバインドによるカスタマイズ
 
 ## インストール
 
 [Releases](https://github.com/ak110/gv/releases) からZIPをダウンロードし、任意のフォルダに展開する。
 
-## 開発
+## ドキュメント
 
-詳細は [開発ガイド](docs/development/development.md) を参照すること。
+- <https://ak110.github.io/gv/> — 概要・使い方
+- [docs/development/development.md](docs/development/development.md) — 開発者向け情報
