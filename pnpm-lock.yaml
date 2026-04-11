@@ -17,9 +17,15 @@ importers:
       textlint:
         specifier: ^15.5.2
         version: 15.5.2
+      textlint-rule-ja-no-abusage:
+        specifier: ^3.0.0
+        version: 3.0.0
       textlint-rule-preset-ja-technical-writing:
         specifier: ^12.0.2
         version: 12.0.2
+      textlint-rule-preset-jtf-style:
+        specifier: ^3.0.3
+        version: 3.0.3
       vitepress:
         specifier: ^1.6.4
         version: 1.6.4(@algolia/client-search@5.50.0)(postcss@8.5.8)(search-insights@2.17.3)
