@@ -48,7 +48,7 @@ const VK_MENU: i32 = 0x12; // Alt
 /// メインウィンドウ (View 層)
 ///
 /// Win32 メッセージループから呼び出され、`Document` モデルへの操作と `D2DRenderer`
-/// による描画を仲介する。`docs/architecture.md` の Model-View 分離パターン参照。
+/// による描画を仲介する。`docs/development/architecture.md` の Model-View 分離パターン参照。
 ///
 /// - メニューバー・キー入力・ファイルリストパネル等の UI 状態を所有
 /// - `Document` から `DocumentEvent` をチャネル経由で受け取り、再描画や UI 更新を行う

@@ -21,6 +21,6 @@
 ## 関連ドキュメント
 
 - @README.md
-- @docs/concept.md
-- @docs/architecture.md
-- @docs/development.md
+- @docs/development/concept.md
+- @docs/development/architecture.md
+- @docs/development/development.md

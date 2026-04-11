@@ -13,4 +13,4 @@ Windows用画像ビューアー。
 
 ## 開発
 
-詳細は [開発ガイド](docs/development.md) を参照すること。
+詳細は [開発ガイド](docs/development/development.md) を参照すること。
