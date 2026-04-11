@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 
 use anyhow::{Context as _, Result};
@@ -190,6 +191,40 @@ fn process_single_container(path: &Path, archive_manager: &ArchiveManager) -> Co
     }
 }
 
+/// 現在のスレッドの I/O 優先度を `THREAD_MODE_BACKGROUND_BEGIN` に落とす。
+///
+/// バックグラウンド展開用の rayon ワーカースレッドから呼び出す。成功すると、
+/// そのスレッドが発行する全ての I/O リクエストは Windows I/O スケジューラで
+/// Low 優先度 (ページ優先度も低下) に扱われ、同じディスクに対するメイン
+/// スレッド・先読みワーカーの I/O が優先される。HDD ではこれにより先読みが
+/// 間に合わず待たされる現象が緩和される。
+fn set_current_thread_background_io_priority() -> windows::core::Result<()> {
+    use windows::Win32::System::Threading::{
+        GetCurrentThread, SetThreadPriority, THREAD_MODE_BACKGROUND_BEGIN,
+    };
+    unsafe { SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN) }
+}
+
+/// バックグラウンド展開用の rayon プールを構築する。
+///
+/// - 並列度は 1 に固定する。HDD ではシーク競合を避けるため 1 並列が最適で、
+///   SSD でも ZIP のセントラルディレクトリ読み出しに並列は不要である。
+/// - ワーカースレッド起動時に `set_current_thread_background_io_priority` を
+///   呼び、I/O 優先度を Low に落とす。rayon の `start_handler` は戻り値を
+///   持たないため、失敗時は `eprintln!` で記録してプール構築自体は成功させる。
+fn build_expansion_pool() -> Result<rayon::ThreadPool> {
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .thread_name(|_| "bg-expansion".to_string())
+        .start_handler(|_idx| {
+            if let Err(e) = set_current_thread_background_io_priority() {
+                eprintln!("背景展開スレッドの I/O 優先度設定に失敗: {e}");
+            }
+        })
+        .build()
+        .context("背景展開用 rayon プールの構築に失敗")
+}
+
 /// 画像・ファイルリスト・状態管理 (モデル層)
 /// Win32 APIやHWNDへの依存は一切持たない
 pub struct Document {
@@ -216,6 +251,11 @@ pub struct Document {
     expand_rx: Option<Receiver<ContainerExpandEvent>>,
     /// バックグラウンド展開の世代番号 (openごとにインクリメント)
     expand_generation: u64,
+    /// バックグラウンド展開の現世代に紐づくキャンセルフラグ。
+    /// 旧世代を無効化する経路から `cancel_expansion` を呼んで `true` をセットすると、
+    /// rayon ワーカーは進行中の1件を完走したのち、残りのキューを消費せずに終了する。
+    /// これにより並列度を1に抑えても再スケジュール時に旧世代の I/O が残存しない。
+    expansion_cancel: Option<Arc<AtomicBool>>,
     /// コンテナの展開状態
     container_states: HashMap<PathBuf, ContainerState>,
     /// 直近のナビゲーション操作の方向 (PendingContainer 到達時の intent 構築に使う)
@@ -256,6 +296,7 @@ impl Document {
             last_navigation_direction: NavigationDirection::Forward,
             pending_navigation_intent: None,
             ui_notify: None,
+            expansion_cancel: None,
         }
     }
 
@@ -485,6 +526,7 @@ impl Document {
         self.file_list.clear();
         self.container_states.clear();
         self.pending_navigation_intent = None;
+        self.cancel_expansion(); // 旧世代 rayon ジョブをキュー先頭で停止させる
         self.expand_rx = None; // 旧バックグラウンド展開を破棄
         self.expand_generation += 1;
 
@@ -522,6 +564,7 @@ impl Document {
         self.file_list.clear();
         self.container_states.clear();
         self.pending_navigation_intent = None;
+        self.cancel_expansion();
         self.expand_rx = None;
         self.expand_generation += 1;
 
@@ -839,10 +882,25 @@ impl Document {
         entries
     }
 
+    /// 現世代のバックグラウンド展開を無効化する。
+    ///
+    /// 旧世代を破棄する全経路 ( `open_containers` / `open_multiple` /
+    /// `expand_all_pending_sync` / `reschedule_background_expansion` ) から呼び、
+    /// rayon ワーカーに「次の `for_each` エントリから処理を止めろ」と指示する。
+    /// 進行中の1件は完走するが、それ以降のキューは消費されない。
+    fn cancel_expansion(&mut self) {
+        if let Some(flag) = self.expansion_cancel.take() {
+            flag.store(true, Ordering::Relaxed);
+        }
+    }
+
     /// バックグラウンドコンテナ展開を起動する
     /// Pending状態のコンテナを全てInFlightに遷移させてからスレッドに投入する。
     /// 既に Expanded 状態のコンテナはスキップする (再起動時の二重展開防止)。
     fn start_background_expansion(&mut self) {
+        // 呼び出し側が cancel_expansion を怠った場合の二重保険
+        self.cancel_expansion();
+
         // Pending状態のコンテナパスを収集し、現在位置からの距離でソート
         let current_idx = self.file_list.current_index().unwrap_or(0);
         let mut pending_paths: Vec<(usize, PathBuf)> = Vec::new();
@@ -877,6 +935,12 @@ impl Document {
         let (tx, rx) = crossbeam_channel::unbounded();
         self.expand_rx = Some(rx);
 
+        // 現世代用のキャンセルフラグを作成してフィールドに保持する。
+        // 次に cancel_expansion が呼ばれた時点で true に遷移し、以降の par_iter
+        // エントリは処理されずに終了する。
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.expansion_cancel = Some(Arc::clone(&cancel));
+
         let generation = self.expand_generation;
         let archive_manager = Arc::clone(&self.archive_manager);
         let ui_notify = self.ui_notify.clone();
@@ -885,7 +949,7 @@ impl Document {
 
         std::thread::spawn(move || {
             // rayon プールで並列展開。プール作成失敗時は DocumentEvent::Error を送って終了する。
-            let pool = match rayon::ThreadPoolBuilder::new().num_threads(4).build() {
+            let pool = match build_expansion_pool() {
                 Ok(pool) => pool,
                 Err(e) => {
                     let _ = event_sender.send(DocumentEvent::Error(format!(
@@ -901,6 +965,10 @@ impl Document {
 
             pool.install(|| {
                 paths.par_iter().for_each(|path| {
+                    // 旧世代として無効化されていたら以降の処理をスキップする
+                    if cancel.load(Ordering::Relaxed) {
+                        return;
+                    }
                     let result = process_single_container(path, &archive_manager);
                     let _ = tx.send(ContainerExpandEvent::Expanded {
                         container_path: path.clone(),
@@ -924,12 +992,13 @@ impl Document {
     /// バックグラウンド展開を再起動して優先度を再計算する
     /// シャッフル等でリスト並べ替えが起きた後や、ユーザーが PendingContainer
     /// に到達して特定コンテナを最優先で待ち始めたタイミングで呼ぶ。
-    /// 古い rayon ジョブは進行中の最大4タスクを完了させてから終了するが、
-    /// 結果は世代不一致で破棄される。
+    /// 旧 rayon ジョブは `cancel_expansion` でキューの消費を停止させ、
+    /// 進行中の1件だけ完走させてから終了する。結果は世代不一致で破棄される。
     fn reschedule_background_expansion(&mut self) {
         if !self.file_list.has_pending() {
             return;
         }
+        self.cancel_expansion();
         self.expand_rx = None; // 古い結果は世代不一致で破棄
         self.expand_generation += 1;
         self.start_background_expansion();
@@ -1088,7 +1157,9 @@ impl Document {
     /// バックグラウンド展開と並走する可能性があるため、まず世代を進めて旧結果を破棄してから
     /// 残った PendingContainer を1つずつ直接同期展開する。
     pub fn expand_all_pending_sync(&mut self) {
-        // 旧バックグラウンドジョブの結果を破棄 (世代不一致で次回 process_expand_results が捨てる)
+        // 旧バックグラウンドジョブを即座に停止させて HDD 帯域を譲ってもらう。
+        // 結果自体は expand_rx の drop と世代加算で次回 process_expand_results が破棄する。
+        self.cancel_expansion();
         self.expand_rx = None;
         self.expand_generation += 1;
 
@@ -2080,5 +2151,83 @@ mod tests {
         }
 
         cleanup_test_dir(&dir);
+    }
+
+    #[test]
+    fn background_io_priority_returns_ok() {
+        // set_current_thread_background_io_priority は、Windows の
+        // SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN) を呼ぶ。
+        // 呼び出し元のテストスレッドまで background 化してしまうと以降のテスト全般に
+        // 影響しかねないため、専用スレッドで実行して戻り値だけ検査する。
+        // THREAD_MODE_BACKGROUND_BEGIN の効果自体は GetThreadPriority で読み戻せないので、
+        // 戻り値が Ok(()) であれば API レベルで設定が受理されたものとみなせる。
+        let handle = std::thread::spawn(set_current_thread_background_io_priority);
+        let result = handle.join().expect("priority thread panicked");
+        assert!(result.is_ok(), "priority set failed: {result:?}");
+    }
+
+    #[test]
+    fn expansion_pool_has_single_thread() {
+        // HDD のシーク競合を避けるため並列度は 1 に固定する方針。
+        // プール構築時点で current_num_threads() を介して検査する。
+        let pool = build_expansion_pool().expect("build_expansion_pool");
+        assert_eq!(pool.current_num_threads(), 1);
+    }
+
+    #[test]
+    fn expansion_cancel_skips_remaining_items() {
+        // cancel フラグを立ててから par_iter を回すと、for_each 先頭の
+        // `cancel.load` 分岐で全件スキップされることを確認する。
+        // process_single_container 自体は重い処理なので、テストでは軽量な
+        // ダミー処理 (Vec<i32> への push) に置き換えてキャンセルロジックだけを検証する。
+        use std::sync::Mutex;
+
+        let pool = build_expansion_pool().expect("build_expansion_pool");
+        let cancel = Arc::new(AtomicBool::new(true));
+        let processed: Arc<Mutex<Vec<i32>>> = Arc::new(Mutex::new(Vec::new()));
+
+        let inputs: Vec<i32> = (0..8).collect();
+        let processed_inner = Arc::clone(&processed);
+        let cancel_inner = Arc::clone(&cancel);
+        pool.install(|| {
+            inputs.par_iter().for_each(|n| {
+                if cancel_inner.load(Ordering::Relaxed) {
+                    return;
+                }
+                processed_inner.lock().expect("processed lock").push(*n);
+            });
+        });
+
+        let recorded = processed.lock().expect("processed lock");
+        assert!(
+            recorded.is_empty(),
+            "キャンセル後に要素が処理された: {recorded:?}"
+        );
+    }
+
+    #[test]
+    fn expansion_cancel_allows_progress_when_false() {
+        // 逆方向の検査: フラグが false のままなら全件処理が進むこと。
+        use std::sync::Mutex;
+
+        let pool = build_expansion_pool().expect("build_expansion_pool");
+        let cancel = Arc::new(AtomicBool::new(false));
+        let processed: Arc<Mutex<Vec<i32>>> = Arc::new(Mutex::new(Vec::new()));
+
+        let inputs: Vec<i32> = (0..8).collect();
+        let processed_inner = Arc::clone(&processed);
+        let cancel_inner = Arc::clone(&cancel);
+        pool.install(|| {
+            inputs.par_iter().for_each(|n| {
+                if cancel_inner.load(Ordering::Relaxed) {
+                    return;
+                }
+                processed_inner.lock().expect("processed lock").push(*n);
+            });
+        });
+
+        let mut recorded = processed.lock().expect("processed lock").clone();
+        recorded.sort_unstable();
+        assert_eq!(recorded, inputs);
     }
 }
