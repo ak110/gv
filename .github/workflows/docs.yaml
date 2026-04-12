@@ -15,7 +15,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: docs
+  group: pages
   cancel-in-progress: true
 
 jobs:
@@ -28,10 +28,10 @@ jobs:
       - uses: pnpm/action-setup@08c4be7e2e672a47d11bd04269e27e5f3e8529cb # v6.0.0
       - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
         with:
-          node-version: lts/*
+          node-version: "lts/*"
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Build with VitePress
+      - name: Build docs
         run: pnpm run docs:build
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0

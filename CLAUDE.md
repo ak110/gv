@@ -1,4 +1,4 @@
-# カスタム指示 (プロジェクト固有)
+# カスタム指示（プロジェクト固有）
 
 ## 開発手順
 
@@ -15,7 +15,7 @@ Claude Codeがコミット前に検証する際は、`mise run test`の代わり
 uvx pyfltr run --output-format=jsonl
 ```
 
-人間の開発者は従来通り`mise run test`を使用する。
+人間の開発者は従来どおり`mise run test`を使用する。
 
 ## ローカルコーディング規約
 
