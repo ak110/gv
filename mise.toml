@@ -32,14 +32,14 @@ description = "ビルド成果物の削除"
 run = "cargo clean"
 
 [tasks.format]
-description = "コード整形 + 自動修正 (testの軽量版)"
+description = "フォーマット + 軽量lint（開発時の手動実行用。自動修正あり）"
 run = [
   "uvx pyfltr fix",
   "uvx pyfltr fast",
 ]
 
 [tasks.test]
-description = "全チェック (pre-commit + pyfltr run)"
+description = "全チェック実行（これを通過すればコミット可能）"
 env = { SKIP = "pyfltr" }
 run = [
   "uvx pre-commit run --all-files",
