@@ -60,7 +60,7 @@ sequenceDiagram
 
 - 並列度は1に固定する。HDD環境ではシーク競合が支配的であり、並列展開するとむしろディスク帯域を食い潰してフォアグラウンド操作（先読みワーカー、メインスレッドのキャッシュミスフォールバック）が遅延する。SSD環境でも1並列で十分高速であるため、両者の最大公約数として1を選ぶ。
 - ワーカースレッド起動時に `SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN)` を呼び、I/O優先度とページ優先度をLowに落とす。これにより、同じ物理ディスクに対するメインスレッド・先読みワーカーのI/Oが優先される。HDD環境で顕著に効く。
-- 世代ごとのキャンセルフラグ（`Arc<AtomicBool>`）で旧rayonプールを停止できるようにしている。旧世代を破棄する全経路（`open_containers` / `open_multiple` / `expand_all_pending_sync` / `reschedule_background_expansion`）から共通メソッド `cancel_expansion` を呼ぶことで、旧ジョブの残存I/Oを進行中の1件だけに抑えている。
+- 世代ごとのキャンセルフラグ（`Arc<AtomicBool>`）で旧rayonプールを停止できるようにしている。旧世代を破棄する全経路から共通メソッド`cancel_expansion`を呼び、旧ジョブの残存I/Oを進行中の1件だけに抑えている。対象経路は`open_containers`/`open_multiple`/`expand_all_pending_sync`/`reschedule_background_expansion`の4つ。
 
 ## デコーダチェーン
 

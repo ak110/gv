@@ -1,0 +1,20 @@
+[tool.uv]
+exclude-newer = "1 day"
+
+[tool.pyfltr]
+python = false
+js-runner = "pnpm"
+bin-runner = "mise"
+cargo-fmt = true
+cargo-clippy = true
+cargo-test = true
+cargo-deny = true
+markdownlint = true
+textlint = true
+prettier = true
+
+extend-exclude = [
+    "target",
+    "node_modules",
+    "dist",
+]

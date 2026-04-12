@@ -4,8 +4,18 @@
 
 - rust, node, pnpmなどはmise経由で実行する
 - ドキュメントのみの変更（`*.md`や`docs/**`の更新）をコミットする場合、事前の手動`mise run test`は省略してよい。
-  `git commit`時点で`.githooks/pre-commit`が`mise run test`（`pnpm run lint`を含むフルテスト）を自動実行するため、Markdownのtextlint/markdownlint-cli2/prettierは確実にかかる
+  `git commit`時点でpre-commitフックが`pyfltr fast`を自動実行するため、Markdownのtextlint/markdownlint-cli2/prettierは確実にかかる
 - コードに手を入れた変更では、失敗の早期検出のため従来どおり事前に`mise run test`を回すことを推奨する
+
+### Claude Code向けコミット前検証
+
+Claude Codeがコミット前に検証する際は、`mise run test`の代わりに以下を実行する。JSON Lines出力によりLLMがツール別診断を効率的に解釈できる。
+
+```bash
+uvx pyfltr run --output-format=jsonl
+```
+
+人間の開発者は従来通り`mise run test`を使用する。
 
 ## ローカルコーディング規約
 
