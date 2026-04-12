@@ -19,5 +19,7 @@ jobs:
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - uses: taiki-e/install-action@cargo-deny
       - run: mise run setup-ci
+      - name: advisory DB の CRLF 変換を防止
+        run: git config --global core.autocrlf false
       - run: mise run ci
       - run: pinact run --check
