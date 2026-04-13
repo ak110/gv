@@ -16,3 +16,15 @@ extend-exclude = [
     "node_modules",
     "dist",
 ]
+
+[tool.typos.default.extend-identifiers]
+# FilterOperation の別名（use ... as FO;）
+FO = "FO"
+# 画像バイリニア補間のy座標インデックス
+iy = "iy"
+
+[tool.typos.default.extend-words]
+# 論文引用 "ACM Trans. Model. Comput. Simul." の略語
+Comput = "Comput"
+# Susie プラグイン API 仕様の元々のスペル（lpPrgressCallback）
+Prgress = "Prgress"
