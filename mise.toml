@@ -5,6 +5,8 @@ node = "lts"
 pnpm = "latest"
 pinact = "latest"
 git-cliff = "latest"
+actionlint = "latest"
+typos = "latest"
 
 [tasks.setup]
 description = "開発環境のセットアップ"
@@ -34,23 +36,19 @@ run = "cargo clean"
 [tasks.format]
 description = "フォーマット + 軽量lint（開発時の手動実行用。自動修正あり）"
 run = [
-  "uvx pyfltr fix",
-  "uvx pyfltr fast",
+  "uvx pyfltr fix || true",
+  "uvx pre-commit run --all-files || uvx pre-commit run --all-files",
 ]
 
 [tasks.test]
 description = "全チェック実行（これを通過すればコミット可能）"
-env = { SKIP = "pyfltr" }
 run = [
-  "uvx pre-commit run --all-files",
   "uvx pyfltr run",
 ]
 
 [tasks.ci]
 description = "CI向け全チェック (差分検知で失敗)"
-env = { SKIP = "pyfltr" }
 run = [
-  "uvx pre-commit run --all-files",
   "uvx pyfltr ci",
 ]
 
