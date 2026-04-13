@@ -7,7 +7,7 @@
   `git commit`時点でpre-commitフックが`pyfltr fast`を自動実行するため、Markdownのtextlint/markdownlint-cli2/prettierは確実にかかる
 - コードに手を入れた変更では、失敗の早期検出のため従来どおり事前に`mise run test`を回すことを推奨する
 
-### Claude Code向けコミット前検証
+## Claude Code向けコミット前検証
 
 Claude Codeがコミット前に検証する際は、`mise run test`の代わりに以下を実行する。JSON Lines出力によりLLMがツール別診断を効率的に解釈できる。
 
