@@ -1067,12 +1067,14 @@ impl Document {
         }
 
         if applied {
-            // 待っていたコンテナが解決されたら load_current でリトライして表示を更新
+            // バッチ完了後にキャッシュ無効化と先読み再スケジュールを1回だけ実行する。
+            // apply_container_result はファイルリスト更新のみ行い、これらを呼ばない。
+            self.invalidate_cache();
             if intent_resolved && self.file_list.current_index().is_some() {
                 let _ = self.load_current();
+            } else {
+                self.schedule_prefetch();
             }
-            // バッチ終了時に1回だけ FileListChanged を送信
-            // (apply_container_result は内部送信をしないので、ここでまとめて通知)
             let _ = self.event_sender.send(DocumentEvent::FileListChanged);
             self.send_navigation_changed();
         }
@@ -1106,8 +1108,9 @@ impl Document {
 
     /// ContainerResult をファイルリストに反映する
     /// `direction` は「展開位置 == 現在位置」だった場合の current_index 配置に使う。
-    /// `FileListChanged` の送信は行わず、呼び出し元 (process_expand_results 等) が
-    /// バッチ完了後にまとめて1回送信する。
+    /// キャッシュ無効化・先読み再スケジュール・`FileListChanged` の送信は行わず、
+    /// 呼び出し元 (process_expand_results / expand_all_pending_sync) が
+    /// バッチ完了後にまとめて1回実行する。
     fn apply_container_result(
         &mut self,
         index: usize,
@@ -1145,9 +1148,6 @@ impl Document {
                 self.container_states
                     .insert(container_path.to_path_buf(), ContainerState::Expanded);
 
-                // キャッシュと先読みをリセット
-                self.invalidate_cache();
-                self.schedule_prefetch();
                 Ok(())
             }
         }
