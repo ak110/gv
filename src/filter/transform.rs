@@ -225,14 +225,9 @@ pub fn resize(image: &DecodedImage, new_width: u32, new_height: u32) -> Result<D
         });
     }
     use fast_image_resize as fr;
-    let mut src_buf = image.data.clone();
-    let src_image = fr::images::Image::from_slice_u8(
-        image.width,
-        image.height,
-        &mut src_buf,
-        fr::PixelType::U8x4,
-    )
-    .context("リサイズ用ソース画像の作成に失敗")?;
+    let src_image =
+        fr::images::ImageRef::new(image.width, image.height, &image.data, fr::PixelType::U8x4)
+            .context("リサイズ用ソース画像の作成に失敗")?;
     let mut dst_image = fr::images::Image::new(new_width, new_height, fr::PixelType::U8x4);
     let options =
         fr::ResizeOptions::new().resize_alg(fr::ResizeAlg::Convolution(fr::FilterType::Lanczos3));

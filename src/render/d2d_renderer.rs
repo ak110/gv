@@ -239,21 +239,39 @@ impl D2DRenderer {
             return unsafe { self.get_or_create_bitmap(image) };
         }
 
-        // 縮小時はSuperSampling(モアレ・リンギング抑制)、拡大時はLanczos3
-        let is_shrink = target_width <= image.width && target_height <= image.height;
-        let resize_alg = if is_shrink {
-            fr::ResizeAlg::SuperSampling(fr::FilterType::Lanczos3, 2)
+        // 縮小率に応じた動的アルゴリズム選択:
+        //   拡大: Lanczos3（シャープネス重視）
+        //   軽度縮小 (50%以上): Mitchell（負のローブが小さくモアレ抑制）
+        //   大幅縮小 (50%未満): 多段階Mitchell→最終Lanczos3（エイリアシング防止）
+        let scale = (f64::from(target_width) / f64::from(image.width))
+            .min(f64::from(target_height) / f64::from(image.height));
+        let resized_data = if scale >= 1.0 {
+            fir_resize(
+                &image.data,
+                image.width,
+                image.height,
+                target_width,
+                target_height,
+                fr::ResizeAlg::Convolution(fr::FilterType::Lanczos3),
+            )?
+        } else if scale >= 0.5 {
+            fir_resize(
+                &image.data,
+                image.width,
+                image.height,
+                target_width,
+                target_height,
+                fr::ResizeAlg::Convolution(fr::FilterType::Mitchell),
+            )?
         } else {
-            fr::ResizeAlg::Convolution(fr::FilterType::Lanczos3)
+            fir_resize_multistage(
+                &image.data,
+                image.width,
+                image.height,
+                target_width,
+                target_height,
+            )?
         };
-        let resized_data = fir_resize(
-            &image.data,
-            image.width,
-            image.height,
-            target_width,
-            target_height,
-            resize_alg,
-        )?;
 
         let prescaled = DecodedImage {
             data: resized_data,
@@ -397,6 +415,9 @@ impl D2DRenderer {
             dpiY: 96.0,
         };
 
+        // SAFETY: CreateBitmapは (pitch * height) バイトを同期コピーする。pixelsは
+        // (TILE_SIZE * TILE_SIZE * 4) バイト確保済みで、pitch (= TILE_SIZE * 4) × TILE_SIZE
+        // = pixels.len() を満たす。戻り時点でpixelsの参照は不要。
         unsafe {
             let tile_bitmap = self
                 .render_target
@@ -627,10 +648,8 @@ fn fir_resize(
     dst_h: u32,
     resize_alg: fr::ResizeAlg,
 ) -> Result<Vec<u8>> {
-    let mut src_buf = src.to_vec();
-    let src_image =
-        fr::images::Image::from_slice_u8(src_w, src_h, &mut src_buf, fr::PixelType::U8x4)
-            .context("リサイズ用ソース画像作成失敗")?;
+    let src_image = fr::images::ImageRef::new(src_w, src_h, src, fr::PixelType::U8x4)
+        .context("リサイズ用ソース画像作成失敗")?;
     let mut dst_image = fr::images::Image::new(dst_w, dst_h, fr::PixelType::U8x4);
     let options = fr::ResizeOptions::new().resize_alg(resize_alg);
     let mut resizer = fr::Resizer::new();
@@ -638,6 +657,44 @@ fn fir_resize(
         .resize(&src_image, &mut dst_image, &options)
         .context("画像リサイズ失敗")?;
     Ok(dst_image.into_vec())
+}
+
+/// 大幅縮小（50%未満）時の多段階ダウンスケーリング
+///
+/// 半分ずつConvolution(Mitchell)で繰り返し縮小し、最終段でConvolution(Lanczos3)を適用する。
+/// 各段で十分なサンプリングが行われるため、単一パスでは避けられないエイリアシングを防止する。
+/// スクリーントーン等の規則的パターンで特に効果的。
+fn fir_resize_multistage(
+    src: &[u8],
+    src_w: u32,
+    src_h: u32,
+    dst_w: u32,
+    dst_h: u32,
+) -> Result<Vec<u8>> {
+    let mitchell = fr::ResizeAlg::Convolution(fr::FilterType::Mitchell);
+
+    let mut current_data = src.to_vec();
+    let mut cur_w = src_w;
+    let mut cur_h = src_h;
+
+    // 半分ずつMitchellで縮小（目標サイズの2倍より大きい間）
+    while cur_w > dst_w * 2 && cur_h > dst_h * 2 {
+        let next_w = (cur_w / 2).max(dst_w);
+        let next_h = (cur_h / 2).max(dst_h);
+        current_data = fir_resize(&current_data, cur_w, cur_h, next_w, next_h, mitchell)?;
+        cur_w = next_w;
+        cur_h = next_h;
+    }
+
+    // 最終段: Lanczos3でシャープに仕上げ
+    fir_resize(
+        &current_data,
+        cur_w,
+        cur_h,
+        dst_w,
+        dst_h,
+        fr::ResizeAlg::Convolution(fr::FilterType::Lanczos3),
+    )
 }
 
 #[cfg(test)]
@@ -654,7 +711,7 @@ mod tests {
             4,
             2,
             2,
-            fr::ResizeAlg::SuperSampling(fr::FilterType::Lanczos3, 2),
+            fr::ResizeAlg::Convolution(fr::FilterType::Mitchell),
         )
         .unwrap();
         assert_eq!(result.len(), 2 * 2 * 4);
@@ -686,7 +743,7 @@ mod tests {
             4,
             2,
             2,
-            fr::ResizeAlg::SuperSampling(fr::FilterType::Lanczos3, 2),
+            fr::ResizeAlg::Convolution(fr::FilterType::Mitchell),
         )
         .unwrap();
         for pixel in result.chunks_exact(4) {
@@ -714,7 +771,7 @@ mod tests {
             4,
             2,
             2,
-            fr::ResizeAlg::SuperSampling(fr::FilterType::Lanczos3, 2),
+            fr::ResizeAlg::Convolution(fr::FilterType::Mitchell),
         )
         .unwrap();
         // alpha境界付近のピクセルで、RGB値が不自然に白くならないことを確認
@@ -727,6 +784,40 @@ mod tests {
                     "ハロー検出: pixel={pixel:?}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn fir_resize_multistage_output_size() {
+        // 16x16 → 2x2: 多段階ダウンスケーリングの出力サイズ検証
+        let src: Vec<u8> = [100, 150, 200, 255].repeat(16 * 16);
+        let result = fir_resize_multistage(&src, 16, 16, 2, 2).unwrap();
+        assert_eq!(result.len(), 2 * 2 * 4);
+    }
+
+    #[test]
+    fn fir_resize_multistage_uniform_color() {
+        // 均一色画像の多段階縮小 → 結果も同じ色
+        let src: Vec<u8> = [80, 120, 200, 255].repeat(32 * 32);
+        let result = fir_resize_multistage(&src, 32, 32, 4, 4).unwrap();
+        for pixel in result.chunks_exact(4) {
+            // Mitchellの丸め誤差を許容（±1）
+            assert!(
+                (pixel[0] as i16 - 80).unsigned_abs() <= 1,
+                "R: {}",
+                pixel[0]
+            );
+            assert!(
+                (pixel[1] as i16 - 120).unsigned_abs() <= 1,
+                "G: {}",
+                pixel[1]
+            );
+            assert!(
+                (pixel[2] as i16 - 200).unsigned_abs() <= 1,
+                "B: {}",
+                pixel[2]
+            );
+            assert_eq!(pixel[3], 255);
         }
     }
 }
