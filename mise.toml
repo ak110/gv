@@ -36,8 +36,7 @@ run = "cargo clean"
 [tasks.format]
 description = "フォーマット + 軽量lint（開発時の手動実行用。自動修正あり）"
 run = [
-  "uvx pyfltr fix || true",
-  "uvx pre-commit run --all-files || uvx pre-commit run --all-files",
+  "uvx pyfltr fast",
 ]
 
 [tasks.test]
