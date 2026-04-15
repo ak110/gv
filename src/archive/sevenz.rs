@@ -30,14 +30,13 @@ impl ArchiveHandler for SevenZHandler {
     ) -> Result<Vec<ExtractedEntry>> {
         let file = File::open(archive_path)
             .with_context(|| format!("アーカイブを開けない: {}", archive_path.display()))?;
-        let len = file.metadata()?.len();
 
         let mut results: Vec<ExtractedEntry> = Vec::new();
         let target_dir = target_dir.to_path_buf();
         let registry = Arc::clone(&self.registry);
 
-        // SevenZReaderで各エントリをコールバック処理
-        let mut reader = sevenz_rust::SevenZReader::new(file, len, sevenz_rust::Password::empty())
+        // ArchiveReaderで各エントリをコールバック処理
+        let mut reader = sevenz_rust2::ArchiveReader::new(file, sevenz_rust2::Password::empty())
             .with_context(|| format!("7zアーカイブ読み取り失敗: {}", archive_path.display()))?;
 
         reader
