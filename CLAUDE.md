@@ -21,10 +21,3 @@
 ## リリースビルド
 
 - 作業完了時、コミットと並行してバックグラウンドでリリースビルドも実行する（完了を待つ必要は無い。ユーザーによる動作確認をスムーズにするため）
-
-## 関連ドキュメント
-
-- @README.md
-- @docs/development/concept.md
-- @docs/development/architecture.md
-- @docs/development/development.md
