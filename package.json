@@ -17,5 +17,11 @@
     "textlint-rule-preset-ja-technical-writing": "^12.0.2",
     "textlint-rule-preset-jtf-style": "^3.0.3",
     "vitepress": "^1.6.4"
+  },
+  "pnpm": {
+    "overrides": {
+      "vite": "^6.4.2",
+      "esbuild": "^0.25.0"
+    }
   }
 }
