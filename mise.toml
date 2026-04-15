@@ -17,6 +17,13 @@ run = [
   "git config --unset core.hooksPath || true",
   "uvx pre-commit install",
 ]
+run_windows = [
+  "rustup component add rustfmt clippy",
+  "cargo install cargo-edit cargo-deny",
+  "pnpm install",
+  "git config --unset core.hooksPath & exit /b 0",
+  "uvx pre-commit install",
+]
 
 [tasks.setup-ci]
 description = "CI環境のセットアップ (cargo install をスキップ)"
