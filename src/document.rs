@@ -1130,16 +1130,9 @@ impl Document {
 
     /// フォルダを開く (先頭画像を表示)
     pub fn open_folder(&mut self, folder: &Path) -> Result<()> {
-        let folder = Self::canonicalize(folder)?;
-        self.cleanup_archive_temp();
-        self.invalidate_cache();
-        self.file_list.populate_from_folder(&folder)?;
-
-        if self.file_list.len() > 0 {
-            self.file_list.navigate_first();
-        }
-        let _ = self.event_sender.send(DocumentEvent::FileListChanged);
-        self.load_current()
+        // open_multiple() は read_dir エラーを無視するため、委譲前に確認して確実に伝播させる。
+        std::fs::read_dir(folder)?;
+        self.open_multiple(&[folder.to_path_buf()])
     }
 
     /// 相対移動
@@ -2052,6 +2045,38 @@ mod tests {
                 );
             }
             other => panic!("展開後の先頭が ArchiveEntry ではない: {other:?}"),
+        }
+
+        cleanup_test_dir(&dir);
+    }
+
+    #[test]
+    fn open_folder_with_archives() {
+        // ZIPが含まれるフォルダをopen_folder()で開くと、ZIP内のエントリがfile_listに登録される。
+        let dir = setup_test_dir("folder_with_archives", 0);
+        let zip1 = dir.join("a.zip");
+        let zip2 = dir.join("b.zip");
+        create_test_zip(&zip1, 2);
+        create_test_zip(&zip2, 3);
+
+        let (mut doc, _rx) = test_document();
+        doc.open_folder(&dir).unwrap();
+
+        // 展開前: a.zip即展開(2エントリ) + b.zipプレースホルダ(1エントリ) = 3エントリ
+        assert_eq!(doc.file_list().len(), 3);
+        assert_eq!(doc.file_list().current_index(), Some(0));
+
+        // 全展開後: a.zip(2) + b.zip(3) = 5エントリ
+        doc.expand_all_pending_sync();
+        assert_eq!(doc.file_list().len(), 5);
+
+        // 先頭エントリがa.zip由来のArchiveEntryであること
+        let first = &doc.file_list().files()[0];
+        match &first.source {
+            FileSource::ArchiveEntry { archive, .. } => {
+                assert_eq!(archive.file_name(), Some(std::ffi::OsStr::new("a.zip")));
+            }
+            other => panic!("先頭エントリがArchiveEntryではない: {other:?}"),
         }
 
         cleanup_test_dir(&dir);
