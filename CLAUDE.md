@@ -3,6 +3,7 @@
 ## 開発手順
 
 - rust, node, pnpmなどはmise経由で実行する
+- リリース手順: [docs/development/development.md](docs/development/development.md) 参照
 - コミット前の検証方法: `uv run pyfltr run-for-agent`
   - ドキュメントなどのみの変更の場合は省略可（pre-commitで実行されるため）
   - テストコードの単体実行なども極力 `uv run pyfltr run-for-agent <path>` を使う（pytestを直接呼び出さない）
