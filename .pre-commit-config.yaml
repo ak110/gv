@@ -29,3 +29,9 @@ repos:
         types_or: [rust, markdown, toml, yaml, javascript, ts]
         require_serial: true
         language: system
+      - id: vitepress-build
+        name: VitePress build
+        entry: pnpm run docs:build
+        language: system
+        pass_filenames: false
+        files: ^docs/.*\.(md|ts|json)$|^docs/\.vitepress/
