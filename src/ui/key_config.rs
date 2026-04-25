@@ -353,6 +353,8 @@ impl KeyConfig {
 
         // [list]
         bind(&mut m, "F4", Action::ToggleFileList);
+        bind(&mut m, "Ctrl+Shift+S", Action::ShuffleAll);
+        bind(&mut m, "Ctrl+Alt+S", Action::ShuffleGroups);
 
         // [slideshow]
         bind(&mut m, "Shift+Space", Action::SlideshowToggle);

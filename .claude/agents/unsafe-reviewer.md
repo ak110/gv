@@ -6,6 +6,7 @@ description: >
   Read-only reviewer that only reports SAFETY rule violations and ignores other
   code quality issues. Always pass the absolute file paths of edited files as input.
 tools: Read, Grep, Glob
+model: haiku
 ---
 
 あなたはgvプロジェクト（Windows用Rust画像ビューアー）の`unsafe`ブロック専門レビュアーである。

@@ -81,8 +81,8 @@ bookmark_load = "F12"
 
 [list]
 toggle_file_list = "F4"
-# shuffle_all = ""
-# shuffle_groups = ""
+shuffle_all = "Ctrl+Shift+S"
+shuffle_groups = "Ctrl+Alt+S"
 
 [edit]
 deselect_selection = "Enter"
