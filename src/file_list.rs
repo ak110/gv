@@ -324,10 +324,13 @@ impl FileList {
 
     /// 未展開コンテナのプレースホルダを展開結果で置換する
     ///
-    /// 挿入後にリスト全体を `sort_order` で再ソートし、論理パス順を全体で維持する。
+    /// 副次処理ではファイル一覧全体を自動再ソートしない方針のため、ここでも全体再ソートは行わない。
+    /// プレースホルダは元々ファイル一覧上の固有位置を持つため、その位置に展開エントリを挿入するだけで
+    /// シャッフルを含むユーザー指定の現在順序を破壊しない。展開エントリ群の内部のみ「コンテナを開いた直後の
+    /// 初期表示順序」として `sort_order` でソートする (フォルダ初期構築と同じ扱い)。
+    ///
     /// `direction` は「展開位置 == 現在位置」だった場合の current_index 配置に使う:
-    /// `Forward` なら展開エントリの先頭、`Backward` なら末尾を再ソート後の位置で復元する。
-    /// 展開位置が現在位置でない場合は、現在ファイルそのものを再ソート後の位置に復元する。
+    /// `Forward` なら展開エントリの先頭、`Backward` なら末尾を選ぶ。
     pub fn expand_container_at(
         &mut self,
         index: usize,
@@ -338,47 +341,40 @@ impl FileList {
             return;
         }
 
+        // 展開エントリ群内部のみ初期表示順序としてソートする (全体は再ソートしない)
+        let order = self.sort_order;
+        let mut entries = entries;
+        entries.sort_by(|a, b| Self::compare_by_sort_order(a, b, order));
+
         let entries_len = entries.len();
         let current = self.current_index;
-        let current_was_at_expand = current == Some(index);
 
-        // 再ソート後の current 復元用に (path, source) を確定する
-        // - 展開位置 == current かつエントリあり: NavigationDirection に従い展開エントリの先頭/末尾を選ぶ
-        // - 展開位置 != current: 現在ファイルそのものを復元対象とする
-        // - 展開位置 == current かつエントリ空: None (後続の特別処理に委ねる)
-        let restore_target: Option<(PathBuf, FileSource)> = if current_was_at_expand {
-            if entries_len == 0 {
-                None
-            } else {
-                let target = match direction {
-                    NavigationDirection::Forward => &entries[0],
-                    NavigationDirection::Backward => &entries[entries_len - 1],
-                };
-                Some((target.path.clone(), target.source.clone()))
-            }
-        } else {
-            current
-                .and_then(|i| self.files.get(i))
-                .map(|f| (f.path.clone(), f.source.clone()))
-        };
-
-        // プレースホルダを削除して展開結果を挿入
+        // プレースホルダを削除して展開結果を挿入する
         self.files.splice(index..=index, entries);
 
-        // 全体を再ソートして論理パス順を保つ
-        let order = self.sort_order;
-        self.files
-            .sort_by(|a, b| Self::compare_by_sort_order(a, b, order));
-
-        // current_index 復元
-        if let Some((path, source)) = restore_target {
-            self.restore_current_position(&path, &source);
-        } else if self.files.is_empty() {
-            self.current_index = None;
-        } else if let Some(c) = current {
-            // 展開位置 == current かつエントリ空: remove_at 相当のクランプ
-            self.current_index = Some(c.min(self.files.len() - 1));
-        }
+        // current_index は単純なインデックス算術で更新する。
+        // splice により index..(index + entries_len) が新エントリで占められ、
+        // それ以降の既存ファイルは (entries_len - 1) だけずれる (削除1個・挿入N個分)。
+        self.current_index = match current {
+            None => None,
+            _ if self.files.is_empty() => None,
+            Some(c) if c < index => Some(c),
+            Some(c) if c == index => {
+                if entries_len == 0 {
+                    // 展開対象が現在位置でエントリ空: remove_at 相当のクランプ
+                    Some(c.min(self.files.len() - 1))
+                } else {
+                    Some(match direction {
+                        NavigationDirection::Forward => index,
+                        NavigationDirection::Backward => index + entries_len - 1,
+                    })
+                }
+            }
+            Some(c) => {
+                // c > index: 削除1個・挿入N個分のずれを反映 (entries_len == 0 なら -1)
+                Some(c + entries_len - 1)
+            }
+        };
     }
 
     /// 操作前後で現在位置を維持するヘルパー
@@ -584,10 +580,11 @@ impl FileList {
     }
 
     /// マーク済みファイルのパスを移動先ディレクトリに更新する
-    /// 各エントリを `dest_dir/元ファイル名` で再構築し、マーク状態は維持する
+    /// 各エントリを `dest_dir/元ファイル名` で再構築し、マーク状態は維持する。
+    ///
+    /// 副次処理ではファイル一覧全体を自動再ソートしない方針のため、リスト順序および現在位置は
+    /// そのまま維持し、対象エントリのフィールドのみ書き換える。
     pub fn update_marked_paths(&mut self, dest_dir: &Path) -> Result<()> {
-        let current_info = self.current().map(|f| (f.path.clone(), f.source.clone()));
-
         for info in &mut self.files {
             if !info.marked {
                 continue;
@@ -604,12 +601,6 @@ impl FileList {
             info.file_size = new_info.file_size;
             info.modified = new_info.modified;
             // marked状態は維持 (trueのまま)
-        }
-
-        // 再ソートして現在位置を復元
-        self.sort(self.sort_order);
-        if let Some((path, source)) = current_info {
-            self.restore_current_position(&path, &source);
         }
         Ok(())
     }
@@ -1440,10 +1431,15 @@ mod tests {
         fl.expand_container_at(1, entries, NavigationDirection::Forward);
 
         assert_eq!(fl.len(), 5);
-        // 全体は論理パス順で再ソートされる (a.zip, c.zip, pending.zip)
-        // Forward なので展開エントリの先頭 p1.png が現在位置として復元される
+        // プレースホルダ位置に展開エントリが挿入され、全体順序は維持される
+        let names: Vec<&str> = fl.files.iter().map(|f| f.file_name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["a1.png", "p1.png", "p2.png", "p3.png", "c1.png"]
+        );
+        // Forward なので展開エントリの先頭 p1.png が現在位置となる
         assert_eq!(fl.current().unwrap().file_name, "p1.png");
-        assert_eq!(fl.current_index(), Some(2));
+        assert_eq!(fl.current_index(), Some(1));
     }
 
     #[test]
@@ -1463,9 +1459,14 @@ mod tests {
         fl.expand_container_at(1, entries, NavigationDirection::Backward);
 
         assert_eq!(fl.len(), 5);
-        // Backward なので展開エントリの末尾 p3.png が現在位置として復元される
+        let names: Vec<&str> = fl.files.iter().map(|f| f.file_name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["a1.png", "p1.png", "p2.png", "p3.png", "c1.png"]
+        );
+        // Backward なので展開エントリの末尾 p3.png が現在位置となる
         assert_eq!(fl.current().unwrap().file_name, "p3.png");
-        assert_eq!(fl.current_index(), Some(4));
+        assert_eq!(fl.current_index(), Some(3));
     }
 
     #[test]
@@ -1486,9 +1487,15 @@ mod tests {
         fl.expand_container_at(0, entries, NavigationDirection::Forward);
 
         assert_eq!(fl.len(), 5);
-        // 全体再ソート後 (c.zip < pending.zip) でも現在ファイル c2.png が再ソート後の位置に復元される
+        // プレースホルダ位置に展開エントリが挿入され、それ以降の既存ファイルが entries_len - 1 だけずれる
+        let names: Vec<&str> = fl.files.iter().map(|f| f.file_name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["p1.png", "p2.png", "p3.png", "c1.png", "c2.png"]
+        );
+        // 現在ファイル c2.png は維持され、index は 2 → 4 にずれる (削除1個・挿入3個)
         assert_eq!(fl.current().unwrap().file_name, "c2.png");
-        assert_eq!(fl.current_index(), Some(1));
+        assert_eq!(fl.current_index(), Some(4));
     }
 
     /// テスト用に任意の `FileSource` から `FileInfo` を作るヘルパー。
@@ -1759,8 +1766,9 @@ mod tests {
     }
 
     #[test]
-    fn expand_container_at_resorts_in_size_order() {
-        // Size 順でソート中にコンテナ展開が起きると、展開後も全体が Size 順 (同値時パス順) で並ぶ
+    fn expand_container_at_sorts_entries_internally_by_sort_order() {
+        // 全体は再ソートされないが、展開エントリ群の内部のみ初期表示順序として `sort_order` でソートされる。
+        // ここでは Size 順でソート中の状態に対し、入力順とは異なる Size のエントリを与えて確認する。
         let registry = test_registry();
         let mut fl = FileList::new(registry);
         let now = std::time::SystemTime::UNIX_EPOCH;
@@ -1789,24 +1797,17 @@ mod tests {
         ));
 
         fl.sort(SortOrder::Size);
-        // 期待初期順: pending(0), a(100), c(200), b(300)
+        // 初期順 (Size): pending(0), a(100), c(200), b(300)
         let pending_index = fl
             .files
             .iter()
             .position(|f| matches!(f.source, FileSource::PendingContainer { .. }))
             .unwrap();
+        assert_eq!(pending_index, 0);
         fl.navigate_to(pending_index);
 
+        // 入力順は意図的に Size 降順にしておく (entry2 → entry1)
         let entries = vec![
-            make_file_info_with_source(
-                FileSource::ArchiveEntry {
-                    archive: PathBuf::from("/pending.zip"),
-                    entry: "entry1.png".to_string(),
-                    on_demand: false,
-                },
-                150,
-                now,
-            ),
             make_file_info_with_source(
                 FileSource::ArchiveEntry {
                     archive: PathBuf::from("/pending.zip"),
@@ -1816,19 +1817,29 @@ mod tests {
                 250,
                 now,
             ),
+            make_file_info_with_source(
+                FileSource::ArchiveEntry {
+                    archive: PathBuf::from("/pending.zip"),
+                    entry: "entry1.png".to_string(),
+                    on_demand: false,
+                },
+                150,
+                now,
+            ),
         ];
 
         fl.expand_container_at(pending_index, entries, NavigationDirection::Forward);
 
-        // 展開後 Size 順: a(100), entry1(150), c(200), entry2(250), b(300)
+        // プレースホルダ位置 (先頭) に展開エントリが Size 昇順で挿入され、それ以降の既存ファイルはそのまま
         let sizes: Vec<u64> = fl.files.iter().map(|f| f.file_size).collect();
-        assert_eq!(sizes, vec![100, 150, 200, 250, 300]);
+        assert_eq!(sizes, vec![150, 250, 100, 200, 300]);
 
-        // Forward なので展開エントリ先頭 entry1.png が現在位置として復元される
+        // Forward なので展開エントリ先頭 entry1.png が現在位置となる
         assert_eq!(
             fl.current().unwrap().source.display_path(),
             "/pending.zip/entry1.png"
         );
+        assert_eq!(fl.current_index(), Some(0));
     }
 
     #[test]
@@ -1863,8 +1874,181 @@ mod tests {
         assert_eq!(unmarked[0].file_name, "b.png");
         assert!(unmarked[0].path.starts_with(&src_dir));
 
-        // 現在位置がb.pngを指している (復元されている)
+        // 順序を維持するため、現在位置の index は変わらず b.png を指したまま
         assert_eq!(fl.current().unwrap().file_name, "b.png");
+
+        cleanup(&src_dir);
+        cleanup(&dest_dir);
+    }
+
+    #[test]
+    fn expand_container_at_after_shuffle_groups_keeps_order() {
+        // shuffle_groups でグループ順を入れ替えた後にコンテナ展開しても、
+        // 展開エントリが元のプレースホルダ位置に挿入され、それ以外の順序は維持される。
+        let registry = test_registry();
+        let mut fl = FileList::new(registry);
+        fl.push(make_archive_file_info("a.zip", "a1.png", "a1.png"));
+        fl.push(make_archive_file_info("a.zip", "a2.png", "a2.png"));
+        fl.push(make_pending_container_info("p.zip"));
+        fl.push(make_archive_file_info("c.zip", "c1.png", "c1.png"));
+        fl.push(make_archive_file_info("c.zip", "c2.png", "c2.png"));
+        fl.navigate_to(0);
+        fl.shuffle_groups();
+
+        // シャッフル後の順序とプレースホルダ位置を記録
+        let pre_paths: Vec<String> = fl.files.iter().map(|f| f.source.display_path()).collect();
+        let pending_index = fl
+            .files
+            .iter()
+            .position(|f| f.source.is_pending_container())
+            .unwrap();
+        // current 位置検証のため、展開対象 (pending) を選択した状態で展開する
+        fl.navigate_to(pending_index);
+
+        let entries = vec![
+            make_archive_file_info("p.zip", "p1.png", "p1.png"),
+            make_archive_file_info("p.zip", "p2.png", "p2.png"),
+        ];
+        fl.expand_container_at(pending_index, entries, NavigationDirection::Forward);
+
+        // 展開エントリがプレースホルダ位置に挿入され、それ以外の相対順序は維持される
+        let post_paths: Vec<String> = fl.files.iter().map(|f| f.source.display_path()).collect();
+        let mut expected = pre_paths.clone();
+        expected.splice(
+            pending_index..=pending_index,
+            vec!["p.zip/p1.png".to_string(), "p.zip/p2.png".to_string()],
+        );
+        assert_eq!(post_paths, expected);
+
+        // Forward なので展開エントリの先頭が現在位置となる
+        assert_eq!(fl.current_index(), Some(pending_index));
+        assert_eq!(fl.current().unwrap().file_name, "p1.png");
+    }
+
+    #[test]
+    fn expand_container_at_after_shuffle_all_keeps_order() {
+        // shuffle_all で全体をシャッフルした後にコンテナ展開しても、
+        // 展開エントリが元のプレースホルダ位置に挿入され、それ以外の順序は維持される。
+        let registry = test_registry();
+        let mut fl = FileList::new(registry);
+        fl.push(make_archive_file_info("a.zip", "a1.png", "a1.png"));
+        fl.push(make_archive_file_info("a.zip", "a2.png", "a2.png"));
+        fl.push(make_pending_container_info("p.zip"));
+        fl.push(make_archive_file_info("c.zip", "c1.png", "c1.png"));
+        fl.push(make_archive_file_info("c.zip", "c2.png", "c2.png"));
+        fl.navigate_to(0);
+        fl.shuffle_all();
+
+        let pre_paths: Vec<String> = fl.files.iter().map(|f| f.source.display_path()).collect();
+        let pending_index = fl
+            .files
+            .iter()
+            .position(|f| f.source.is_pending_container())
+            .unwrap();
+        fl.navigate_to(pending_index);
+
+        let entries = vec![
+            make_archive_file_info("p.zip", "p1.png", "p1.png"),
+            make_archive_file_info("p.zip", "p2.png", "p2.png"),
+        ];
+        fl.expand_container_at(pending_index, entries, NavigationDirection::Forward);
+
+        let post_paths: Vec<String> = fl.files.iter().map(|f| f.source.display_path()).collect();
+        let mut expected = pre_paths.clone();
+        expected.splice(
+            pending_index..=pending_index,
+            vec!["p.zip/p1.png".to_string(), "p.zip/p2.png".to_string()],
+        );
+        assert_eq!(post_paths, expected);
+
+        assert_eq!(fl.current_index(), Some(pending_index));
+        assert_eq!(fl.current().unwrap().file_name, "p1.png");
+    }
+
+    #[test]
+    fn expand_container_at_with_multiple_pending_containers_does_not_mix() {
+        // 複数の PendingContainer が含まれる状態で特定の PendingContainer を展開しても、
+        // 展開エントリは他の PendingContainer や非コンテナファイルと混ざらず、元のプレースホルダ位置に挿入される。
+        // 本指摘の核心ケース: [/a/e.zip, /a/b/c.zip(plac), /a/b/d.zip(plac)] で /a/b/c.zip を展開した結果が
+        // [/a/e.zip, c.zip 中身, /a/b/d.zip(plac)] であり、論理パス順への巻き戻しが起きないことを確認する。
+        let registry = test_registry();
+        let mut fl = FileList::new(registry);
+        let now = std::time::SystemTime::UNIX_EPOCH;
+        fl.push(make_file_info_with_source(
+            FileSource::File(PathBuf::from("/a/e.zip")),
+            100,
+            now,
+        ));
+        fl.push(make_pending_container_info("/a/b/c.zip"));
+        fl.push(make_pending_container_info("/a/b/d.zip"));
+        fl.navigate_to(1); // /a/b/c.zip 上
+
+        let entries = vec![
+            make_archive_file_info("/a/b/c.zip", "x.png", "x.png"),
+            make_archive_file_info("/a/b/c.zip", "y.png", "y.png"),
+        ];
+        fl.expand_container_at(1, entries, NavigationDirection::Forward);
+
+        assert_eq!(fl.len(), 4);
+        // index 0: 元の通常ファイル (位置維持)
+        assert!(matches!(fl.files[0].source, FileSource::File(_)));
+        assert_eq!(fl.files[0].path, PathBuf::from("/a/e.zip"));
+        // index 1, 2: 展開エントリ (プレースホルダ位置に挿入)
+        assert_eq!(fl.files[1].file_name, "x.png");
+        assert_eq!(fl.files[2].file_name, "y.png");
+        // index 3: もう一つの PendingContainer は未展開のままで、展開エントリと混ざっていない
+        match &fl.files[3].source {
+            FileSource::PendingContainer { container_path } => {
+                assert_eq!(container_path, &PathBuf::from("/a/b/d.zip"));
+            }
+            _ => panic!("index 3 は未展開の PendingContainer であるべき"),
+        }
+
+        assert_eq!(fl.current_index(), Some(1));
+        assert_eq!(fl.current().unwrap().file_name, "x.png");
+    }
+
+    #[test]
+    fn update_marked_paths_after_shuffle_keeps_order() {
+        // シャッフル後にマーク済みファイルのパス更新を行ってもリスト順序が変わらない。
+        let src_dir = std::env::temp_dir().join("gv_test_fl_update_after_shuffle_src");
+        let dest_dir = std::env::temp_dir().join("gv_test_fl_update_after_shuffle_dest");
+        create_test_files(&src_dir, &["a.png", "b.png", "c.png", "d.png", "e.png"]);
+        let _ = std::fs::create_dir_all(&dest_dir);
+        // 移動先にもファイルを作成 (FileInfo::from_path が成功するように)
+        create_test_files(&dest_dir, &["b.png", "d.png"]);
+
+        let mut fl = FileList::new(test_registry());
+        fl.populate_from_folder(&src_dir).unwrap();
+        fl.shuffle_all();
+
+        // b.png と d.png をマーク
+        for i in 0..fl.len() {
+            if fl.files[i].file_name == "b.png" || fl.files[i].file_name == "d.png" {
+                fl.mark_at(i);
+            }
+        }
+
+        // シャッフル後のリスト順 (ファイル名の並び) を記録する。
+        // update_marked_paths は path だけ書き換え file_name は変えないので、順序検証の指紋として使える。
+        let pre_names: Vec<String> = fl.files.iter().map(|f| f.file_name.clone()).collect();
+
+        fl.update_marked_paths(&dest_dir).unwrap();
+
+        let post_names: Vec<String> = fl.files.iter().map(|f| f.file_name.clone()).collect();
+        assert_eq!(post_names, pre_names, "シャッフル順が維持されるべき");
+
+        // マーク済みは dest_dir、非マークは src_dir のままであること
+        for f in &fl.files {
+            if f.marked {
+                assert!(
+                    f.path.starts_with(&dest_dir),
+                    "マーク済みは dest_dir に移っている"
+                );
+            } else {
+                assert!(f.path.starts_with(&src_dir), "非マークは src_dir のまま");
+            }
+        }
 
         cleanup(&src_dir);
         cleanup(&dest_dir);
