@@ -35,8 +35,11 @@ def main() -> int:
         cmd = obj.get("command", "?")
         msg = (obj.get("message") or "no message").replace("\n", " / ").replace("\r", "")
         # GitHub Actions の ::error:: 1件あたり実用上 4KB まで詰められるため、安全側で 4000 文字に切る。
+        # pyfltr 側で既にハイブリッド (head + 中略 + tail) 切り詰めが効いているが、
+        # cargo-clippy のように冒頭がコンパイルログで埋まるツールでは肝心の lint 行が
+        # tail 側に残るため、ここでは末尾側を残す方針にする。
         if len(msg) > 4000:
-            msg = msg[:4000] + "…"
+            msg = "…" + msg[-4000:]
         print(f"::error title=pyfltr {cmd} ({status})::{msg}")
     return 0
 
