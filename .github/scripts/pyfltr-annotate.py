@@ -34,8 +34,9 @@ def main() -> int:
             continue
         cmd = obj.get("command", "?")
         msg = (obj.get("message") or "no message").replace("\n", " / ").replace("\r", "")
-        if len(msg) > 800:
-            msg = msg[:800] + "…"
+        # GitHub Actions の ::error:: 1件あたり実用上 4KB まで詰められるため、安全側で 4000 文字に切る。
+        if len(msg) > 4000:
+            msg = msg[:4000] + "…"
         print(f"::error title=pyfltr {cmd} ({status})::{msg}")
     return 0
 
