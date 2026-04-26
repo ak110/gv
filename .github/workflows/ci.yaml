@@ -39,7 +39,18 @@ jobs:
         run: |
           # 失敗時のみ動かすため `set +e` で個々の補助コマンドが落ちても全体を継続させる。
           set +e
+          echo "::group::diagnostic step start"
+          echo "pwd: $(pwd)"
+          echo "ls pyfltr-output.jsonl:"
+          ls -la pyfltr-output.jsonl || echo "  (not found)"
+          echo "::endgroup::"
+          echo "::group::pyfltr-annotate.py output"
           python .github/scripts/pyfltr-annotate.py pyfltr-output.jsonl
+          rc=$?
+          echo "  python exit: $rc"
+          echo "::endgroup::"
+          echo "::group::pyfltr show-run latest"
           uvx pyfltr show-run latest
+          echo "::endgroup::"
           exit 0
       - run: pinact run --check
