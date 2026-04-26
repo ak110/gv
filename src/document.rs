@@ -673,15 +673,13 @@ impl Document {
                 .and_then(|n| n.to_str())
                 .unwrap_or("")
                 .to_string();
-            let (file_size, modified) = std::fs::metadata(path).map_or(
-                (0, std::time::SystemTime::UNIX_EPOCH),
-                |m| {
+            let (file_size, modified) =
+                std::fs::metadata(path).map_or((0, std::time::SystemTime::UNIX_EPOCH), |m| {
                     (
                         m.len(),
                         m.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH),
                     )
-                },
-            );
+                });
             let info = crate::file_info::FileInfo {
                 path: path.clone(),
                 source: FileSource::PendingContainer {
