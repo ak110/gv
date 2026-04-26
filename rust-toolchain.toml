@@ -1,0 +1,9 @@
+[toolchain]
+# Rust 1.95 で clippy::collapsible_match / while_let_loop などが if-else 以外の単純な
+# パターンにも誤検知 / 強い指摘をする変更が入っており、CI の挙動をローカルと揃える
+# ため、プロジェクト全体で 1.94 系列を固定する。MSRV (Cargo.toml `rust-version`) と一致。
+# 具体的なパッチも mise.toml と揃えて pin することで mise の partial version 解決ミスを
+# 回避する。
+channel = "1.94.1"
+profile = "minimal"
+components = ["rustfmt", "clippy"]

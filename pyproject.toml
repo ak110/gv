@@ -6,6 +6,15 @@ preset = "latest"
 rust = true
 js-runner = "pnpm"
 prettier = true
+# CI 失敗時のアノテーションに乗せるため、jsonl の message 切り詰め上限を緩和する。
+# 既定 2000 文字だと cargo-clippy のコンパイルログが先頭を埋め、肝心の lint 行が
+# 中略マーカーの内側に消えてしまうため、頭/尾の両側にエラー詳細が残るよう拡張する。
+jsonl-message-max-chars = 12000
+jsonl-message-max-lines = 200
+# cargo-deny は mise registry に存在しないため `mise exec cargo-deny@latest` だと
+# 解決に失敗する。CI では taiki-e/install-action が PATH に置くので runner=direct で
+# 直接呼び出させる。
+cargo-deny-runner = "direct"
 
 extend-exclude = [
     "target",

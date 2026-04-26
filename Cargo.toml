@@ -74,6 +74,16 @@ opt-level = 1
 
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }
+# clippy 1.95 で `collapsible_match` が if-else 以外の単純な if にも誤検知する不具合あり。
+# (例: `WM_SETCURSOR => { if app.on_set_cursor() { ... } }` を guard に潰す提案)
+# 対象はガード化で意味が変わらないものも多いが、上流の false-positive 修正を待つため
+# 一旦この lint は許可する。
+collapsible_match = "allow"
+# `loop { let Some(x) = expr else break; ... }` を `while let Some(x) = expr` に
+# 提案する lint だが、ループ本体で expr 由来のフィールドを &mut self で書き換える
+# パターンでは while-let の借用が長く生き残ってしまい単純な書き換えができない。
+# document.rs `process_expand_results` がまさに該当するため、この lint は許可する。
+while_let_loop = "allow"
 cast_possible_truncation = "allow"
 cast_possible_wrap = "allow"
 cast_precision_loss = "allow"
