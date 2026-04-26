@@ -1,6 +1,9 @@
 [tools]
 uv = "latest"
-rust = "1.94"
+# Windows CI で `rustup component add` が異なるツールチェーンに当たり cargo-clippy が
+# 見つからない事象が出ていたため、mise の rust プラグイン経由で components を一緒に
+# インストールする (mise が解決した実体ツールチェーン上に確実に component を入れる)。
+rust = { version = "1.94", components = "rustfmt,clippy" }
 node = "lts"
 pnpm = "latest"
 pinact = "latest"
@@ -10,15 +13,14 @@ typos = "latest"
 
 [tasks.setup]
 description = "開発環境のセットアップ"
+# rustfmt / clippy の component インストールは mise の `[tools].rust` 側に寄せている。
 run = [
-  "rustup component add rustfmt clippy",
   "cargo install cargo-edit cargo-deny",
   "pnpm install",
   "git config --unset core.hooksPath || true",
   "uvx pre-commit install",
 ]
 run_windows = [
-  "rustup component add rustfmt clippy",
   "cargo install cargo-edit cargo-deny",
   "pnpm install",
   "git config --unset core.hooksPath & exit /b 0",
@@ -27,8 +29,8 @@ run_windows = [
 
 [tasks.setup-ci]
 description = "CI環境のセットアップ (cargo install をスキップ)"
+# rustfmt / clippy の component インストールは mise の `[tools].rust` 側に寄せている。
 run = [
-  "rustup component add rustfmt clippy",
   "pnpm install",
 ]
 
