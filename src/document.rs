@@ -673,14 +673,15 @@ impl Document {
                 .and_then(|n| n.to_str())
                 .unwrap_or("")
                 .to_string();
-            let (file_size, modified) = std::fs::metadata(path)
-                .map(|m| {
+            let (file_size, modified) = std::fs::metadata(path).map_or(
+                (0, std::time::SystemTime::UNIX_EPOCH),
+                |m| {
                     (
                         m.len(),
                         m.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH),
                     )
-                })
-                .unwrap_or((0, std::time::SystemTime::UNIX_EPOCH));
+                },
+            );
             let info = crate::file_info::FileInfo {
                 path: path.clone(),
                 source: FileSource::PendingContainer {
@@ -760,7 +761,7 @@ impl Document {
         match result {
             ContainerResult::Error { .. } => {}
             ContainerResult::Pdf { path, page_count } => {
-                let pdf_file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+                let pdf_file_size = std::fs::metadata(path).map_or(0, |m| m.len());
                 for i in 0..*page_count {
                     entries.push(crate::file_info::FileInfo {
                         path: path.clone(),
