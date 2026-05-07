@@ -235,7 +235,8 @@ fn request_file_if_needed(
             archive,
             entry,
             on_demand: true,
-        } => Some((archive.clone(), entry.clone())),
+            entry_index,
+        } => Some((archive.clone(), entry.clone(), *entry_index)),
         _ => None,
     };
     engine.request_load(idx, files[idx].path.clone(), pdf_page, archive_entry);

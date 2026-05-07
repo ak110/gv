@@ -180,6 +180,7 @@ fn classify_raw_path(raw: &str, is_archive: &impl Fn(&Path) -> bool) -> FileSour
             archive,
             entry,
             on_demand: false,
+            entry_index: None,
         };
     }
 
@@ -269,12 +270,12 @@ mod tests {
         assert_eq!(data.index, 0);
         assert!(matches!(
             &data.entries[0],
-            FileSource::ArchiveEntry { archive, entry, on_demand: false }
+            FileSource::ArchiveEntry { archive, entry, on_demand: false, .. }
             if archive == Path::new(r"E:\book.zip") && entry == "01.jpg"
         ));
         assert!(matches!(
             &data.entries[1],
-            FileSource::ArchiveEntry { archive, entry, on_demand: false }
+            FileSource::ArchiveEntry { archive, entry, on_demand: false, .. }
             if archive == Path::new(r"E:\book.zip") && entry == "02.jpg"
         ));
     }

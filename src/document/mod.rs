@@ -553,6 +553,7 @@ impl Document {
                             archive: path.clone(),
                             entry: entry.entry_name.clone(),
                             on_demand: true,
+                            entry_index: Some(entry.entry_index),
                         },
                         file_name: entry.file_name.clone(),
                         file_size: entry.file_size,
@@ -573,6 +574,7 @@ impl Document {
                             archive: path.clone(),
                             entry: entry_name.clone(),
                             on_demand: false,
+                            entry_index: None,
                         };
                         info.file_name = crate::archive::extract_filename(entry_name).to_string();
                         entries.push(info);
@@ -1092,15 +1094,30 @@ impl Document {
                 archive,
                 entry,
                 on_demand: true,
+                entry_index,
             } => {
                 // キャッシュされたZIPバッファから取得 (Stored最適化付き)
                 let buffers = self.zip_buffers.read().expect("zip_buffers lock poisoned");
                 if let Some(buffer) = buffers.get(archive) {
-                    crate::archive::zip::ZipHandler::read_entry_from_buffer(buffer.as_ref(), entry)
+                    if let Some(idx) = entry_index {
+                        crate::archive::ArchiveManager::read_zip_entry_from_buffer_at(
+                            buffer.as_ref(),
+                            *idx,
+                        )
+                    } else {
+                        crate::archive::zip::ZipHandler::read_entry_from_buffer(
+                            buffer.as_ref(),
+                            entry,
+                        )
+                    }
                 } else {
                     // キャッシュミス (通常発生しない): ファイルから直接取得
                     drop(buffers);
-                    self.archive_manager.read_entry(archive, entry)
+                    if let Some(idx) = entry_index {
+                        crate::archive::ArchiveManager::read_zip_entry_at(archive, *idx)
+                    } else {
+                        self.archive_manager.read_entry(archive, entry)
+                    }
                 }
             }
             FileSource::PendingContainer { .. } => {

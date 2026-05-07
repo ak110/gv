@@ -16,11 +16,16 @@ pub type ExtractedEntry = (PathBuf, String);
 /// オンデマンド取得用のアーカイブ内画像エントリ情報
 pub struct ArchiveImageEntry {
     /// アーカイブ内パス (例: "subfolder/image.png")
+    /// ZIPの場合はCP932/UTF-8復号後の表示用文字列であり再アクセス用キーには使えない
     pub entry_name: String,
     /// フラット化したファイル名 (ソート用)
     pub file_name: String,
     /// 非圧縮サイズ
     pub file_size: u64,
+    /// アーカイブ内エントリのインデックス (再アクセス用キー)
+    /// ZIPでは`ZipArchive::by_index`の引数に対応する。
+    /// 再lookupを行わないハンドラ (RAR・7z) では意味を持たず、`u32::MAX`が入る
+    pub entry_index: u32,
 }
 
 /// アーカイブハンドラのトレイト
@@ -125,6 +130,20 @@ impl ArchiveManager {
             return zip::ZipHandler::list_images_from_buffer(buffer, &self.registry);
         }
         bail!("バッファベース取得未対応: {}", archive_path.display());
+    }
+
+    /// インメモリZIPバッファからインデックス指定でエントリを取得する
+    pub fn read_zip_entry_from_buffer_at(buffer: &[u8], index: u32) -> Result<Vec<u8>> {
+        zip::ZipHandler::read_entry_from_buffer_at(buffer, index)
+    }
+
+    /// ZIPファイルからインデックス指定でエントリを取得する
+    pub fn read_zip_entry_at(archive_path: &Path, index: u32) -> Result<Vec<u8>> {
+        let ext = Self::normalized_extension(archive_path);
+        if ext == ".zip" || ext == ".cbz" {
+            return zip::ZipHandler::read_entry_at(archive_path, index);
+        }
+        bail!("インデックス指定取得未対応: {}", archive_path.display());
     }
 }
 

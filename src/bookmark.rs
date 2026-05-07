@@ -168,7 +168,8 @@ fn parse_bookmark(content: &str) -> BookmarkData {
                 entries.push(FileSource::ArchiveEntry {
                     archive: PathBuf::from(archive_path),
                     entry: entry.to_string(),
-                    on_demand: false, // 復元時にopen_containersで再判定
+                    on_demand: false,  // 復元時にopen_containersで再判定
+                    entry_index: None, // 復元時はインデックス不明、open後の再構築でSomeになる
                 });
             }
             ["pdf", pdf_path, page_index_str] => {

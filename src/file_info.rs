@@ -16,6 +16,11 @@ pub enum FileSource {
         entry: String,
         /// trueならオンデマンド取得、falseならtemp展開済み
         on_demand: bool,
+        /// アーカイブ内エントリの再アクセス用インデックス。
+        /// 新規ZIPオープン時は`Some`、ブックマーク等の旧形式復元時は`None`を保持し、
+        /// ZIPオンデマンド読み出し経路は値が`Some`ならインデックスベースAPIへ、
+        /// `None`なら名前ベースAPIへフォールバックする
+        entry_index: Option<u32>,
     },
     /// PDFのページ
     PdfPage { pdf_path: PathBuf, page_index: u32 },
@@ -217,6 +222,7 @@ mod tests {
             archive: PathBuf::from(r"C:\archive.zip"),
             entry: "folder/image.png".to_string(),
             on_demand: false,
+            entry_index: Some(0),
         };
         assert_eq!(source.display_path(), r"C:\archive.zip/folder/image.png");
         assert!(source.is_archive_entry());
@@ -246,6 +252,7 @@ mod tests {
             archive: PathBuf::from(r"C:\archive.zip"),
             entry: "img.png".to_string(),
             on_demand: false,
+            entry_index: None,
         };
         assert!(archive_source.is_contained());
     }
@@ -265,6 +272,7 @@ mod tests {
             archive: PathBuf::from(r"C:\archives\photos.zip"),
             entry: "folder/sunset.png".to_string(),
             on_demand: true,
+            entry_index: Some(0),
         };
         assert_eq!(archive.parent_dir().unwrap(), Path::new(r"C:\archives"));
 
@@ -284,6 +292,7 @@ mod tests {
             archive: PathBuf::from(r"C:\photos.zip"),
             entry: "folder/sunset.png".to_string(),
             on_demand: false,
+            entry_index: None,
         };
         assert_eq!(archive.default_save_name(), "photos_sunset.png");
 
@@ -303,6 +312,7 @@ mod tests {
             archive: PathBuf::from(r"C:\photos.zip"),
             entry: "img.png".to_string(),
             on_demand: false,
+            entry_index: None,
         };
         assert_eq!(archive.default_save_stem(), "photos_img");
 

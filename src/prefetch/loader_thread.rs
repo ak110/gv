@@ -19,8 +19,9 @@ enum LoadRequest {
         generation: u64,
         /// PDFページの場合: (pdf_path, page_index)
         pdf_page: Option<(PathBuf, u32)>,
-        /// オンデマンドアーカイブエントリの場合: (archive_path, entry_name)
-        archive_entry: Option<(PathBuf, String)>,
+        /// オンデマンドアーカイブエントリの場合: (archive_path, entry_name, entry_index)
+        /// entry_indexは新規ZIPオープン時のみ`Some`、ブックマーク等の旧形式復元時は`None`
+        archive_entry: Option<(PathBuf, String, Option<u32>)>,
     },
     Shutdown,
 }
@@ -96,7 +97,7 @@ impl PrefetchEngine {
         index: usize,
         path: PathBuf,
         pdf_page: Option<(PathBuf, u32)>,
-        archive_entry: Option<(PathBuf, String)>,
+        archive_entry: Option<(PathBuf, String, Option<u32>)>,
     ) {
         let _ = self.request_tx.send(LoadRequest::Load {
             index,
@@ -221,18 +222,32 @@ fn worker_loop(
                             generation,
                         },
                     }
-                } else if let Some((archive_path, entry_name)) = archive_entry {
+                } else if let Some((archive_path, entry_name, entry_index)) = archive_entry {
                     // オンデマンドアーカイブエントリ: バッファ→decode
                     let read_result = {
                         let buffers = zip_buffers.read().expect("zip_buffers lock poisoned");
                         if let Some(buffer) = buffers.get(&archive_path) {
-                            crate::archive::zip::ZipHandler::read_entry_from_buffer(
-                                buffer.as_ref(),
-                                &entry_name,
-                            )
+                            if let Some(idx) = entry_index {
+                                crate::archive::ArchiveManager::read_zip_entry_from_buffer_at(
+                                    buffer.as_ref(),
+                                    idx,
+                                )
+                            } else {
+                                crate::archive::zip::ZipHandler::read_entry_from_buffer(
+                                    buffer.as_ref(),
+                                    &entry_name,
+                                )
+                            }
                         } else {
                             drop(buffers);
-                            archive_manager.read_entry(&archive_path, &entry_name)
+                            if let Some(idx) = entry_index {
+                                crate::archive::ArchiveManager::read_zip_entry_at(
+                                    &archive_path,
+                                    idx,
+                                )
+                            } else {
+                                archive_manager.read_entry(&archive_path, &entry_name)
+                            }
                         }
                     };
                     let filename_hint = crate::archive::extract_filename(&entry_name).to_string();

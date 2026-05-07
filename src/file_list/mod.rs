@@ -1057,6 +1057,7 @@ mod tests {
                 archive: std::path::PathBuf::from(archive),
                 entry: entry.to_string(),
                 on_demand: false,
+                entry_index: None,
             },
         }
     }
@@ -1514,6 +1515,7 @@ mod tests {
                 archive: PathBuf::from("/folder_b/archive.zip"),
                 entry: "inner.png".to_string(),
                 on_demand: false,
+                entry_index: None,
             },
             100,
             now,
