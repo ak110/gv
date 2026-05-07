@@ -18,24 +18,15 @@ mise install && mise run setup
 
 ## 開発コマンド
 
-日常的に使用するのは次の2つ。
-
-| コマンド          | 内容                                                        |
+| コマンド          | 説明                                                        |
 | ----------------- | ----------------------------------------------------------- |
+| `mise run setup`  | 開発環境のセットアップ                                      |
 | `mise run format` | フォーマット + 軽量lint（開発時の手動実行用。自動修正あり） |
 | `mise run test`   | 全チェック実行（これを通過すればコミット可能）              |
-
-`git commit`時にはpre-commitフックが`mise run test`を自動実行する。
-
-その他のタスクを以下に示す。
-
-| コマンド          | 説明                             |
-| ----------------- | -------------------------------- |
-| `mise run setup`  | 開発環境のセットアップ           |
-| `mise run build`  | リリースビルド                   |
-| `mise run clean`  | ビルド成果物の削除               |
-| `mise run update` | 依存パッケージの更新             |
-| `mise run docs`   | ドキュメントのローカルプレビュー |
+| `mise run build`  | リリースビルド                                              |
+| `mise run clean`  | ビルド成果物の削除                                          |
+| `mise run update` | 依存パッケージの更新                                        |
+| `mise run docs`   | ドキュメントのローカルプレビュー                            |
 
 `mise run test`はcargo-clippy・cargo-test・cargo-deny・markdownlint・textlint等を一括実行する。
 Linux環境ではlint系（textlint / markdownlint / prettier）のみ確認可能。
