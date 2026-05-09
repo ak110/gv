@@ -92,6 +92,9 @@ description = "依存パッケージの更新"
 # pnpm 本体のバージョンは更新しないため、両者を組にして依存とランナーを揃える。
 # pnpm 本体の更新を先に行ってから依存を更新することで、新しい pnpm の依存解決規則を
 # 反映した状態でロックファイルを再生成する。
+# `CI=true` は pnpm 11 以降で `corepack use` が実行する node_modules 削除確認の
+# プロンプトを抑止する。非対話実行で TTY が無くてもエラーにせず進める。
+env = { CI = "true" }
 run = [
   "cargo upgrade --incompatible",
   "cargo update",
