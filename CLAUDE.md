@@ -22,9 +22,9 @@ Windows用画像ビューアー（Rust製）。多形式対応と高速切り替
 
 Rust実装の規約（ロックpoison・TOML SSOT・自然順比較・エラーハンドリング）は
 [.claude/rules/coding-standards.md](.claude/rules/coding-standards.md)に集約する。
+`.claude/rules/coding-standards.md`は`src/**/*.rs`編集時に自動ロードされる。
 Windowsバッチファイル生成の規約（CP932・UTF-8 BOM・chcp・goto構文）は
-[.claude/rules/windows-batch-generation.md](.claude/rules/windows-batch-generation.md)に集約する。
-これらのファイルは自動ロードされないため、該当する作業の着手前に参照する。
+`src/updater.rs`の`generate_update_batch`関数のdocコメントに記載する。
 
 ## サブエージェント・スキル連携
 

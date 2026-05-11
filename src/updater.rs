@@ -178,6 +178,15 @@ fn extract_files_from_zip(
 /// 4. 新exeを起動
 ///
 /// `cleanup_old_exe()`が次回起動時に.oldを削除する。
+///
+/// # バッチファイル生成の制約
+///
+/// - エンコーディング: UTF-8 BOM + `chcp 65001` で出力する。
+///   ファイル名に日本語（ぐらびゅ.exe等）を含むため CP932 では
+///   DBCSトレイルバイトが cmd.exe の構文解析を破壊する
+/// - 改行: `format!` が出力する LF を `replace('\n', "\r\n")` で CRLF に変換する
+/// - 制御フロー: `if ( ... )` ブロック内に日本語リテラルを置かない。
+///   DBCSトレイルバイトが特殊文字と誤認されるため `goto` で制御する
 fn generate_update_batch(
     batch_path: &std::path::Path,
     update_exe: &std::path::Path,
@@ -206,10 +215,6 @@ fn generate_update_batch(
         .collect::<Vec<_>>()
         .join("\n");
 
-    // UTF-8 BOM + chcp 65001 でバッチをUTF-8モードで実行する。
-    // ファイル名に日本語 (ぐらびゅ.exe等) を含むため、CP932では
-    // DBCSトレイルバイトがcmd.exeの構文解析を破壊する恐れがある。
-    // if ( ... ) ブロックは使わず goto で制御する (DBCS問題の回避策を維持)。
     let content = format!(
         r#"@echo off
 chcp 65001 >nul
@@ -279,10 +284,9 @@ del "%~f0" & exit
         extra_copy_commands = extra_copy_commands,
     );
 
-    // CRLFに変換してUTF-8 BOM付きで保存する
     let content = content.replace('\n', "\r\n");
     let mut encoded = Vec::with_capacity(3 + content.len());
-    encoded.extend_from_slice(b"\xEF\xBB\xBF"); // UTF-8 BOM
+    encoded.extend_from_slice(b"\xEF\xBB\xBF");
     encoded.extend_from_slice(content.as_bytes());
     std::fs::write(batch_path, encoded).context("バッチスクリプト書き込み失敗")
 }
