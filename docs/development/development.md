@@ -4,7 +4,7 @@
 
 ### 必要環境
 
-- [mise](https://mise.jdx.dev/)（タスクランナー・ツールバージョン管理）
+- mise
 - Visual Studio Build Tools（C++ ビルドツール）
 
 ### 初回セットアップ
@@ -12,9 +12,6 @@
 ```cmd
 mise install && mise run setup
 ```
-
-`cargo`・`node`・`pnpm`などのコマンドはシステムにインストールされたものではなく、mise経由で実行する。
-`mise run`タスク経由、またはmiseが管理するPATH上のバイナリを使用する。
 
 ## 開発コマンド
 
@@ -28,23 +25,22 @@ mise install && mise run setup
 | `mise run update` | 依存パッケージの更新                                        |
 | `mise run docs`   | ドキュメントのローカルプレビュー                            |
 
-`mise run test`はcargo-clippy・cargo-test・cargo-deny・markdownlint・textlint等を一括実行する。
 Linux環境ではlint系（textlint / markdownlint / prettier）のみ確認可能。
 cargo-clippy / cargo-test / cargo-denyはWindowsターゲットのためLinuxでは失敗する。
 
 ## サプライチェーン攻撃対策
+
+ロック尊重・公開待機・ピン留め運用の3点を基本方針とする。
 
 `cargo-deny`（`deny.toml`設定）でライセンスチェックと脆弱性アドバイザリチェックを実施する。
 `mise run test`に組み込まれているため、コミット前に自動実行される。
 
 GitHub Actionsのワークフローは`pinact`でハッシュピン留めして実行する
 （`mise run update`でハッシュピン更新が可能）。
-`taiki-e/install-action@cargo-deny`はツール名タグ形式のためpinactでハッシュピン不可（`.pinact.yaml`で除外済み）。
 
 ## ドキュメントサイト運用
 
-ドキュメントは[VitePress](https://vitepress.dev/)で構築し、GitHub Pagesでホストする
-（URL: <https://ak110.github.io/gv/>）。
+ドキュメントはGitHub Pagesでホストする（URL: <https://ak110.github.io/gv/>）。
 
 - ローカルプレビュー: `mise run docs`
 - 自動デプロイ: masterブランチへのpush時に`Docs`ワークフローが自動実行される（`docs/`以下または`package.json`の変更時のみ）

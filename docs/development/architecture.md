@@ -1,15 +1,8 @@
 # アーキテクチャ
 
-## 技術スタック
-
-- Rust 2024 edition
-- Win32 API (Direct2D, Shell, WIC)
-- `crossbeam-channel` によるスレッド間通信
-
 ## アーキテクチャパターン: Model-View (MV) 分離
 
 Win32メッセージベースのアプリケーションにはMVVMは過剰であるため、MV分離を採用する。
-Rustのチャネルで疎結合化する。
 
 ```mermaid
 flowchart TB

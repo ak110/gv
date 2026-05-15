@@ -39,7 +39,6 @@ SAFETYコメントの粒度判定基準は[.claude/agents/unsafe-reviewer.md](.c
 - Windows用プロジェクトのため、Linux環境での検証はlint系（textlint / markdownlint / prettier）のみ確認可能。
   cargo-clippy / cargo-test / cargo-denyはWindowsターゲットのためLinuxでは失敗する
 - Makefileではなく`mise.toml`のタスクを使用する。pre-commitフレームワークは`uvx pre-commit`で呼び出す
-- `taiki-e/install-action@cargo-deny`はツール名タグ形式のためpinactでハッシュピン不可（`.pinact.yaml`で除外済み）
 - Linux環境での検証コマンド実行時は`LOCALAPPDATA=/tmp/dummy`環境変数を付与する。
   `mise.toml`がWindows前提で`LOCALAPPDATA`を参照しているため
 - Linux環境からドキュメント等のcargo無関係な変更をコミットする際は、
