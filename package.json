@@ -1,7 +1,7 @@
 {
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@11.0.9+sha512.34ce82e6780233cf9cad8685029a8f81d2e06196c5a9bad98879f7424940c6817c4e4524fb7d38b8553ceed48b9758b8ebaf1abd3600c232c4c8cf7366086f38",
+  "packageManager": "pnpm@11.1.3+sha512.c85357fe17ca12dd23dd7071822666dfd7e3cb76fe214e3370b5ea2fb34f2a231185509b63e717f3cd0acb38dd3f8d82bcd5e8172400ae678b70ea4fbed0896d",
   "scripts": {
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
@@ -12,17 +12,10 @@
   "devDependencies": {
     "markdownlint-cli2": "^0.22.1",
     "prettier": "^3.8.3",
-    "textlint": "^15.6.0",
+    "textlint": "^15.7.1",
     "textlint-rule-ja-no-abusage": "^3.0.0",
     "textlint-rule-preset-ja-technical-writing": "^12.0.2",
     "textlint-rule-preset-jtf-style": "^3.0.3",
     "vitepress": "^1.6.4"
-  },
-  "pnpm": {
-    "_overridesNote": "VitePress 1.6.4 が vite ^5.4.14 を要求するが、vite 5 系は GHSA-4w7w-66w2-5vf9 (CVE-2026-39365) の patched 版が無く、esbuild も 0.24.2 以下で GHSA-67mh-4wv8-2f99 が残るため、両者を patched 系列に強制 override する。VitePress が vite 6 以上を直接要求するようになったら撤去できる。",
-    "overrides": {
-      "vite": "^6.4.2",
-      "esbuild": "^0.25.0"
-    }
   }
 }
