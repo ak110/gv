@@ -1,7 +1,7 @@
 //! Win32 Clipboard APIによるクリップボード操作
 
 use anyhow::{Context as _, Result, bail};
-use windows::Win32::Foundation::HWND;
+use windows::Win32::Foundation::{HGLOBAL, HWND};
 use windows::Win32::System::DataExchange::{
     CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard, SetClipboardData,
 };
@@ -9,6 +9,11 @@ use windows::Win32::System::Memory::{
     GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock,
 };
 use windows::Win32::System::Ole::CF_DIB;
+
+// windowsクレート v0.62にはGlobalFreeが含まれないためkernel32.dllから直接リンクする
+unsafe extern "system" {
+    safe fn GlobalFree(hmem: HGLOBAL) -> HGLOBAL;
+}
 
 use crate::image::DecodedImage;
 use crate::util::to_wide;
@@ -26,6 +31,7 @@ pub fn copy_text_to_clipboard(hwnd: HWND, text: &str) -> Result<()> {
     //   wide (Vec<u16>) を byte_len バイトだけコピーする。コピー元・先ともに少なくとも
     //   byte_len バイトが確保済みで領域は重ならない。
     // - SetClipboardData 成功後はクリップボードがメモリの所有権を取るため呼び出し元では解放しない。
+    //   失敗時は所有権が移転しないため GlobalFree で解放する。
     unsafe {
         OpenClipboard(Some(hwnd)).context("クリップボードを開けない")?;
         let _ = EmptyClipboard();
@@ -33,6 +39,7 @@ pub fn copy_text_to_clipboard(hwnd: HWND, text: &str) -> Result<()> {
         let hmem = GlobalAlloc(GMEM_MOVEABLE, byte_len).context("GlobalAlloc失敗")?;
         let ptr = GlobalLock(hmem);
         if ptr.is_null() {
+            let _ = GlobalFree(hmem);
             let _ = CloseClipboard();
             bail!("GlobalLock失敗");
         }
@@ -41,7 +48,11 @@ pub fn copy_text_to_clipboard(hwnd: HWND, text: &str) -> Result<()> {
 
         // SetClipboardDataに渡すHANDLEはGlobalAllocの戻り値をそのまま使う
         let handle = windows::Win32::Foundation::HANDLE(hmem.0.cast());
-        let _ = SetClipboardData(CF_UNICODETEXT, Some(handle));
+        if SetClipboardData(CF_UNICODETEXT, Some(handle)).is_err() {
+            let _ = GlobalFree(hmem);
+            let _ = CloseClipboard();
+            bail!("SetClipboardData失敗");
+        }
         let _ = CloseClipboard();
     }
     Ok(())
@@ -80,6 +91,7 @@ pub fn copy_image_to_clipboard(hwnd: HWND, image: &DecodedImage) -> Result<()> {
     // - dib は total_size バイトの Vec で初期化済み。GlobalAlloc(GMEM_MOVEABLE, total_size) で
     //   確保した領域に同じバイト数だけコピーするので両側のバウンドは満たされる。
     // - SetClipboardData 成功後はクリップボードがメモリの所有権を取るため呼び出し元では解放しない。
+    //   失敗時は所有権が移転しないため GlobalFree で解放する。
     unsafe {
         OpenClipboard(Some(hwnd)).context("クリップボードを開けない")?;
         let _ = EmptyClipboard();
@@ -87,6 +99,7 @@ pub fn copy_image_to_clipboard(hwnd: HWND, image: &DecodedImage) -> Result<()> {
         let hmem = GlobalAlloc(GMEM_MOVEABLE, total_size).context("GlobalAlloc失敗")?;
         let ptr = GlobalLock(hmem);
         if ptr.is_null() {
+            let _ = GlobalFree(hmem);
             let _ = CloseClipboard();
             bail!("GlobalLock失敗");
         }
@@ -94,7 +107,11 @@ pub fn copy_image_to_clipboard(hwnd: HWND, image: &DecodedImage) -> Result<()> {
         let _ = GlobalUnlock(hmem);
 
         let handle = windows::Win32::Foundation::HANDLE(hmem.0.cast());
-        let _ = SetClipboardData(CF_DIB.0 as u32, Some(handle));
+        if SetClipboardData(CF_DIB.0 as u32, Some(handle)).is_err() {
+            let _ = GlobalFree(hmem);
+            let _ = CloseClipboard();
+            bail!("SetClipboardData失敗");
+        }
         let _ = CloseClipboard();
     }
     Ok(())
@@ -109,6 +126,8 @@ pub fn paste_image_from_clipboard(hwnd: HWND) -> Result<Option<DecodedImage>> {
     //   読み取る (フィールドはそれぞれ 4/4/2 バイト境界に並ばない場合がある)。
     // - ピクセルデータの読み込みも src_row + x*bytes_per_pixel が required_size 内に収まる
     //   ことを上で検証済みなので、`*src.add(...)` は確保領域内。
+    // - V4/V5ヘッダのアルファマスク読み取り (header.add(52)) は data_size >= bi_size の
+    //   バウンドチェック済みであり、bi_size >= 108 のとき確保領域内アクセスとなる。
     unsafe {
         OpenClipboard(Some(hwnd)).context("クリップボードを開けない")?;
 
@@ -158,6 +177,14 @@ pub fn paste_image_from_clipboard(hwnd: HWND) -> Result<Option<DecodedImage>> {
             bail!("DIBヘッダサイズが不正: {bi_size}");
         }
 
+        // V4/V5ヘッダ(biSize≥108)のbV4AlphaMaskはオフセット52にある
+        let alpha_mask = if bi_size >= 108 && data_size >= bi_size as usize {
+            u32::from_le_bytes(std::ptr::read_unaligned(header.add(52).cast::<[u8; 4]>()))
+        } else {
+            0
+        };
+        let dib_has_alpha = has_dib_alpha(bi_size, bi_compression, alpha_mask);
+
         let bytes_per_pixel = (bit_count / 8) as usize;
         let src_row_stride = (width as usize * bytes_per_pixel).div_ceil(4) * 4;
         let pixel_offset = compute_dib_pixel_offset(bi_size, bi_compression);
@@ -188,7 +215,11 @@ pub fn paste_image_from_clipboard(hwnd: HWND) -> Result<Option<DecodedImage>> {
                 rgba[dst] = *src.add(2); // R
                 rgba[dst + 1] = *src.add(1); // G
                 rgba[dst + 2] = *src; // B
-                rgba[dst + 3] = if bit_count == 32 { *src.add(3) } else { 255 };
+                rgba[dst + 3] = if bit_count == 32 && dib_has_alpha {
+                    *src.add(3)
+                } else {
+                    255
+                };
             }
         }
 
@@ -200,6 +231,23 @@ pub fn paste_image_from_clipboard(hwnd: HWND) -> Result<Option<DecodedImage>> {
             width: width as u32,
             height: abs_height,
         }))
+    }
+}
+
+/// DIBヘッダ情報から32ビットDIBの4バイト目がアルファチャンネルとして有効かを判定する。
+///
+/// 32ビットDIBの4バイト目は仕様上パディングであり、アルファチャンネルとして使用するには
+/// ヘッダで明示的に宣言されている必要がある。BITMAPINFOHEADER(biSize=40)では
+/// BI_ALPHABITFIELDS(6)のみアルファ有効とし、V4/V5ヘッダ(biSize≥108)では
+/// bV4AlphaMask(オフセット52)が非ゼロの場合にアルファ有効とする。
+fn has_dib_alpha(bi_size: u32, bi_compression: u32, alpha_mask: u32) -> bool {
+    const BI_ALPHABITFIELDS: u32 = 6;
+
+    if bi_size == 40 {
+        bi_compression == BI_ALPHABITFIELDS
+    } else {
+        // V4/V5ヘッダではbV4AlphaMask非ゼロでアルファ有効
+        alpha_mask != 0
     }
 }
 
@@ -250,5 +298,47 @@ mod tests {
     fn test_compute_dib_pixel_offset_v5_header() {
         assert_eq!(compute_dib_pixel_offset(124, 0), 124);
         assert_eq!(compute_dib_pixel_offset(124, 3), 124);
+    }
+
+    #[test]
+    fn test_has_dib_alpha_bi_rgb() {
+        // BI_RGB: BITMAPINFOHEADERではアルファ無効
+        assert!(!has_dib_alpha(40, 0, 0));
+    }
+
+    #[test]
+    fn test_has_dib_alpha_bi_bitfields() {
+        // BI_BITFIELDS: BITMAPINFOHEADERではアルファ無効
+        assert!(!has_dib_alpha(40, 3, 0));
+    }
+
+    #[test]
+    fn test_has_dib_alpha_bi_alphabitfields() {
+        // BI_ALPHABITFIELDS: BITMAPINFOHEADERではアルファ有効
+        assert!(has_dib_alpha(40, 6, 0));
+    }
+
+    #[test]
+    fn test_has_dib_alpha_v4_no_mask() {
+        // V4ヘッダ、アルファマスクなし
+        assert!(!has_dib_alpha(108, 0, 0));
+    }
+
+    #[test]
+    fn test_has_dib_alpha_v4_with_mask() {
+        // V4ヘッダ、アルファマスクあり
+        assert!(has_dib_alpha(108, 0, 0xFF000000));
+    }
+
+    #[test]
+    fn test_has_dib_alpha_v5_no_mask() {
+        // V5ヘッダ、アルファマスクなし
+        assert!(!has_dib_alpha(124, 0, 0));
+    }
+
+    #[test]
+    fn test_has_dib_alpha_v5_with_mask() {
+        // V5ヘッダ、アルファマスクあり
+        assert!(has_dib_alpha(124, 0, 0xFF000000));
     }
 }
