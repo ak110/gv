@@ -33,6 +33,8 @@ remember_position = false
 remember_size = false
 # 常に手前に表示
 always_on_top = false
+# フルスクリーン時のタイトルバー表示
+keep_titlebar_in_fullscreen = false
 
 [susie]
 # Susie プラグインディレクトリ (exe からの相対パス)

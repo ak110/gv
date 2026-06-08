@@ -69,6 +69,7 @@ pub struct WindowConfig {
     pub remember_position: bool,
     pub remember_size: bool,
     pub always_on_top: bool,
+    pub keep_titlebar_in_fullscreen: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -266,6 +267,7 @@ mod tests {
         assert!(!config.window.remember_position);
         assert!(!config.window.remember_size);
         assert!(!config.window.always_on_top);
+        assert!(!config.window.keep_titlebar_in_fullscreen);
         assert_eq!(config.susie.plugin_dir, "spi");
     }
 
@@ -289,6 +291,7 @@ default_sort = "natural"
 remember_position = false
 remember_size = false
 always_on_top = true
+keep_titlebar_in_fullscreen = true
 
 [susie]
 plugin_dir = "plugins"
@@ -304,6 +307,7 @@ archive_plugins = ["axlha.sph"]
         assert_eq!(config.list.default_sort, SortOrder::Natural);
         assert!(!config.window.remember_position);
         assert!(config.window.always_on_top);
+        assert!(config.window.keep_titlebar_in_fullscreen);
         assert_eq!(config.susie.plugin_dir, "plugins");
         assert_eq!(config.susie.image_plugins, vec!["ifwebp.sph"]);
     }
@@ -395,6 +399,10 @@ default_sort = "bogus"
         );
         assert_eq!(config.window.remember_size, default.window.remember_size);
         assert_eq!(config.window.always_on_top, default.window.always_on_top);
+        assert_eq!(
+            config.window.keep_titlebar_in_fullscreen,
+            default.window.keep_titlebar_in_fullscreen
+        );
 
         // susie
         assert_eq!(config.susie.plugin_dir, default.susie.plugin_dir);

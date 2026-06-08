@@ -68,6 +68,7 @@ pub(crate) struct AppWindow {
     pub(crate) fullscreen: FullscreenState,
     pub(crate) cursor_hider: CursorHider,
     pub(crate) always_on_top: bool,
+    pub(crate) keep_titlebar_in_fullscreen: bool,
     pub(crate) key_config: KeyConfig,
     // メニューバー
     pub(crate) menu: HMENU,
@@ -165,6 +166,7 @@ impl AppWindow {
         );
 
         let always_on_top = config.window.always_on_top;
+        let keep_titlebar_in_fullscreen = config.window.keep_titlebar_in_fullscreen;
         let base_image_size = config.prefetch.base_image_size();
 
         // キーバインド設定の読み込み
@@ -198,6 +200,7 @@ impl AppWindow {
             fullscreen: FullscreenState::new(),
             cursor_hider: CursorHider::new(),
             always_on_top,
+            keep_titlebar_in_fullscreen,
             key_config,
             menu: menu_handle,
             menu_visible: true,
@@ -408,7 +411,11 @@ impl AppWindow {
         // フルスクリーン開始前にパネル表示状態を保存
         let panel_was_visible = self.file_list_panel.is_visible();
 
-        self.fullscreen.toggle(self.hwnd, self.always_on_top);
+        self.fullscreen.toggle(
+            self.hwnd,
+            self.always_on_top,
+            self.keep_titlebar_in_fullscreen,
+        );
 
         if entering {
             // フルスクリーン開始: メニュー・パネルを非表示 (フラグは保持)

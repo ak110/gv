@@ -29,15 +29,15 @@ impl FullscreenState {
     }
 
     /// フルスクリーンをトグル
-    pub fn toggle(&mut self, hwnd: HWND, always_on_top: bool) {
+    pub fn toggle(&mut self, hwnd: HWND, always_on_top: bool, keep_titlebar: bool) {
         if self.is_fullscreen {
             self.exit_fullscreen(hwnd, always_on_top);
         } else {
-            self.enter_fullscreen(hwnd);
+            self.enter_fullscreen(hwnd, keep_titlebar);
         }
     }
 
-    fn enter_fullscreen(&mut self, hwnd: HWND) {
+    fn enter_fullscreen(&mut self, hwnd: HWND, keep_titlebar: bool) {
         unsafe {
             // 現在のスタイル・配置を保存
             self.saved_style = WINDOW_STYLE(GetWindowLongPtrW(hwnd, GWL_STYLE) as u32);
@@ -45,10 +45,14 @@ impl FullscreenState {
             self.saved_placement.length = std::mem::size_of::<WINDOWPLACEMENT>() as u32;
             let _ = GetWindowPlacement(hwnd, std::ptr::from_mut(&mut self.saved_placement));
 
-            // ウィンドウ枠を外してポップアップスタイルに変更
-            let new_style = WINDOW_STYLE(
-                (self.saved_style.0 & !WS_OVERLAPPEDWINDOW.0) | WS_POPUP.0 | WS_VISIBLE.0,
-            );
+            // タイトルバー保持時は通常装飾を維持し、それ以外はポップアップスタイルに変更してボーダーレスにする
+            let new_style = if keep_titlebar {
+                WINDOW_STYLE(self.saved_style.0 | WS_VISIBLE.0)
+            } else {
+                WINDOW_STYLE(
+                    (self.saved_style.0 & !WS_OVERLAPPEDWINDOW.0) | WS_POPUP.0 | WS_VISIBLE.0,
+                )
+            };
             SetWindowLongPtrW(hwnd, GWL_STYLE, new_style.0 as isize);
 
             // モニター領域を取得して全画面化
