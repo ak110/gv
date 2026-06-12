@@ -5,7 +5,8 @@ use std::time::SystemTime;
 use anyhow::{Context as _, Result};
 
 /// ファイルの論理的なソース情報
-/// 通常ファイルとアーカイブ内エントリを区別する
+///
+/// 通常ファイル・アーカイブ内エントリ・PDFページ・未展開コンテナを区別する
 #[derive(Debug, Clone)]
 pub enum FileSource {
     /// 通常のファイルシステム上のファイル
@@ -32,7 +33,7 @@ impl FileSource {
     /// 表示用パスを生成する。
     ///
     /// 戻り値は OS パスではなく UI 表示専用の論理パス文字列であり、
-    /// `Path::join` で組み立てる対象ではない (`/` 区切り固定で Windows パスとも混在しうる)。
+    /// `Path::join` で組み立てる対象ではない (`/` 区切り固定で Windows パスとも混在し得る)。
     /// ファイルシステム操作には `parent_dir()` / `default_save_name()` 等の専用メソッドを使うこと。
     pub fn display_path(&self) -> String {
         match self {
@@ -123,6 +124,29 @@ impl FileSource {
             .and_then(|s| s.to_str())
             .unwrap_or("image")
             .to_string()
+    }
+
+    /// ブックマーク保存ダイアログの初期名に使う代表ステムを返す
+    ///
+    /// 通常ファイルは親ディレクトリ名、コンテナはコンテナファイル名のステム。
+    /// 取得不能 (親なし・ステム抽出失敗・非UTF-8など) の場合は `None` を返し、
+    /// 呼び出し側でフォールバックする。
+    pub fn bookmark_default_stem(&self) -> Option<String> {
+        let container_stem = |p: &Path| {
+            p.file_stem()
+                .and_then(|s| s.to_str())
+                .map(std::string::ToString::to_string)
+        };
+        match self {
+            FileSource::File(path) => path
+                .parent()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+                .map(std::string::ToString::to_string),
+            FileSource::ArchiveEntry { archive, .. } => container_stem(archive),
+            FileSource::PdfPage { pdf_path, .. } => container_stem(pdf_path),
+            FileSource::PendingContainer { container_path } => container_stem(container_path),
+        }
     }
 }
 
@@ -321,5 +345,39 @@ mod tests {
             page_index: 0,
         };
         assert_eq!(pdf.default_save_stem(), "doc_page1");
+    }
+
+    #[test]
+    fn bookmark_default_stem_for_each_source() {
+        // 通常ファイル (親フォルダあり): 親フォルダ名を返す
+        let file = FileSource::File(PathBuf::from(r"C:\photos\sunset.jpg"));
+        assert_eq!(file.bookmark_default_stem().as_deref(), Some("photos"));
+
+        // 通常ファイル (ルート直下): parent() がドライブルート `C:\` を返し、
+        // その file_name() が `None` を返すため、最終結果は `None`
+        let root_file = FileSource::File(PathBuf::from(r"C:\sunset.jpg"));
+        assert_eq!(root_file.bookmark_default_stem(), None);
+
+        // アーカイブ: アーカイブファイル名のステム
+        let archive = FileSource::ArchiveEntry {
+            archive: PathBuf::from(r"C:\archive.zip"),
+            entry: "folder/image.png".to_string(),
+            on_demand: false,
+            entry_index: None,
+        };
+        assert_eq!(archive.bookmark_default_stem().as_deref(), Some("archive"));
+
+        // PDF: PDFファイル名のステム
+        let pdf = FileSource::PdfPage {
+            pdf_path: PathBuf::from(r"C:\docs\report.pdf"),
+            page_index: 0,
+        };
+        assert_eq!(pdf.bookmark_default_stem().as_deref(), Some("report"));
+
+        // 未展開コンテナ: コンテナファイル名のステム
+        let pending = FileSource::PendingContainer {
+            container_path: PathBuf::from(r"C:\unopened.zip"),
+        };
+        assert_eq!(pending.bookmark_default_stem().as_deref(), Some("unopened"));
     }
 }

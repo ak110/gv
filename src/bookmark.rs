@@ -47,13 +47,24 @@ pub fn save_bookmark(
         );
     }
 
-    // デフォルトファイル名: 日付ベース
-    // システムクロックが UNIX epoch より前にずれている場合は 0 にフォールバック
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or(std::time::Duration::ZERO)
-        .as_secs();
-    let default_name = format!("bookmark_{now}.gvbm");
+    // 初期名: ファイルリスト先頭エントリの代表ステム＋`.gvbm`。
+    // ファイルリストが空、または代表ステムが得られない場合はUNIX秒ベースのタイムスタンプを代替値とする
+    // (システムクロックがUNIX epochより前にずれている場合は0秒として扱う)。
+    let default_name = file_list
+        .files()
+        .first()
+        .and_then(|f| f.source.bookmark_default_stem())
+        .filter(|s| !s.is_empty())
+        .map_or_else(
+            || {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or(std::time::Duration::ZERO)
+                    .as_secs();
+                format!("bookmark_{now}.gvbm")
+            },
+            |stem| format!("{stem}.gvbm"),
+        );
 
     let save_path = crate::file_ops::save_file_dialog(
         hwnd,
