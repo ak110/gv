@@ -148,6 +148,20 @@ impl FileSource {
             FileSource::PendingContainer { container_path } => container_stem(container_path),
         }
     }
+
+    /// ブックマーク前回名キャッシュの一致判定キー用に絶対パス相当の識別子を返す
+    ///
+    /// 通常ファイルでは親ディレクトリのパス、コンテナ系では当該コンテナファイルのパスを返す。
+    /// 同名別パスを区別するために代表ステム (`bookmark_default_stem`) とは分離している。
+    /// 親ディレクトリを取得できない通常ファイルでは `None` を返す。
+    pub fn bookmark_container_key(&self) -> Option<PathBuf> {
+        match self {
+            FileSource::File(path) => path.parent().map(Path::to_path_buf),
+            FileSource::ArchiveEntry { archive, .. } => Some(archive.clone()),
+            FileSource::PdfPage { pdf_path, .. } => Some(pdf_path.clone()),
+            FileSource::PendingContainer { container_path } => Some(container_path.clone()),
+        }
+    }
 }
 
 impl fmt::Display for FileSource {
@@ -379,5 +393,59 @@ mod tests {
             container_path: PathBuf::from(r"C:\unopened.zip"),
         };
         assert_eq!(pending.bookmark_default_stem().as_deref(), Some("unopened"));
+    }
+
+    #[test]
+    fn bookmark_container_key_for_each_source() {
+        // 通常ファイル (親ディレクトリあり): 親ディレクトリのパスを返す
+        let file = FileSource::File(PathBuf::from(r"C:\photos\sunset.jpg"));
+        assert_eq!(
+            file.bookmark_container_key().as_deref(),
+            Some(Path::new(r"C:\photos"))
+        );
+
+        // 通常ファイル (ルート直下): parent() がドライブルート `C:\` を返す。
+        // 代表ステムでは `None` になるケースでも、コンテナ識別キーは判定に使える
+        let root_file = FileSource::File(PathBuf::from(r"C:\sunset.jpg"));
+        assert_eq!(
+            root_file.bookmark_container_key().as_deref(),
+            Some(Path::new(r"C:\"))
+        );
+
+        // アーカイブ: アーカイブファイルのパス
+        let archive = FileSource::ArchiveEntry {
+            archive: PathBuf::from(r"C:\archive.zip"),
+            entry: "folder/image.png".to_string(),
+            on_demand: false,
+            entry_index: None,
+        };
+        assert_eq!(
+            archive.bookmark_container_key().as_deref(),
+            Some(Path::new(r"C:\archive.zip"))
+        );
+
+        // PDF: PDFファイルのパス
+        let pdf = FileSource::PdfPage {
+            pdf_path: PathBuf::from(r"C:\docs\report.pdf"),
+            page_index: 0,
+        };
+        assert_eq!(
+            pdf.bookmark_container_key().as_deref(),
+            Some(Path::new(r"C:\docs\report.pdf"))
+        );
+
+        // 未展開コンテナ: コンテナファイルのパス
+        let pending = FileSource::PendingContainer {
+            container_path: PathBuf::from(r"C:\unopened.zip"),
+        };
+        assert_eq!(
+            pending.bookmark_container_key().as_deref(),
+            Some(Path::new(r"C:\unopened.zip"))
+        );
+
+        // 同名の別パスは別キーとして区別される (代表ステムでは区別できない欠陥への対処)
+        let a = FileSource::File(PathBuf::from(r"C:\a\photos\x.jpg"));
+        let b = FileSource::File(PathBuf::from(r"D:\b\photos\y.jpg"));
+        assert_ne!(a.bookmark_container_key(), b.bookmark_container_key());
     }
 }

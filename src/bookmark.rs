@@ -33,12 +33,48 @@ pub fn bookmark_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("bookmarks"))
 }
 
+/// ブックマーク保存ダイアログの初期名 (`.gvbm` 拡張子付き) を組み立てる
+///
+/// 呼び出し元はセッション内の前回名キャッシュを持ち、コンテナ識別キーが一致したときのみ
+/// `previous_name` を渡す前提とする。
+///
+/// 優先順:
+/// 1. `previous_name` が指定されていればそのまま返す
+/// 2. `first_source` から代表ステムを取得できればステムに拡張子を付与して返す
+/// 3. どちらも得られなければ UNIX 秒ベースのタイムスタンプ名 (`bookmark_<秒>.gvbm`) を返す
+pub fn build_initial_save_name(
+    previous_name: Option<&str>,
+    first_source: Option<&FileSource>,
+) -> String {
+    if let Some(name) = previous_name {
+        return name.to_string();
+    }
+    first_source
+        .and_then(FileSource::bookmark_default_stem)
+        .filter(|s| !s.is_empty())
+        .map_or_else(
+            || {
+                // システムクロックがUNIX epochより前にずれている場合は 0 秒として扱う
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or(std::time::Duration::ZERO)
+                    .as_secs();
+                format!("bookmark_{now}.gvbm")
+            },
+            |stem| format!("{stem}.gvbm"),
+        )
+}
+
 /// ブックマークを保存する
+///
+/// `initial_name` はダイアログに渡す拡張子付き初期ファイル名 (例: `photos.gvbm`)。
+/// ユーザーが保存を完了したパスを `Ok(Some(path))`、キャンセル時は `Ok(None)` で返す。
 pub fn save_bookmark(
     hwnd: HWND,
     file_list: &crate::file_list::FileList,
     current_index: Option<usize>,
-) -> Result<()> {
+    initial_name: &str,
+) -> Result<Option<PathBuf>> {
     let dir = bookmark_dir();
     if let Err(e) = std::fs::create_dir_all(&dir) {
         eprintln!(
@@ -47,29 +83,10 @@ pub fn save_bookmark(
         );
     }
 
-    // 初期名: ファイルリスト先頭エントリの代表ステム＋`.gvbm`。
-    // ファイルリストが空、または代表ステムが得られない場合はUNIX秒ベースのタイムスタンプを代替値とする
-    // (システムクロックがUNIX epochより前にずれている場合は0秒として扱う)。
-    let default_name = file_list
-        .files()
-        .first()
-        .and_then(|f| f.source.bookmark_default_stem())
-        .filter(|s| !s.is_empty())
-        .map_or_else(
-            || {
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or(std::time::Duration::ZERO)
-                    .as_secs();
-                format!("bookmark_{now}.gvbm")
-            },
-            |stem| format!("{stem}.gvbm"),
-        );
-
     let save_path = crate::file_ops::save_file_dialog(
         hwnd,
         crate::file_ops::SaveFileDialogParams {
-            default_name: &default_name,
+            default_name: initial_name,
             filter_name: "ぐらびゅブックマーク",
             filter_ext: "*.gvbm",
             default_ext: "gvbm",
@@ -79,7 +96,7 @@ pub fn save_bookmark(
     )?;
 
     let Some(save_path) = save_path else {
-        return Ok(()); // キャンセル
+        return Ok(None); // キャンセル
     };
 
     let mut content = String::new();
@@ -110,22 +127,25 @@ pub fn save_bookmark(
     std::fs::write(&save_path, &content)
         .with_context(|| format!("ブックマーク保存失敗: {}", save_path.display()))?;
 
-    Ok(())
+    Ok(Some(save_path))
 }
 
 /// ダイアログでブックマークを選択して読み込む
 ///
 /// `is_archive` は旧形式 (`.gvb`) のパス文字列からアーカイブを検出するために使う。
 /// 新形式 (`.gvbm` / `.gv3bm`) では型情報がタブ区切りで明示されているため使われない。
+///
+/// 戻り値はブックマークデータと選択パスの組。キャンセル時は `Ok(None)`。
 pub fn load_bookmark(
     hwnd: HWND,
     is_archive: impl Fn(&Path) -> bool,
-) -> Result<Option<BookmarkData>> {
+) -> Result<Option<(BookmarkData, PathBuf)>> {
     let path = crate::file_ops::open_bookmark_dialog(hwnd)?;
     let Some(path) = path else {
         return Ok(None);
     };
-    load_bookmark_from_path(&path, &is_archive).map(Some)
+    let data = load_bookmark_from_path(&path, &is_archive)?;
+    Ok(Some((data, path)))
 }
 
 /// 指定パスからブックマークを読み込む (CLI 引数・シェル関連付け経由用)
@@ -210,6 +230,36 @@ fn parse_bookmark(content: &str) -> BookmarkData {
 mod tests {
     use super::*;
     use std::path::Path;
+
+    #[test]
+    fn build_initial_save_name_uses_previous_name_when_present() {
+        // 前回採用ファイル名が指定された場合は、ファイルリスト先頭の代表ステムに関係なく
+        // 入力文字列をそのまま返す
+        let source = FileSource::File(PathBuf::from(r"C:\photos\sunset.jpg"));
+        let name = build_initial_save_name(Some("custom.gvbm"), Some(&source));
+        assert_eq!(name, "custom.gvbm");
+    }
+
+    #[test]
+    fn build_initial_save_name_uses_stem_when_no_previous_name() {
+        // 前回名が無い場合は、先頭ソースの代表ステムに `.gvbm` を付与する
+        let source = FileSource::File(PathBuf::from(r"C:\photos\sunset.jpg"));
+        let name = build_initial_save_name(None, Some(&source));
+        assert_eq!(name, "photos.gvbm");
+    }
+
+    #[test]
+    fn build_initial_save_name_falls_back_to_timestamp_when_no_source() {
+        // 前回名も先頭ソースも無い場合はタイムスタンプベースの代替名を返す。
+        // 時刻は非決定的なため、前置・拡張子・桁構成のみ検証する
+        let name = build_initial_save_name(None, None);
+        let middle = name
+            .strip_prefix("bookmark_")
+            .and_then(|s| s.strip_suffix(".gvbm"))
+            .expect("expected bookmark_<digits>.gvbm format");
+        assert!(!middle.is_empty());
+        assert!(middle.chars().all(|c| c.is_ascii_digit()));
+    }
 
     #[test]
     fn parse_bookmark_normal() {

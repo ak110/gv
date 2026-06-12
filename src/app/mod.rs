@@ -85,6 +85,10 @@ pub(crate) struct AppWindow {
     pub(crate) slideshow_active: bool,
     pub(crate) slideshow_interval_ms: u32,
     pub(crate) slideshow_repeat: bool,
+    // ブックマーク前回名キャッシュ (セッション中のみ保持)。
+    // 値はコンテナ識別キーと前回採用したブックマークファイル名の組。
+    // コンテナ切り替え時はコンテナ識別キーの不一致で初期名が自動リセットされる。
+    pub(crate) last_bookmark: Option<(PathBuf, String)>,
 }
 
 impl AppWindow {
@@ -211,6 +215,7 @@ impl AppWindow {
             slideshow_active: false,
             slideshow_interval_ms: config.slideshow.interval_ms,
             slideshow_repeat: config.slideshow.repeat,
+            last_bookmark: None,
         });
 
         // GWLP_USERDATAにポインタを格納 (WndProcからアクセスするため)
@@ -829,9 +834,30 @@ impl AppWindow {
             crate::bookmark::load_bookmark(self.hwnd, is_archive)
         };
         match result {
-            Ok(Some(data)) => {
-                if let Err(e) = self.document.load_bookmark_data(data) {
-                    self.show_error_title(&format!("ブックマークの読み込みに失敗しました: {e}"));
+            Ok(Some((data, path))) => {
+                match self.document.load_bookmark_data(data) {
+                    Ok(()) => {
+                        // 読み込み成功時のみ前回名キャッシュを更新する。
+                        // 反映後のファイルリスト先頭からコンテナ識別キーを取得し、
+                        // 選択パスのファイル名部分とペアで保持する。
+                        if let (Some(key), Some(file_name)) = (
+                            self.document
+                                .file_list()
+                                .files()
+                                .first()
+                                .and_then(|f| f.source.bookmark_container_key()),
+                            path.file_name()
+                                .and_then(|n| n.to_str())
+                                .map(str::to_string),
+                        ) {
+                            self.last_bookmark = Some((key, file_name));
+                        }
+                    }
+                    Err(e) => {
+                        self.show_error_title(&format!(
+                            "ブックマークの読み込みに失敗しました: {e}"
+                        ));
+                    }
                 }
                 self.process_document_events();
             }
@@ -1129,10 +1155,45 @@ impl AppWindow {
                     self.process_document_events();
                 }
                 let idx = self.document.file_list().current_index();
-                if let Err(e) =
-                    crate::bookmark::save_bookmark(self.hwnd, self.document.file_list(), idx)
-                {
-                    self.show_error_title(&format!("ブックマークの保存に失敗しました: {e}"));
+                let first_source = self
+                    .document
+                    .file_list()
+                    .files()
+                    .first()
+                    .map(|f| f.source.clone());
+                // 現在のコンテナ識別キーが前回キャッシュと一致する場合のみ前回ファイル名を流用する。
+                // 不一致 (別コンテナへ切り替えた直後など) では `None` を渡し、
+                // ヘルパー側で代表ステムベースの初期名に戻す。
+                let current_key = first_source
+                    .as_ref()
+                    .and_then(crate::file_info::FileSource::bookmark_container_key);
+                let previous_name = self.last_bookmark.as_ref().and_then(|(key, name)| {
+                    (current_key.as_ref() == Some(key)).then_some(name.as_str())
+                });
+                let initial_name =
+                    crate::bookmark::build_initial_save_name(previous_name, first_source.as_ref());
+                match crate::bookmark::save_bookmark(
+                    self.hwnd,
+                    self.document.file_list(),
+                    idx,
+                    &initial_name,
+                ) {
+                    Ok(Some(saved_path)) => {
+                        // 保存成功時のみキャッシュを更新する。コンテナ識別キーは現在の先頭ソースから取得する。
+                        if let (Some(key), Some(file_name)) = (
+                            current_key,
+                            saved_path
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                                .map(str::to_string),
+                        ) {
+                            self.last_bookmark = Some((key, file_name));
+                        }
+                    }
+                    Ok(None) => {} // キャンセル: キャッシュは維持
+                    Err(e) => {
+                        self.show_error_title(&format!("ブックマークの保存に失敗しました: {e}"));
+                    }
                 }
             }
             Action::BookmarkLoad => self.action_bookmark_load(),
