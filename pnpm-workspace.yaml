@@ -7,6 +7,10 @@ onlyBuiltDependencies:
 # VitePress 1.6.4 が vite ^5.4.14 を要求するが、vite 5 系は GHSA-4w7w-66w2-5vf9（CVE-2026-39365）の patched 版が無く、
 # esbuild も 0.24.2 以下で GHSA-67mh-4wv8-2f99 が残るため、両者を patched 系列に強制 override する。
 # VitePress が vite 6 以上を直接要求するようになったら撤去できる。
+# prh 5.4.4 が js-yaml ^3.9.1 を要求するが、pnpm/Dependabot の解決が 3.14.2 で止まり
+# GHSA-h67p-54hq-rp68（CVE-2026-53550）の patched 版 3.15.0 に上がらないため、3 系のみ強制 override する。
+# textlint-rule-prh が prh 6 系（js-yaml 4 系依存）へ更新されたら撤去できる。
 overrides:
   vite: ^6.4.2
   esbuild: ^0.25.0
+  js-yaml@^3: ^3.15.0
