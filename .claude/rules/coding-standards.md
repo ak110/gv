@@ -60,3 +60,22 @@ zipクレートv8の`ZipFile::name()`はファイル名をまずUTF-8として�
   フォールバック動作がある場合はそのまま続行してよい
 - 可能な限り`Result`で呼び出し元に返し、`app.rs`のアクションハンドラでエラー表示を行う。
   中間層でエラーを握り潰さない
+
+## モーダルダイアログ表示前のカーソル可視化
+
+フルスクリーンモードのカーソル自動非表示の状態でモーダルダイアログを開いた際は、
+ダイアログ表示中もカーソルが不可視のままになる事象が発生する。
+`AppWindow`メソッドからモーダルダイアログを開く場合は
+`prepare_modal_dialog`と`finish_modal_dialog`のペアで囲む。
+
+- 事前条件判定の後・ダイアログ呼び出しの直前で`self.prepare_modal_dialog()`を呼ぶ
+- ダイアログ呼び出しの直後で`self.finish_modal_dialog()`を呼ぶ
+- 対象は`file_ops::open_file_dialog`などのCommon Item Dialog系関数、
+  `util::show_message_box`・`ui::info_dialog::show_info_dialog`などの自作モーダル、
+  `file_ops::delete_to_recycle_bin`などの`IFileOperation`系関数を含む
+- `bookmark::save_bookmark`などが内部でこれらの関数を呼ぶ場合は
+  呼び出し元の`AppWindow`メソッド側でペアを配置する
+- 早期returnを含む全終了経路で`finish_modal_dialog`を通す。ただし`DestroyWindow(self.hwnd)`後は呼ばずに関数を抜ける
+- `Document`など`&self`借用を保持したままペアを呼ぶと借用検査に違反するため、
+  ダイアログ呼び出し前に必要な値を所有値として取り出す
+- 単一メソッド内で複数のダイアログを順次呼ぶ場合は最初の直前で`prepare`、最後の直後で`finish`と1回ずつでよい

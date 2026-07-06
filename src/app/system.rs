@@ -9,6 +9,7 @@ use super::AppWindow;
 impl AppWindow {
     /// アップデート確認・実行
     pub(crate) fn check_for_update(&mut self) {
+        self.prepare_modal_dialog();
         // WaitCursor表示
         let prev_cursor = unsafe { SetCursor(LoadCursorW(None, IDC_WAIT).ok()) };
 
@@ -56,10 +57,13 @@ impl AppWindow {
                     match crate::updater::perform_update(&info) {
                         Ok(true) => {
                             // バッチスクリプト起動成功 → アプリ終了
+                            // DestroyWindow後にfinish_modal_dialogを呼ぶと破棄済みhwndで
+                            // SetTimer/KillTimerを実行することになるため、ここで抜ける。
                             unsafe {
                                 let _ = SetCursor(Some(prev));
                                 let _ = DestroyWindow(self.hwnd);
                             }
+                            return;
                         }
                         Ok(false) => unsafe {
                             let _ = SetCursor(Some(prev));
@@ -81,10 +85,12 @@ impl AppWindow {
                 }
             }
         }
+        self.finish_modal_dialog();
     }
 
     /// シェル統合 (ファイル関連付け・コンテキストメニュー・「送る」) を登録
-    pub(crate) fn action_register_shell(&self) {
+    pub(crate) fn action_register_shell(&mut self) {
+        self.prepare_modal_dialog();
         let answer = unsafe {
             crate::util::show_message_box(
                 self.hwnd,
@@ -94,6 +100,7 @@ impl AppWindow {
             )
         };
         if answer != IDYES {
+            self.finish_modal_dialog();
             return;
         }
 
@@ -115,10 +122,12 @@ impl AppWindow {
                 );
             },
         }
+        self.finish_modal_dialog();
     }
 
     /// シェル統合 (ファイル関連付け・コンテキストメニュー・「送る」) を解除
-    pub(crate) fn action_unregister_shell(&self) {
+    pub(crate) fn action_unregister_shell(&mut self) {
+        self.prepare_modal_dialog();
         let answer = unsafe {
             crate::util::show_message_box(
                 self.hwnd,
@@ -128,6 +137,7 @@ impl AppWindow {
             )
         };
         if answer != IDYES {
+            self.finish_modal_dialog();
             return;
         }
 
@@ -149,6 +159,7 @@ impl AppWindow {
                 );
             },
         }
+        self.finish_modal_dialog();
     }
 
     pub(crate) fn action_open_exe_folder(&mut self) {

@@ -354,6 +354,24 @@ impl AppWindow {
         }
     }
 
+    /// モーダルダイアログ表示前にカーソルを可視化する
+    ///
+    /// フルスクリーンモードでのカーソル自動非表示状態から開くダイアログでも
+    /// カーソルが見えるようにする。ダイアログ呼び出しの直前で呼ぶ。
+    fn prepare_modal_dialog(&mut self) {
+        self.cursor_hider.force_show(self.hwnd);
+    }
+
+    /// モーダルダイアログ終了後にタイマーを再セットする
+    ///
+    /// フルスクリーン中で自動非表示が有効なら非表示タイマーを再起動する。
+    /// ダイアログ呼び出しの直後で呼ぶ。
+    fn finish_modal_dialog(&mut self) {
+        if self.fullscreen.is_fullscreen() && self.cursor_hider.is_enabled() {
+            self.cursor_hider.on_mouse_move(self.hwnd);
+        }
+    }
+
     /// 現在の修飾キー状態を取得
     fn current_modifiers() -> Modifiers {
         unsafe {
@@ -744,8 +762,10 @@ impl AppWindow {
             .current_source()
             .and_then(|s| s.parent_dir())
             .map(Path::to_path_buf);
-        if let Ok(Some(path)) = crate::file_ops::open_file_dialog(self.hwnd, initial_dir.as_deref())
-        {
+        self.prepare_modal_dialog();
+        let dialog_result = crate::file_ops::open_file_dialog(self.hwnd, initial_dir.as_deref());
+        self.finish_modal_dialog();
+        if let Ok(Some(path)) = dialog_result {
             if let Err(e) = self.document.open(&path) {
                 self.show_error_title(&format!("ファイルを開けませんでした: {e}"));
             }
@@ -763,9 +783,10 @@ impl AppWindow {
             .current_source()
             .and_then(|s| s.parent_dir())
             .map(Path::to_path_buf);
-        if let Ok(Some(path)) =
-            crate::file_ops::open_folder_dialog(self.hwnd, initial_dir.as_deref())
-        {
+        self.prepare_modal_dialog();
+        let dialog_result = crate::file_ops::open_folder_dialog(self.hwnd, initial_dir.as_deref());
+        self.finish_modal_dialog();
+        if let Ok(Some(path)) = dialog_result {
             if let Err(e) = self.document.open_folder(&path) {
                 self.show_error_title(&format!("フォルダを開けませんでした: {e}"));
             }
@@ -829,10 +850,12 @@ impl AppWindow {
         self.selection.deselect();
         // is_archive クロージャは旧形式 (.gvb) のパース時にのみ使われる。
         // self.document の共有借用のみなので、後続の load_bookmark_data の可変借用と競合しない。
+        self.prepare_modal_dialog();
         let result = {
             let is_archive = |p: &std::path::Path| self.document.is_archive_path(p);
             crate::bookmark::load_bookmark(self.hwnd, is_archive)
         };
+        self.finish_modal_dialog();
         match result {
             Ok(Some((data, path))) => {
                 match self.document.load_bookmark_data(data) {
@@ -1172,12 +1195,15 @@ impl AppWindow {
                 });
                 let initial_name =
                     crate::bookmark::build_initial_save_name(previous_name, first_source.as_ref());
-                match crate::bookmark::save_bookmark(
+                self.prepare_modal_dialog();
+                let bookmark_result = crate::bookmark::save_bookmark(
                     self.hwnd,
                     self.document.file_list(),
                     idx,
                     &initial_name,
-                ) {
+                );
+                self.finish_modal_dialog();
+                match bookmark_result {
                     Ok(Some(saved_path)) => {
                         // 保存成功時のみキャッシュを更新する。コンテナ識別キーは現在の先頭ソースから取得する。
                         if let (Some(key), Some(file_name)) = (
@@ -1272,16 +1298,19 @@ impl AppWindow {
 
     /// 画像を指定フォーマットで保存する
     fn export_image(&mut self, format: ExportFormat) {
-        let Some(img) = self.document.current_image() else {
+        // ダイアログ前後で self への可変借用を要求するため、
+        // 画像の借用スコープはダイアログ前で閉じておく。
+        if self.document.current_image().is_none() {
             return;
-        };
+        }
         let (default_stem, initial_dir) = self.document.current_source().map_or_else(
             || ("image".to_string(), None),
             |s| (s.default_save_stem(), s.parent_dir().map(Path::to_path_buf)),
         );
         let default_name = format!("{default_stem}.{}", format.extension());
 
-        let Some(save_path) = crate::file_ops::save_file_dialog(
+        self.prepare_modal_dialog();
+        let dialog_result = crate::file_ops::save_file_dialog(
             self.hwnd,
             crate::file_ops::SaveFileDialogParams {
                 default_name: &default_name,
@@ -1291,12 +1320,15 @@ impl AppWindow {
                 initial_dir: initial_dir.as_deref(),
                 ..Default::default()
             },
-        )
-        .ok()
-        .flatten() else {
+        );
+        self.finish_modal_dialog();
+        let Some(save_path) = dialog_result.ok().flatten() else {
             return;
         };
 
+        let Some(img) = self.document.current_image() else {
+            return;
+        };
         if let Err(e) = write_image_to_path(img.width, img.height, &img.data, format, &save_path) {
             self.show_error_title(&format!("{e}"));
         }
@@ -1316,7 +1348,7 @@ impl AppWindow {
     }
 
     /// 画像情報を表示する
-    fn show_image_info(&self) {
+    fn show_image_info(&mut self) {
         let Some(source) = self.document.current_source() else {
             return;
         };
@@ -1352,11 +1384,14 @@ impl AppWindow {
         }
 
         let text = info_lines.join("\n\n");
-        info_dialog::show_info_dialog(self.hwnd, "画像情報", &text, self.monospace_font.hfont());
+        let font = self.monospace_font.hfont();
+        self.prepare_modal_dialog();
+        info_dialog::show_info_dialog(self.hwnd, "画像情報", &text, font);
+        self.finish_modal_dialog();
     }
 
     /// ヘルプを表示する
-    fn show_help(&self) {
+    fn show_help(&mut self) {
         let text = "\
 ぐらびゅ - Windows用画像ビューアー
 
@@ -1383,12 +1418,10 @@ F1                  このヘルプ
 アーカイブ: ZIP/cbz, RAR/cbr, 7z
 Susieプラグイン (.sph/.spi) で拡張可能";
 
-        info_dialog::show_info_dialog(
-            self.hwnd,
-            "ぐらびゅ ヘルプ",
-            text,
-            self.monospace_font.hfont(),
-        );
+        let font = self.monospace_font.hfont();
+        self.prepare_modal_dialog();
+        info_dialog::show_info_dialog(self.hwnd, "ぐらびゅ ヘルプ", text, font);
+        self.finish_modal_dialog();
     }
 
     /// マウス左ボタン押下: 選択ドラッグ開始

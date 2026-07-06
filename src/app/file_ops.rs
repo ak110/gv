@@ -17,7 +17,10 @@ impl AppWindow {
             return;
         }
         if let Some(path) = self.document.current_path().map(Path::to_path_buf) {
-            if let Ok(true) = crate::file_ops::delete_to_recycle_bin(self.hwnd, &[&path]) {
+            self.prepare_modal_dialog();
+            let delete_result = crate::file_ops::delete_to_recycle_bin(self.hwnd, &[&path]);
+            self.finish_modal_dialog();
+            if let Ok(true) = delete_result {
                 self.document.remove_current_from_list();
                 self.process_document_events();
             }
@@ -53,7 +56,8 @@ impl AppWindow {
             _ => ("ファイルを保存", "保存"),
         };
 
-        if let Ok(Some(dest)) = crate::file_ops::save_file_dialog(
+        self.prepare_modal_dialog();
+        let dialog_result = crate::file_ops::save_file_dialog(
             self.hwnd,
             crate::file_ops::SaveFileDialogParams {
                 default_name: &default_name,
@@ -64,7 +68,9 @@ impl AppWindow {
                 ok_button_label: Some(dialog_button),
                 ..Default::default()
             },
-        ) {
+        );
+        self.finish_modal_dialog();
+        if let Ok(Some(dest)) = dialog_result {
             match &source {
                 crate::file_info::FileSource::File(_) => {
                     // 通常ファイル: SHFileOperationWでUndo対応の移動
@@ -109,41 +115,53 @@ impl AppWindow {
     }
 
     pub(crate) fn action_copy_file(&mut self) {
-        if let Some(current) = self.document.file_list().current() {
-            let default_name = current.source.default_save_name();
-            let initial_dir = current.source.parent_dir().map(Path::to_path_buf);
-            if let Ok(Some(dest)) = crate::file_ops::save_file_dialog(
-                self.hwnd,
-                crate::file_ops::SaveFileDialogParams {
-                    default_name: &default_name,
-                    filter_name: "すべてのファイル",
-                    filter_ext: "*.*",
-                    initial_dir: initial_dir.as_deref(),
-                    title: Some("ファイルを複製"),
-                    ok_button_label: Some("複製"),
-                    ..Default::default()
-                },
-            ) {
-                let result = if matches!(
-                    current.source,
-                    crate::file_info::FileSource::ArchiveEntry {
-                        on_demand: true,
-                        ..
-                    }
-                ) {
-                    // オンデマンド: アーカイブから読み込んで保存
-                    self.document
-                        .read_file_data_current()
-                        .and_then(|data| std::fs::write(&dest, &data).map_err(anyhow::Error::from))
-                } else {
-                    // 通常ファイル/temp展開済み/PDF: 既存のfs::copy
-                    std::fs::copy(&current.path, &dest)
-                        .map(|_| ())
-                        .map_err(anyhow::Error::from)
-                };
-                if let Err(e) = result {
-                    self.show_error_title(&format!("ファイルのコピーに失敗しました: {e}"));
+        // ダイアログ前後で self への可変借用を要求するため、
+        // current の借用スコープはダイアログ前で閉じ、必要値は所有値へ複製する。
+        let (default_name, initial_dir, source, path) = {
+            let Some(current) = self.document.file_list().current() else {
+                return;
+            };
+            (
+                current.source.default_save_name(),
+                current.source.parent_dir().map(Path::to_path_buf),
+                current.source.clone(),
+                current.path.clone(),
+            )
+        };
+        self.prepare_modal_dialog();
+        let dialog_result = crate::file_ops::save_file_dialog(
+            self.hwnd,
+            crate::file_ops::SaveFileDialogParams {
+                default_name: &default_name,
+                filter_name: "すべてのファイル",
+                filter_ext: "*.*",
+                initial_dir: initial_dir.as_deref(),
+                title: Some("ファイルを複製"),
+                ok_button_label: Some("複製"),
+                ..Default::default()
+            },
+        );
+        self.finish_modal_dialog();
+        if let Ok(Some(dest)) = dialog_result {
+            let result = if matches!(
+                source,
+                crate::file_info::FileSource::ArchiveEntry {
+                    on_demand: true,
+                    ..
                 }
+            ) {
+                // オンデマンド: アーカイブから読み込んで保存
+                self.document
+                    .read_file_data_current()
+                    .and_then(|data| std::fs::write(&dest, &data).map_err(anyhow::Error::from))
+            } else {
+                // 通常ファイル/temp展開済み/PDF: 既存のfs::copy
+                std::fs::copy(&path, &dest)
+                    .map(|_| ())
+                    .map_err(anyhow::Error::from)
+            };
+            if let Err(e) = result {
+                self.show_error_title(&format!("ファイルのコピーに失敗しました: {e}"));
             }
         }
     }
@@ -163,7 +181,10 @@ impl AppWindow {
             .map(|&i| self.document.file_list().files()[i].path.clone())
             .collect();
         let path_refs: Vec<&Path> = paths.iter().map(PathBuf::as_path).collect();
-        if let Ok(true) = crate::file_ops::delete_to_recycle_bin(self.hwnd, &path_refs) {
+        self.prepare_modal_dialog();
+        let delete_result = crate::file_ops::delete_to_recycle_bin(self.hwnd, &path_refs);
+        self.finish_modal_dialog();
+        if let Ok(true) = delete_result {
             self.document.remove_marked_from_list();
             self.process_document_events();
         }
@@ -191,11 +212,14 @@ impl AppWindow {
             .source
             .parent_dir()
             .map(Path::to_path_buf);
-        if let Ok(Some(dest)) = crate::file_ops::select_folder_dialog(
+        self.prepare_modal_dialog();
+        let dialog_result = crate::file_ops::select_folder_dialog(
             self.hwnd,
             "移動先フォルダ",
             initial_dir.as_deref(),
-        ) {
+        );
+        self.finish_modal_dialog();
+        if let Ok(Some(dest)) = dialog_result {
             let path_refs: Vec<&Path> = paths.iter().map(PathBuf::as_path).collect();
             if let Ok(true) = crate::file_ops::move_files(self.hwnd, &path_refs, &dest) {
                 // パス更新失敗時は従来通りリストから削除 (フォールバック)
@@ -225,11 +249,14 @@ impl AppWindow {
             .source
             .parent_dir()
             .map(Path::to_path_buf);
-        if let Ok(Some(dest)) = crate::file_ops::select_folder_dialog(
+        self.prepare_modal_dialog();
+        let dialog_result = crate::file_ops::select_folder_dialog(
             self.hwnd,
             "コピー先フォルダ",
             initial_dir.as_deref(),
-        ) {
+        );
+        self.finish_modal_dialog();
+        if let Ok(Some(dest)) = dialog_result {
             let path_refs: Vec<&Path> = paths.iter().map(PathBuf::as_path).collect();
             if let Err(e) = crate::file_ops::copy_files(self.hwnd, &path_refs, &dest) {
                 self.show_error_title(&format!("ファイルのコピーに失敗しました: {e}"));
