@@ -9,8 +9,8 @@ Windows用画像ビューアー（Rust製）。多形式対応と高速切り替
 - rust, node, pnpmなどはmise経由で実行する
 - 普段使うのは`mise run format`（フォーマット + 軽量lint）と`mise run test`（全チェック実行）
 - リリースは`gh workflow run release.yaml --field="bump=PATCH"`で実行する
-- コミット前の検証方法: `uvx pyfltr run-for-agent`
-  - テストコードの単体実行なども極力`pyfltr run-for-agent <path>`を使う（直接呼び出さない）
+- コミット前の検証方法: `mise run test`
+  - 特定ファイルに限定する場合は `uvx pyfltr run <path>` を使う
   - 修正後の再実行時は`--commands=cargo-clippy,cargo-test`等で限定して実行する（最終検証はCIに委ねる前提）
 
 ## アーキテクチャの参照先
