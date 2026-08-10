@@ -10,7 +10,8 @@ uv = "latest"
 # Cargo.toml の `[lints.clippy]` で対象 lint を allow 指定して許容している。
 rust = { version = "1.95.0", components = "rustfmt,clippy" }
 node = "lts"
-# pnpm は corepack 経由で `package.json` の `packageManager` フィールドに従って解決する。
+# pnpm は各コマンドで corepack を明示し、`package.json` の `packageManager`
+# フィールドに従って解決する。PATH 上の別の pnpm 実装へ依存させないためである。
 # mise registry 既定 (`aqua:pnpm/pnpm`) は aqua-registry の Windows アセット命名
 # (`pnpm-win-x64`) と上流リリース (`pnpm-win32-x64.zip`) の齟齬で pnpm 11.x の
 # Windows runner インストールが失敗するため、ツール定義からは外す。
@@ -31,21 +32,16 @@ description = "開発環境のセットアップ"
 # rustfmt / clippy の component インストールは mise の `[tools].rust` 側に集約している。
 # cargo-deny は `[tools]` の aqua バックエンド指定で `mise install` 時に解決されるため、
 # `cargo install cargo-deny` は重複インストールになるので外している。
-# `corepack enable pnpm` は Node.js 同梱の corepack に pnpm のシムを配置させ、
-# `package.json` の `packageManager` で固定したバージョンを以降の pnpm 呼び出しで
-# 利用可能にする。CI/ローカルともに最初の `pnpm install` の前に必要。
 run = [
   "cargo install cargo-edit",
-  "corepack enable pnpm",
-  "pnpm install",
+  "corepack pnpm install",
   "git config --unset core.hooksPath || true",
   "uvx prek install -c .pre-commit-config.yaml",
   "git config --local commit.template .gitmessage",
 ]
 run_windows = [
   "cargo install cargo-edit",
-  "corepack enable pnpm",
-  "pnpm install",
+  "corepack pnpm install",
   "git config --unset core.hooksPath & exit /b 0",
   "uvx prek install -c .pre-commit-config.yaml",
   "git config --local commit.template .gitmessage",
@@ -58,11 +54,9 @@ description = "CI環境のセットアップ (cargo install をスキップ)"
 # にて再現: ログには "info: downloading 5 components" が出るが、後段で
 # `'cargo-clippy.exe' is not installed for the toolchain` エラーになる)。
 # mise が設定する RUSTUP_TOOLCHAIN を使い rustup から明示的に冪等補強する。
-# corepack については setup タスクのコメント参照。
 run = [
   "rustup component add rustfmt clippy",
-  "corepack enable pnpm",
-  "pnpm install",
+  "corepack pnpm install",
 ]
 
 [tasks.build]
@@ -99,10 +93,10 @@ run = [
   "cargo upgrade --incompatible",
   "cargo update",
   "corepack use pnpm@latest",
-  "pnpm update --latest",
-  "bash -c 'GITHUB_TOKEN=$(gh auth token) pinact run --update --min-age 1'",
+  "corepack pnpm update --latest",
+  "pinact run --update --min-age 1",
 ]
 
 [tasks.docs]
 description = "ドキュメントのローカルプレビュー"
-run = "pnpm run docs:dev"
+run = "corepack pnpm run docs:dev"

@@ -234,7 +234,7 @@ pub fn paste_image_from_clipboard(hwnd: HWND) -> Result<Option<DecodedImage>> {
     }
 }
 
-/// DIBヘッダ情報から32ビットDIBの4バイト目がアルファチャンネルとして有効かを判定する。
+/// DIBヘッダ情報から32ビットDIBの4バイト目にあるアルファチャンネルの有効性を判定する。
 ///
 /// 32ビットDIBの4バイト目は仕様上パディングであり、アルファチャンネルとして使用するには
 /// ヘッダで明示的に宣言されている必要がある。BITMAPINFOHEADER(biSize=40)では

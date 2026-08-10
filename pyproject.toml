@@ -4,8 +4,9 @@ exclude-newer = "1 day"
 [tool.pyfltr]
 preset = "latest"
 rust = true
-js-runner = "pnpm"
+js-runner = "direct"
 prettier = true
+colloquial-check = true
 
 extend-exclude = [
     "target",

@@ -19,7 +19,7 @@ pub enum FileSource {
         on_demand: bool,
         /// アーカイブ内エントリの再アクセス用インデックス。
         /// 新規ZIPオープン時は`Some`、ブックマーク等の旧形式復元時は`None`を保持し、
-        /// ZIPオンデマンド読み出し経路は値が`Some`ならインデックスベースAPIへ、
+        /// ZIPオンデマンド取得経路は値が`Some`ならインデックスベースAPIへ、
         /// `None`なら名前ベースAPIへフォールバックする
         entry_index: Option<u32>,
     },
@@ -405,7 +405,7 @@ mod tests {
         );
 
         // 通常ファイル (ルート直下): parent() がドライブルート `C:\` を返す。
-        // 代表ステムでは `None` になるケースでも、コンテナ識別キーは判定に使える
+        // 代表ステムでは `None` になるケースでも、コンテナ識別キーは判定に利用できる
         let root_file = FileSource::File(PathBuf::from(r"C:\sunset.jpg"));
         assert_eq!(
             root_file.bookmark_container_key().as_deref(),

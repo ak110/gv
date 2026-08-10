@@ -487,7 +487,7 @@ mod tests {
     /// ファイル名フィールドにCP932バイト列を直接書き込んだ最小ZIPバイナリを組み立てる
     ///
     /// 目的: zipクレートの`ZipWriter`はファイル名をUTF-8で書き込み汎用ビットフラグの
-    /// 第11ビット (UTF-8) を立てるため、後処理ではCP932記録ZIPを再現できない。
+    /// 第11ビット (UTF-8) を設定するため、後処理ではCP932記録ZIPを再現できない。
     /// 本関数はZIP仕様 (APPNOTE 4.3) に従い、ローカルファイルヘッダー・セントラル
     /// ディレクトリ・EOCDの長さとオフセットを整合させた上で、ファイル名フィールドへ
     /// CP932バイト列をそのまま書き込む。
@@ -518,7 +518,7 @@ mod tests {
             buf.extend_from_slice(name);
             buf.extend_from_slice(data);
 
-            // Central directory record (構築は後回し、各エントリのバイト列だけ作る)
+            // Central directory record (構築は後段で行い、各エントリのバイト列だけを生成する)
             let mut cd = Vec::new();
             cd.extend_from_slice(&0x02014b50u32.to_le_bytes()); // signature
             cd.extend_from_slice(&20u16.to_le_bytes()); // version made by
@@ -593,7 +593,7 @@ mod tests {
         assert_eq!(entries[0].file_name, "画像.jpg");
         assert_eq!(entries[0].entry_index, 0);
 
-        // 読み出し: インデックスベースで成功すること
+        // 取得: インデックスベースで成功すること
         let data = ZipHandler::read_entry_from_buffer_at(&buffer, 0).unwrap();
         assert_eq!(data, payload);
 

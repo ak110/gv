@@ -1,7 +1,7 @@
 {
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@11.1.3+sha512.c85357fe17ca12dd23dd7071822666dfd7e3cb76fe214e3370b5ea2fb34f2a231185509b63e717f3cd0acb38dd3f8d82bcd5e8172400ae678b70ea4fbed0896d",
+  "packageManager": "pnpm@11.21.0+sha512.521705bce689924eac72f5a3587122f362689ef6571e55ba80076fd637c11132ecffada26fad4ea79c485bfddbfd3d5a2a5b05805a77e893de71ec8a6cca3bb1",
   "scripts": {
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
@@ -10,9 +10,9 @@
     "lint:fix": "textlint --fix 'docs/**/*.md' README.md CLAUDE.md && markdownlint-cli2 --fix 'docs/**/*.md' README.md CLAUDE.md && prettier --write ."
   },
   "devDependencies": {
-    "markdownlint-cli2": "^0.22.1",
-    "prettier": "^3.8.4",
-    "textlint": "^15.7.1",
+    "markdownlint-cli2": "^0.23.2",
+    "prettier": "^3.9.6",
+    "textlint": "^15.8.0",
     "textlint-rule-ja-no-abusage": "^3.0.0",
     "textlint-rule-preset-ja-technical-writing": "^12.0.2",
     "textlint-rule-preset-jtf-style": "^3.0.3",

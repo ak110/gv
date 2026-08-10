@@ -16,7 +16,7 @@ pub type ExtractedEntry = (PathBuf, String);
 /// オンデマンド取得用のアーカイブ内画像エントリ情報
 pub struct ArchiveImageEntry {
     /// アーカイブ内パス (例: "subfolder/image.png")
-    /// ZIPの場合はCP932/UTF-8復号後の表示用文字列であり再アクセス用キーには使えない
+    /// ZIPの場合はCP932/UTF-8復号後の表示用文字列であり再アクセス用キーには使用できない
     pub entry_name: String,
     /// フラット化したファイル名 (ソート用)
     pub file_name: String,

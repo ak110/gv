@@ -357,7 +357,7 @@ impl AppWindow {
     /// モーダルダイアログ表示前にカーソルを可視化する
     ///
     /// フルスクリーンモードでのカーソル自動非表示状態から開くダイアログでも
-    /// カーソルが見えるようにする。ダイアログ呼び出しの直前で呼ぶ。
+    /// カーソルを可視状態にする。ダイアログ呼び出しの直前で呼ぶ。
     fn prepare_modal_dialog(&mut self) {
         self.cursor_hider.force_show(self.hwnd);
     }
