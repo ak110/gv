@@ -1250,12 +1250,16 @@ impl AppWindow {
 
             // --- メニューバー ---
             Action::ToggleMenuBar => {
-                self.menu_visible = !self.menu_visible;
-                unsafe {
-                    if self.menu_visible {
-                        let _ = SetMenu(self.hwnd, Some(self.menu));
-                    } else {
-                        let _ = SetMenu(self.hwnd, None);
+                // フルスクリーン中はメニューを常に非表示にしているため、
+                // 表示状態だけが切り替わらないよう無視する
+                if !self.fullscreen.is_fullscreen() {
+                    self.menu_visible = !self.menu_visible;
+                    unsafe {
+                        if self.menu_visible {
+                            let _ = SetMenu(self.hwnd, Some(self.menu));
+                        } else {
+                            let _ = SetMenu(self.hwnd, None);
+                        }
                     }
                 }
             }
