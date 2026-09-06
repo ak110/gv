@@ -47,16 +47,13 @@ GitHub Actionsのワークフローは`pinact`でハッシュピン留めして�
 
 ## リリース手順
 
-GitHub Actionsの`Release`ワークフローを手動実行してリリースする。
+`releaser`でリリースする。
 
 ```cmd
 rem リリース実行 (いずれか1つ)
-gh workflow run release.yaml --field="bump=PATCH"
-gh workflow run release.yaml --field="bump=MINOR"
-gh workflow run release.yaml --field="bump=MAJOR"
-
-rem ワークフロー完了を待ち、バージョンバンプコミットを取り込む
-for /f "usebackq" %i in (`gh run list --workflow=release.yaml -L1 --json=databaseId -q ".[0].databaseId"`) do gh run watch %i && git pull
+releaser patch
+releaser minor
+releaser major
 ```
 
 結果の確認: <https://github.com/ak110/gv/actions>
