@@ -1171,12 +1171,10 @@ impl Document {
 
     // --- マーク操作 ---
 
-    /// 現在のファイルをマークして次へ移動する
+    /// 現在のファイルをマークする (現在位置は移動しない)
     pub fn mark_current(&mut self) {
         if let Some(index) = self.file_list.current_index() {
             self.file_list.mark_at(index);
-            // マーク後に次へ移動
-            self.navigate_relative(1);
         }
     }
 
@@ -1620,11 +1618,11 @@ mod tests {
 
         assert_eq!(doc.file_list().marked_count(), 0);
 
-        doc.mark_current(); // mark index 0, move to 1
-        assert_eq!(doc.file_list().current_index(), Some(1));
+        // マーク設定は現在位置を移動しない
+        doc.mark_current(); // mark index 0, stay at 0
+        assert_eq!(doc.file_list().current_index(), Some(0));
         assert_eq!(doc.file_list().marked_count(), 1);
 
-        doc.navigate_first();
         doc.invert_all_marks(); // toggle all marks (0 marked -> 0, 1, 2 marked; 0 is unmarked)
         let marked = doc.file_list().marked_count();
         assert!(marked > 0 && marked < 3); // should have some marked and some unmarked

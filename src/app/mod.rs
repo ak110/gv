@@ -319,6 +319,13 @@ impl AppWindow {
             } else {
                 String::new()
             };
+            // ファイルリスト非表示時もマーク状態を確認できるよう、タイトルへ表示する。
+            // 記号は ui::file_list_panel のマーク済み表示と揃える。
+            let mark_info = if fl.current().is_some_and(|f| f.marked) {
+                " ★"
+            } else {
+                ""
+            };
             // 選択情報をタイトルに追加
             let sel_info = if let Some(rect) = self.selection.current_rect() {
                 format!(
@@ -334,7 +341,9 @@ impl AppWindow {
             } else {
                 String::new()
             };
-            format!("{loading_prefix}{display}{page_info}{sel_info}{expand_info} - ぐらびゅ")
+            format!(
+                "{loading_prefix}{display}{page_info}{mark_info}{sel_info}{expand_info} - ぐらびゅ"
+            )
         } else {
             concat!("ぐらびゅ v", env!("CARGO_PKG_VERSION")).to_string()
         };
@@ -721,13 +730,14 @@ impl AppWindow {
 
     // === アクションハンドラ (execute_action から呼び出される個別メソッド) ===
 
+    // マーク状態の変更は DocumentEvent を発行せず、現在位置も動かさないため、
+    // 以下の各アクションはタイトルバーとファイルリスト表示を明示的に更新する
+    // (update_title の呼び出しを除くと、タイトルバーのマーク表示が実状態から乖離する)。
     fn action_mark_set(&mut self) {
-        // mark_current() は内部でnavigate_relative(1) するのでマーク元indexを先に取得
-        let mark_idx = self.document.file_list().current_index();
         self.document.mark_current();
-        self.process_document_events();
+        self.update_title();
         if self.file_list_panel.is_visible()
-            && let Some(idx) = mark_idx
+            && let Some(idx) = self.document.file_list().current_index()
         {
             self.file_list_panel.update_item(idx);
         }
@@ -735,6 +745,7 @@ impl AppWindow {
 
     fn action_mark_unset(&mut self) {
         self.document.unmark_current();
+        self.update_title();
         if self.file_list_panel.is_visible()
             && let Some(idx) = self.document.file_list().current_index()
         {
@@ -744,11 +755,13 @@ impl AppWindow {
 
     fn action_mark_invert_all(&mut self) {
         self.document.invert_all_marks();
+        self.update_title();
         self.sync_file_list_panel();
     }
 
     fn action_mark_invert_to_here(&mut self) {
         self.document.invert_marks_to_here();
+        self.update_title();
         self.sync_file_list_panel();
     }
 
