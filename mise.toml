@@ -17,7 +17,6 @@ node = "lts"
 # Windows runner インストールが失敗するため、ツール定義からは外す。
 pinact = "latest"
 git-cliff = "latest"
-actionlint = "latest"
 typos = "latest"
 # cargo-deny は mise の core registry に存在しない (2026-04-29 時点で
 # `mise registry cargo-deny` は "tool not found in registry" を返す) ため、
@@ -26,6 +25,21 @@ typos = "latest"
 # 記述がある場合、tool spec を省略して `mise exec -- cargo-deny` を組み立てる。
 # core registry へ登録されたら本指定を撤去し既定の mise exec 経由に戻すことができる。
 "aqua:EmbarkStudios/cargo-deny" = "latest"
+
+# actionlint の配布物はインストール root へ実行ファイルと並んで `man`・`docs` の
+# ディレクトリを展開する。mise は `bin` サブディレクトリを持たないツールのインストール
+# root をそのまま PATH へ追加するため、`man` が PATH 上で `/usr/bin/man` より先に
+# 解決され、mise の shim 経由の `man` がディレクトリを exec して失敗する。
+# `symlink_bins` は実行ファイルだけを `.mise-bins` へ集め、当該ディレクトリを PATH へ
+# 追加する。既に actionlint を導入済みの環境では、再インストール
+# (`mise install --force actionlint`) または版の更新まで本設定は反映されない。
+# options を保つため inline table ではなく別テーブルで書く
+# (`mise upgrade --bump` は inline table を単一の文字列へ平坦化して options を失う)。
+# 本ブロックは `[tools]` の最後のキーより後に置く。より前へ移動すると、後続のキーが
+# `[tools]` ではなく `[tools.actionlint]` のキーとして解釈される。
+[tools.actionlint]
+version = "latest"
+symlink_bins = true
 
 [tasks.setup]
 description = "開発環境のセットアップ"
