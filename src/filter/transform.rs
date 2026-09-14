@@ -1,5 +1,7 @@
 //! 画像の幾何変換 (トリミング等)
 
+use std::borrow::Cow;
+
 use anyhow::{Context as _, Result};
 
 use crate::image::DecodedImage;
@@ -33,6 +35,21 @@ pub fn crop(image: &DecodedImage, rect: &PixelRect) -> DecodedImage {
         data,
         width: rect.width as u32,
         height: rect.height as u32,
+    }
+}
+
+/// 選択範囲を反映した出力対象の画像を返す
+///
+/// 選択範囲がある場合は当該範囲を切り出した画像を返し、無い場合は元画像をそのまま返す。
+/// 選択範囲が画像の範囲を超える場合は`crop`が画像境界へクランプし、
+/// 画像と交差しない場合は元画像と同じ内容を返す。
+///
+/// 「選択範囲があればその領域、なければ画像全体」の判定はこの関数だけが持ち、
+/// 呼び出し元は戻り値をそのまま出力対象として扱う。
+pub fn output_image(image: &DecodedImage, selection: Option<PixelRect>) -> Cow<'_, DecodedImage> {
+    match selection {
+        Some(rect) => Cow::Owned(crop(image, &rect)),
+        None => Cow::Borrowed(image),
     }
 }
 
@@ -259,6 +276,63 @@ mod tests {
             width: 4,
             height: 4,
         }
+    }
+
+    #[test]
+    fn output_image_returns_whole_image_without_selection() {
+        let img = test_image_4x4();
+        let output = output_image(&img, None);
+        assert_eq!(output.width, img.width);
+        assert_eq!(output.height, img.height);
+        assert_eq!(output.data, img.data);
+    }
+
+    #[test]
+    fn output_image_extracts_selected_region() {
+        let img = test_image_4x4();
+        let rect = PixelRect {
+            x: 1,
+            y: 1,
+            width: 2,
+            height: 2,
+        };
+        let cropped = output_image(&img, Some(rect));
+        assert_eq!(cropped.width, 2);
+        assert_eq!(cropped.height, 2);
+        assert_eq!(cropped.data, crop(&img, &rect).data);
+        // 切り出しの起点が選択矩形であることを、左上ピクセルの色で確認する
+        assert_eq!(cropped.data[0], 60);
+        assert_eq!(cropped.data[1], 60);
+    }
+
+    #[test]
+    fn output_image_clamps_partially_outside_region() {
+        let img = test_image_4x4();
+        let rect = PixelRect {
+            x: 2,
+            y: 2,
+            width: 10,
+            height: 10,
+        };
+        let cropped = output_image(&img, Some(rect));
+        assert_eq!(cropped.width, 2);
+        assert_eq!(cropped.height, 2);
+        assert_eq!(cropped.data.len(), 2 * 2 * 4);
+    }
+
+    #[test]
+    fn output_image_falls_back_to_whole_image_when_disjoint() {
+        let img = test_image_4x4();
+        let rect = PixelRect {
+            x: 100,
+            y: 100,
+            width: 20,
+            height: 20,
+        };
+        let cropped = output_image(&img, Some(rect));
+        assert_eq!(cropped.width, img.width);
+        assert_eq!(cropped.height, img.height);
+        assert_eq!(cropped.data, img.data);
     }
 
     #[test]

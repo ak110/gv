@@ -1038,10 +1038,14 @@ impl AppWindow {
 
             // --- クリップボード ---
             Action::CopyImage => {
-                if let Some(image) = self.document.current_image()
-                    && let Err(e) = crate::clipboard::copy_image_to_clipboard(self.hwnd, image)
-                {
-                    self.show_error_title(&format!("画像のコピーに失敗しました: {e}"));
+                if let Some(image) = self.document.current_image() {
+                    let target = crate::filter::transform::output_image(
+                        image,
+                        self.selection.current_rect(),
+                    );
+                    if let Err(e) = crate::clipboard::copy_image_to_clipboard(self.hwnd, &target) {
+                        self.show_error_title(&format!("画像のコピーに失敗しました: {e}"));
+                    }
                 }
             }
             Action::CopyFileName => {
@@ -1241,7 +1245,7 @@ impl AppWindow {
                 if !self.guard_unsaved_edit() {
                     return;
                 }
-                self.selection.deselect();
+                self.carry_over_selection();
                 self.navigate_to_page_dialog();
             }
 
@@ -1346,7 +1350,14 @@ impl AppWindow {
         let Some(img) = self.document.current_image() else {
             return;
         };
-        if let Err(e) = write_image_to_path(img.width, img.height, &img.data, format, &save_path) {
+        let target = crate::filter::transform::output_image(img, self.selection.current_rect());
+        if let Err(e) = write_image_to_path(
+            target.width,
+            target.height,
+            &target.data,
+            format,
+            &save_path,
+        ) {
             self.show_error_title(&format!("{e}"));
         }
     }

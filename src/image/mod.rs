@@ -6,6 +6,7 @@ pub use exif_reader::read_exif_fields;
 pub use standard::StandardDecoder;
 
 /// デコード済み画像データ (RGBAピクセル)
+#[derive(Clone)]
 pub struct DecodedImage {
     pub data: Vec<u8>,
     pub width: u32,
