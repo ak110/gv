@@ -14,9 +14,13 @@ onlyBuiltDependencies:
 # textlint 15.8.0 が ajv 8.20.0 経由で fast-uri 3.1.5 を引き込むが、
 # Dependabot は GHSA 群に対し fast-uri 3.1.6 以上を要求してくる。
 # ajv が fast-uri 3.1.6 以上へ更新されるまでの間、fast-uri を patched 版へ強制 override する。
+# markdownlint-cli2 0.23.2 が smol-toml を 1.7.0 固定で要求するのに対し、
+# Dependabot は GHSA-7w5x-hrqm-74c2（CVE-2026-85730）に対し smol-toml 1.7.1 以上を要求してくる。
+# markdownlint-cli2 が修正版を取り込むまでの間、smol-toml を patched 版へ強制 override する。
 overrides:
   vite: ^6.4.2
   esbuild: ^0.25.0
   prh: ^6.0.6
   js-yaml: ^4.2.0
   fast-uri: ^3.1.6
+  smol-toml: ^1.7.1
