@@ -8,6 +8,33 @@ use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
 
 use super::AppWindow;
 
+#[derive(Default)]
+pub(super) struct FileOperationDirectory {
+    path: Option<PathBuf>,
+}
+
+impl FileOperationDirectory {
+    pub(super) fn initial(&self, fallback: Option<&Path>) -> Option<PathBuf> {
+        self.path
+            .clone()
+            .or_else(|| fallback.map(Path::to_path_buf))
+    }
+
+    pub(super) fn remember_folder(&mut self, folder: &Path) {
+        self.path = Some(folder.to_path_buf());
+    }
+
+    pub(super) fn remember_file(&mut self, file: &Path) {
+        if let Some(parent) = file.parent() {
+            self.remember_folder(parent);
+        }
+    }
+
+    pub(super) fn reset(&mut self) {
+        self.path = None;
+    }
+}
+
 impl AppWindow {
     pub(crate) fn action_delete_file(&mut self) {
         // コンテナ内 (アーカイブ/PDF) のファイル削除は無効
@@ -47,7 +74,8 @@ impl AppWindow {
             return;
         }
 
-        let initial_dir = source.parent_dir().map(Path::to_path_buf);
+        let source_dir = source.parent_dir();
+        let initial_dir = self.file_operation_directory.initial(source_dir);
         let default_name = source.default_save_name();
 
         // ファイルソースに応じてダイアログのラベルを分岐
@@ -76,6 +104,7 @@ impl AppWindow {
                     // 通常ファイル: SHFileOperationWでUndo対応の移動
                     match crate::file_ops::move_single_file(self.hwnd, &path, &dest) {
                         Ok(true) => {
+                            self.file_operation_directory.remember_file(&dest);
                             if let Err(e) = self.document.rename_current_in_list(&dest) {
                                 self.show_error_title(&format!("リストの更新に失敗しました: {e}"));
                             }
@@ -102,8 +131,11 @@ impl AppWindow {
                             .map(|_| ())
                             .map_err(anyhow::Error::from)
                     };
-                    if let Err(e) = result {
-                        self.show_error_title(&format!("ファイルの保存に失敗しました: {e}"));
+                    match result {
+                        Ok(()) => self.file_operation_directory.remember_file(&dest),
+                        Err(e) => {
+                            self.show_error_title(&format!("ファイルの保存に失敗しました: {e}"));
+                        }
                     }
                 }
                 crate::file_info::FileSource::PdfPage { .. }
@@ -117,7 +149,7 @@ impl AppWindow {
     pub(crate) fn action_copy_file(&mut self) {
         // ダイアログ前後で self への可変借用を要求するため、
         // current の借用スコープはダイアログ前で閉じ、必要値は所有値へ複製する。
-        let (default_name, initial_dir, source, path) = {
+        let (default_name, source_dir, source, path) = {
             let Some(current) = self.document.file_list().current() else {
                 return;
             };
@@ -128,6 +160,7 @@ impl AppWindow {
                 current.path.clone(),
             )
         };
+        let initial_dir = self.file_operation_directory.initial(source_dir.as_deref());
         self.prepare_modal_dialog();
         let dialog_result = crate::file_ops::save_file_dialog(
             self.hwnd,
@@ -160,8 +193,11 @@ impl AppWindow {
                     .map(|_| ())
                     .map_err(anyhow::Error::from)
             };
-            if let Err(e) = result {
-                self.show_error_title(&format!("ファイルのコピーに失敗しました: {e}"));
+            match result {
+                Ok(()) => self.file_operation_directory.remember_file(&dest),
+                Err(e) => {
+                    self.show_error_title(&format!("ファイルのコピーに失敗しました: {e}"));
+                }
             }
         }
     }
@@ -208,10 +244,11 @@ impl AppWindow {
         if paths.is_empty() {
             return;
         }
-        let initial_dir = self.document.file_list().files()[marked[0]]
+        let source_dir = self.document.file_list().files()[marked[0]]
             .source
             .parent_dir()
             .map(Path::to_path_buf);
+        let initial_dir = self.file_operation_directory.initial(source_dir.as_deref());
         self.prepare_modal_dialog();
         let dialog_result = crate::file_ops::select_folder_dialog(
             self.hwnd,
@@ -222,6 +259,7 @@ impl AppWindow {
         if let Ok(Some(dest)) = dialog_result {
             let path_refs: Vec<&Path> = paths.iter().map(PathBuf::as_path).collect();
             if let Ok(true) = crate::file_ops::move_files(self.hwnd, &path_refs, &dest) {
+                self.file_operation_directory.remember_folder(&dest);
                 // パス更新失敗時は従来通りリストから削除 (フォールバック)
                 if let Err(e) = self.document.update_marked_paths(&dest) {
                     eprintln!("パス更新失敗、リストから削除: {e}");
@@ -245,10 +283,11 @@ impl AppWindow {
         if paths.is_empty() {
             return;
         }
-        let initial_dir = self.document.file_list().files()[marked[0]]
+        let source_dir = self.document.file_list().files()[marked[0]]
             .source
             .parent_dir()
             .map(Path::to_path_buf);
+        let initial_dir = self.file_operation_directory.initial(source_dir.as_deref());
         self.prepare_modal_dialog();
         let dialog_result = crate::file_ops::select_folder_dialog(
             self.hwnd,
@@ -258,8 +297,12 @@ impl AppWindow {
         self.finish_modal_dialog();
         if let Ok(Some(dest)) = dialog_result {
             let path_refs: Vec<&Path> = paths.iter().map(PathBuf::as_path).collect();
-            if let Err(e) = crate::file_ops::copy_files(self.hwnd, &path_refs, &dest) {
-                self.show_error_title(&format!("ファイルのコピーに失敗しました: {e}"));
+            match crate::file_ops::copy_files(self.hwnd, &path_refs, &dest) {
+                Ok(true) => self.file_operation_directory.remember_folder(&dest),
+                Ok(false) => {}
+                Err(e) => {
+                    self.show_error_title(&format!("ファイルのコピーに失敗しました: {e}"));
+                }
             }
             // Shell APIがフォーカスを奪うことがあるため復帰
             unsafe {
@@ -306,5 +349,41 @@ impl AppWindow {
             Ok(None) => {} // クリップボードに画像なし
             Err(e) => self.show_error_title(&format!("貼り付け失敗: {e}")),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_operation_directory_shares_successful_destinations_until_reset() {
+        let source_dir = Path::new(r"C:\images\source");
+        let selected_folder = Path::new(r"D:\organized");
+        let saved_file = Path::new(r"E:\exports\image.png");
+        let mut directory = FileOperationDirectory::default();
+
+        assert_eq!(
+            directory.initial(Some(source_dir)).as_deref(),
+            Some(source_dir)
+        );
+
+        directory.remember_folder(selected_folder);
+        assert_eq!(
+            directory.initial(Some(source_dir)).as_deref(),
+            Some(selected_folder)
+        );
+
+        directory.remember_file(saved_file);
+        assert_eq!(
+            directory.initial(Some(source_dir)).as_deref(),
+            Some(Path::new(r"E:\exports"))
+        );
+
+        directory.reset();
+        assert_eq!(
+            directory.initial(Some(source_dir)).as_deref(),
+            Some(source_dir)
+        );
     }
 }

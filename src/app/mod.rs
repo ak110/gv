@@ -81,6 +81,8 @@ pub(crate) struct AppWindow {
     pub(crate) monospace_font: MonospaceFont,
     // 矩形選択
     pub(crate) selection: Selection,
+    // ファイル操作の前回使用ディレクトリ (セッション中のみ保持)
+    file_operation_directory: file_ops::FileOperationDirectory,
     // スライドショー
     pub(crate) slideshow_active: bool,
     pub(crate) slideshow_interval_ms: u32,
@@ -212,6 +214,7 @@ impl AppWindow {
             cached_indices: HashSet::new(),
             monospace_font,
             selection: Selection::new(),
+            file_operation_directory: file_ops::FileOperationDirectory::default(),
             slideshow_active: false,
             slideshow_interval_ms: config.slideshow.interval_ms,
             slideshow_repeat: config.slideshow.repeat,
@@ -779,8 +782,9 @@ impl AppWindow {
         let dialog_result = crate::file_ops::open_file_dialog(self.hwnd, initial_dir.as_deref());
         self.finish_modal_dialog();
         if let Ok(Some(path)) = dialog_result {
-            if let Err(e) = self.document.open(&path) {
-                self.show_error_title(&format!("ファイルを開けませんでした: {e}"));
+            match self.document.open(&path) {
+                Ok(()) => self.file_operation_directory.reset(),
+                Err(e) => self.show_error_title(&format!("ファイルを開けませんでした: {e}")),
             }
             self.process_document_events();
         }
@@ -800,8 +804,9 @@ impl AppWindow {
         let dialog_result = crate::file_ops::open_folder_dialog(self.hwnd, initial_dir.as_deref());
         self.finish_modal_dialog();
         if let Ok(Some(path)) = dialog_result {
-            if let Err(e) = self.document.open_folder(&path) {
-                self.show_error_title(&format!("フォルダを開けませんでした: {e}"));
+            match self.document.open_folder(&path) {
+                Ok(()) => self.file_operation_directory.reset(),
+                Err(e) => self.show_error_title(&format!("フォルダを開けませんでした: {e}")),
             }
             self.process_document_events();
         }
@@ -822,6 +827,7 @@ impl AppWindow {
         }
         self.selection.deselect();
         self.document.close_all();
+        self.file_operation_directory.reset();
         self.process_document_events();
         self.update_title();
     }
@@ -873,6 +879,7 @@ impl AppWindow {
             Ok(Some((data, path))) => {
                 match self.document.load_bookmark_data(data) {
                     Ok(()) => {
+                        self.file_operation_directory.reset();
                         // 読み込み成功時のみ前回名キャッシュを更新する。
                         // 反映後のファイルリスト先頭からコンテナ識別キーを取得し、
                         // 選択パスのファイル名部分とペアで保持する。
@@ -1324,10 +1331,11 @@ impl AppWindow {
         if self.document.current_image().is_none() {
             return;
         }
-        let (default_stem, initial_dir) = self.document.current_source().map_or_else(
+        let (default_stem, source_dir) = self.document.current_source().map_or_else(
             || ("image".to_string(), None),
             |s| (s.default_save_stem(), s.parent_dir().map(Path::to_path_buf)),
         );
+        let initial_dir = self.file_operation_directory.initial(source_dir.as_deref());
         let default_name = format!("{default_stem}.{}", format.extension());
 
         self.prepare_modal_dialog();
@@ -1359,6 +1367,8 @@ impl AppWindow {
             &save_path,
         ) {
             self.show_error_title(&format!("{e}"));
+        } else {
+            self.file_operation_directory.remember_file(&save_path);
         }
     }
 
@@ -1609,8 +1619,11 @@ Susieプラグイン (.sph/.spi) で拡張可能";
             self.document.open(&paths[0])
         };
 
-        if let Err(e) = result {
-            self.show_error_title(&format!("ドロップされたファイルを開けませんでした: {e}"));
+        match result {
+            Ok(()) => self.file_operation_directory.reset(),
+            Err(e) => {
+                self.show_error_title(&format!("ドロップされたファイルを開けませんでした: {e}"));
+            }
         }
 
         self.process_document_events();
