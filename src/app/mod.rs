@@ -59,7 +59,7 @@ const VK_MENU: i32 = 0x12; // Alt
 ///
 /// - メニューバー・キー入力・ファイルリストパネル等の UI 状態を所有
 /// - `Document` から `DocumentEvent` をチャネル経由で受け取り、再描画や UI 更新を行う
-/// - エラーは `show_error_title` でタイトルバーに表示する (詳細は CLAUDE.md エラー方針)
+/// - エラーは `show_error_title` でタイトルバーに表示する (詳細は AGENTS.md エラー方針)
 pub(crate) struct AppWindow {
     pub(crate) hwnd: HWND,
     pub(crate) document: Document,

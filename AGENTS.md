@@ -1,8 +1,8 @@
-# CLAUDE.md: gv
+# AGENTS.md: gv
 
 Windows用画像ビューアー（Rust製）。多形式対応と高速切り替えを軸にした単一ユーザー向けGUIアプリ。
 本プロジェクトは人間による開発作業がほぼ発生しないため、
-コーディング規約・設計判断・実装上の注意点はCLAUDE.mdおよび`.claude/rules/`配下に集約する。
+コーディング規約・設計判断・実装上の注意点はAGENTS.mdおよび`.claude/rules/`配下に集約する。
 
 ## 開発手順
 
@@ -40,8 +40,8 @@ SAFETYコメントの粒度判定基準は[.claude/agents/unsafe-reviewer.md](.c
 - Windows用プロジェクトのため、Linux環境での検証はlint系（textlint / markdownlint / prettier）のみ確認可能。
   cargo-clippy / cargo-test / cargo-denyはWindowsターゲットのためLinuxでは失敗する
 - Makefileではなく`mise.toml`のタスクを使用する。pre-commitフレームワークは`uvx prek`で呼び出す
-- Linux環境での検証コマンド実行時は`LOCALAPPDATA=/tmp/dummy`環境変数を付与する。
-  `mise.toml`がWindows前提で`LOCALAPPDATA`を参照しているため
 - Linux環境からドキュメント等のcargo無関係な変更をコミットする際は、
-  `SKIP=cargo-clippy,cargo-test,cargo-deny LOCALAPPDATA=/tmp/dummy git commit ...`形式で
-  cargo系pre-commit hookをskipする。`--no-verify`は全hookを無効化するため使わない
+  `SKIP=pyfltr git commit ...`形式でpyfltr hookをskipする
+  （cargo系の検査はpyfltr hookの内側で動くため、hook単位でしかskipできない）。
+  skipした分は`uvx pyfltr run <変更したファイル>`をcargo対象外のパスへ実行して補う。
+  `--no-verify`は全hookを無効化するため使わない
