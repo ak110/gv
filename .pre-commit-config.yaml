@@ -26,7 +26,7 @@ repos:
       - id: pyfltr
         name: pyfltr
         entry: uvx pyfltr fast
-        types_or: [rust, markdown, toml, yaml, javascript, ts]
+        types_or: [rust, python, markdown, toml, yaml, javascript, ts]
         require_serial: true
         language: system
       - id: vitepress-build
@@ -35,3 +35,9 @@ repos:
         language: system
         pass_filenames: false
         files: ^docs/.*\.(md|ts|json)$|^docs/\.vitepress/
+      - id: skip-hook-ids
+        name: SKIP指定とhook IDの照合
+        entry: uv run --no-project scripts/check_skip_hook_ids.py
+        language: system
+        pass_filenames: false
+        files: ^(AGENTS\.md|\.pre-commit-config\.yaml)$
