@@ -11,7 +11,7 @@ Windows用画像ビューアー（Rust製）。多形式対応と高速切り替
 - リリースは`releaser patch`で実行する（minor・majorも同様）
   - releaserは未コミット変更と既定ブランチを確認し、pushとCI完了待機を経てリリースする
 - コミット前の検証方法: `mise run test`
-  - 特定ファイルに限定する場合は `uvx pyfltr run <path>` を使う
+  - 特定ファイルに限定する場合は `uvx --exclude-newer-package pyfltr=false pyfltr run <path>` を使う
   - 修正後の再実行時は`--commands=cargo-clippy,cargo-test`等で限定して実行する（最終検証はCIに委ねる前提）
 
 ## アーキテクチャの参照先
@@ -43,5 +43,5 @@ SAFETYコメントの粒度判定基準は[.claude/agents/unsafe-reviewer.md](.c
 - Linux環境からドキュメント等のcargo無関係な変更をコミットする際は、
   `SKIP=pyfltr git commit ...`形式でpyfltr hookをskipする
   （cargo系のツールはpyfltr hookの内側で実行されるため、hook単位でしかskipできない）。
-  skipした分は`uvx pyfltr run <変更したファイル>`をcargo対象外のパスへ実行して補う。
+  skipした分は`uvx --exclude-newer-package pyfltr=false pyfltr run <変更したファイル>`をcargo対象外のパスへ実行して補う。
   `--no-verify`は全hookを無効化するため使わない

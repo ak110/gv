@@ -25,7 +25,9 @@ repos:
     hooks:
       - id: pyfltr
         name: pyfltr
-        entry: uvx pyfltr fast
+        # pyfltrの推奨ガイドから意図して外れる指定。グローバルuv設定の`exclude-newer`があっても
+        # 公開直後のpyfltrを使うため、コマンドラインでpyfltrだけを公開待機から外す。
+        entry: uvx --exclude-newer-package pyfltr=false pyfltr fast
         types_or: [rust, python, markdown, toml, yaml, javascript, ts]
         require_serial: true
         language: system

@@ -84,13 +84,15 @@ run = "cargo clean"
 [tasks.format]
 description = "フォーマット + 軽量lint（開発時の手動実行用。自動修正あり）"
 run = [
-  "uvx pyfltr fast",
+  # pyfltrの推奨ガイドから意図して外れる指定。グローバルuv設定の`exclude-newer`があっても
+  # 公開直後のpyfltrを使うため、コマンドラインでpyfltrだけを公開待機から外す。
+  "uvx --exclude-newer-package pyfltr=false pyfltr fast",
 ]
 
 [tasks.test]
 description = "全チェック実行（これを通過すればコミット可能）"
 run = [
-  "uvx pyfltr run",
+  "uvx --exclude-newer-package pyfltr=false pyfltr run",
 ]
 
 [tasks.update]

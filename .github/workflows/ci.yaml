@@ -29,4 +29,6 @@ jobs:
       - run: mise run setup-ci
       - name: advisory DB の CRLF 変換を防止
         run: git config --global core.autocrlf false
-      - run: uvx pyfltr ci --output-format=github-annotations
+      # pyfltrの推奨ガイドから意図して外れる指定。グローバルuv設定の`exclude-newer`があっても
+      # 公開直後のpyfltrを使うため、コマンドラインでpyfltrだけを公開待機から外す。
+      - run: uvx --exclude-newer-package pyfltr=false pyfltr ci --output-format=github-annotations
