@@ -75,7 +75,7 @@ zipクレートv8の`ZipFile::name()`はファイル名をまずUTF-8として�
   `file_ops::delete_to_recycle_bin`などの`IFileOperation`系関数を含む
 - `bookmark::save_bookmark`などが内部でこれらの関数を呼ぶ場合は
   呼び出し元の`AppWindow`メソッド側でペアを配置する
-- 早期returnを含む全終了経路で`finish_modal_dialog`を通す。ただし`DestroyWindow(self.hwnd)`後は呼ばずに関数を抜ける
-- `Document`など`&self`借用を保持したままペアを呼ぶと借用検査に違反するため、
-  ダイアログ呼び出し前に必要な値を所有値として取り出す
+- 早期returnを含め、関数を抜けるときは必ず`finish_modal_dialog`を呼ぶ。ただし`DestroyWindow(self.hwnd)`後は呼ばずに関数を抜ける
+- ペアは`&mut self`を取るため、`Document`など`&self`から借りた参照を持ったまま呼ぶとborrow checkerがコンパイルを通さない。
+  ダイアログ呼び出し前に必要な値を所有値として取り出しておく
 - 単一メソッド内で複数のダイアログを順次呼ぶ場合は最初の直前で`prepare`、最後の直後で`finish`と1回ずつでよい
