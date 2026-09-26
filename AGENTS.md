@@ -42,6 +42,6 @@ SAFETYコメントの粒度判定基準は[.claude/agents/unsafe-reviewer.md](.c
 - Makefileではなく`mise.toml`のタスクを使用する。pre-commitフレームワークは`uvx prek`で呼び出す
 - Linux環境からドキュメント等のcargo無関係な変更をコミットする際は、
   `SKIP=pyfltr git commit ...`形式でpyfltr hookをskipする
-  （cargo系の検査はpyfltr hookの内側で動くため、hook単位でしかskipできない）。
+  （cargo系のツールはpyfltr hookの内側で実行されるため、hook単位でしかskipできない）。
   skipした分は`uvx pyfltr run <変更したファイル>`をcargo対象外のパスへ実行して補う。
   `--no-verify`は全hookを無効化するため使わない
