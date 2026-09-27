@@ -1,7 +1,7 @@
 use anyhow::{Context as _, Result};
 use fast_image_resize as fr;
 use rayon::prelude::*;
-use windows::Win32::Foundation::HWND;
+use windows::Win32::Foundation::{D2DERR_RECREATE_TARGET, HWND};
 use windows::Win32::Graphics::Direct2D::Common::{
     D2D_RECT_F, D2D_SIZE_U, D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COLOR_F, D2D1_PIXEL_FORMAT,
 };
@@ -38,24 +38,69 @@ struct PrescaledEntry {
     bitmap: ID2D1Bitmap,
 }
 
-/// Direct2D描画エンジン
-pub struct D2DRenderer {
-    #[allow(dead_code)] // COM参照をDrop時まで保持する必要がある
-    factory: ID2D1Factory,
+/// 1回の描画の結果
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DrawOutcome {
+    /// 描画を確定できた
+    Drawn,
+    /// レンダーターゲットが失効したため資源を破棄した。次の描画で再作成するため再描画が必要
+    TargetLost,
+}
+
+/// レンダーターゲットと、そのターゲットから作成してキャッシュする資源
+///
+/// ターゲットが失効すると配下のビットマップ・ブラシも使えなくなる。
+/// 寿命を1つの所有単位へまとめ、失効時は単位ごと破棄して旧ターゲットの資源を残さない。
+/// ターゲットへ到達できるのはこの単位の内側だけとし、新しいキャッシュ資源もここへ置く。
+struct TargetResources {
     render_target: ID2D1HwndRenderTarget,
-    layout: Layout,
     /// 現在キャッシュ中のD2Dビットマップとそのソースポインタ (同一画像の再描画を高速化)
     cached_bitmap: Option<(usize, ID2D1Bitmap)>,
     /// CPU Lanczos3プリスケール済みビットマップのキャッシュ
     prescaled: Option<PrescaledEntry>,
-    /// αチャネル背景モード
-    alpha_bg: AlphaBackground,
     /// チェッカーパターンブラシ (遅延初期化)
     checker_brush: Option<ID2D1BitmapBrush>,
+}
+
+/// 1フレーム分の描画パラメーター (ターゲットの外に置く表示状態)
+struct FrameParams<'a> {
+    image: Option<&'a DecodedImage>,
+    selection_rect: Option<&'a PixelRect>,
+    layout: &'a Layout,
+    alpha_bg: AlphaBackground,
+    draw_offset_x: f32,
+}
+
+/// 1フレーム分の描画結果
+struct FrameResult {
+    /// 画像を描いた矩形 (画像なしならNone)
+    draw_rect: Option<DrawRect>,
+    /// BeginDraw〜EndDrawの間で発生した資源作成などの失敗
+    content: Result<()>,
+    /// EndDrawの結果
+    end_draw: windows::core::Result<()>,
+}
+
+/// Direct2D描画エンジン
+pub struct D2DRenderer {
+    #[allow(dead_code)] // COM参照をDrop時まで保持する必要がある
+    factory: ID2D1Factory,
+    hwnd: HWND,
+    /// 失効後は次の描画まで`None`
+    target: Option<TargetResources>,
+    layout: Layout,
+    /// αチャネル背景モード
+    alpha_bg: AlphaBackground,
     /// 描画領域の左オフセット (ファイルリストパネル分)
     draw_offset_x: f32,
     /// 最後に描画した画像の描画矩形 (選択の座標変換用)
     last_draw_rect: Option<DrawRect>,
+    /// 試験経路: 次の描画でEndDrawの結果をこのエラーへ置き換える
+    #[cfg(test)]
+    injected_end_draw_error: Option<windows::core::Error>,
+    /// 試験経路: 次のターゲット作成を失敗させる
+    #[cfg(test)]
+    fail_next_target_creation: bool,
 }
 
 // 背景色: ダークグレー (#333333)
@@ -68,27 +113,42 @@ const BG_COLOR: D2D1_COLOR_F = D2D1_COLOR_F {
 
 impl D2DRenderer {
     pub fn new(hwnd: HWND, display_config: &DisplayConfig) -> Result<Self> {
-        unsafe {
-            let factory: ID2D1Factory = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None)
+        let factory: ID2D1Factory =
+            unsafe { D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None) }
                 .context("D2D1Factory作成失敗")?;
+        let layout = Layout::from_config(display_config.to_display_mode(), display_config.margin);
 
-            let render_target = Self::create_render_target(&factory, hwnd)?;
-            let layout =
-                Layout::from_config(display_config.to_display_mode(), display_config.margin);
-            let alpha_bg = display_config.alpha_background;
+        let mut renderer = Self {
+            factory,
+            hwnd,
+            target: None,
+            layout,
+            alpha_bg: display_config.alpha_background,
+            draw_offset_x: 0.0,
+            last_draw_rect: None,
+            #[cfg(test)]
+            injected_end_draw_error: None,
+            #[cfg(test)]
+            fail_next_target_creation: false,
+        };
+        // 起動時に作成できない環境は描画できないため、起動エラーとして扱う
+        renderer.target = Some(renderer.create_target_resources()?);
+        Ok(renderer)
+    }
 
-            Ok(Self {
-                factory,
-                render_target,
-                layout,
-                cached_bitmap: None,
-                prescaled: None,
-                alpha_bg,
-                checker_brush: None,
-                draw_offset_x: 0.0,
-                last_draw_rect: None,
-            })
+    /// レンダーターゲットを作成する (初回と失効後の復旧で共用する)
+    fn create_target_resources(&mut self) -> Result<TargetResources> {
+        #[cfg(test)]
+        if std::mem::take(&mut self.fail_next_target_creation) {
+            anyhow::bail!("HwndRenderTarget作成失敗 (試験経路)");
         }
+        let render_target = unsafe { Self::create_render_target(&self.factory, self.hwnd)? };
+        Ok(TargetResources {
+            render_target,
+            cached_bitmap: None,
+            prescaled: None,
+            checker_brush: None,
+        })
     }
 
     unsafe fn create_render_target(
@@ -121,16 +181,127 @@ impl D2DRenderer {
     }
 
     /// ウィンドウリサイズ時に呼ぶ
-    pub fn resize(&mut self, width: u32, height: u32) {
+    ///
+    /// ターゲットが失効していた場合は資源を破棄し、次の描画が現在のクライアントサイズで再作成する。
+    pub fn resize(&mut self, width: u32, height: u32) -> Result<()> {
+        let Some(target) = &self.target else {
+            return Ok(());
+        };
         let size = D2D_SIZE_U { width, height };
-        unsafe {
-            let _ = self.render_target.Resize(std::ptr::from_ref(&size));
+        match unsafe { target.render_target.Resize(std::ptr::from_ref(&size)) } {
+            Ok(()) => Ok(()),
+            Err(e) if e.code() == D2DERR_RECREATE_TARGET => {
+                self.target = None;
+                Ok(())
+            }
+            Err(e) => Err(anyhow::Error::from(e).context("描画領域のリサイズに失敗しました")),
         }
     }
 
     /// 画像を描画する。imageがNoneなら背景のみ。
     /// `selection_rect`: 選択矩形がある場合はオーバーレイ描画する
-    pub fn draw(&mut self, image: Option<&DecodedImage>, selection_rect: Option<&PixelRect>) {
+    ///
+    /// ターゲットが失効していた場合は`DrawOutcome::TargetLost`を返す。
+    /// 呼出側は再描画を要求し、次の描画で初回と同じ手順により資源を再作成する。
+    pub fn draw(
+        &mut self,
+        image: Option<&DecodedImage>,
+        selection_rect: Option<&PixelRect>,
+    ) -> Result<DrawOutcome> {
+        if self.target.is_none() {
+            self.target = Some(self.create_target_resources()?);
+        }
+        let target = self.target.as_mut().expect("target was just ensured");
+        let params = FrameParams {
+            image,
+            selection_rect,
+            layout: &self.layout,
+            alpha_bg: self.alpha_bg,
+            draw_offset_x: self.draw_offset_x,
+        };
+        let frame = unsafe { target.draw_frame(&params) };
+        self.last_draw_rect = frame.draw_rect;
+
+        #[cfg(test)]
+        let end_draw = match self.injected_end_draw_error.take() {
+            Some(e) => Err(e),
+            None => frame.end_draw,
+        };
+        #[cfg(not(test))]
+        let end_draw = frame.end_draw;
+
+        match end_draw {
+            Ok(()) => {}
+            Err(e) if e.code() == D2DERR_RECREATE_TARGET => {
+                self.target = None;
+                return Ok(DrawOutcome::TargetLost);
+            }
+            Err(e) => return Err(anyhow::Error::from(e).context("描画の確定に失敗しました")),
+        }
+        frame.content?;
+        Ok(DrawOutcome::Drawn)
+    }
+
+    pub fn layout(&self) -> &Layout {
+        &self.layout
+    }
+
+    pub fn layout_mut(&mut self) -> &mut Layout {
+        &mut self.layout
+    }
+
+    /// αチャネル背景を巡回切替 (White → Black → Checker → White)
+    pub fn cycle_alpha_background(&mut self) {
+        self.alpha_bg = match self.alpha_bg {
+            AlphaBackground::White => AlphaBackground::Black,
+            AlphaBackground::Black => AlphaBackground::Checker,
+            AlphaBackground::Checker => AlphaBackground::White,
+        };
+    }
+
+    /// 描画領域の左オフセットを設定 (ファイルリストパネル幅)
+    pub fn set_draw_offset(&mut self, offset_x: f32) {
+        self.draw_offset_x = offset_x;
+    }
+
+    /// 最後に描画した画像の描画矩形を返す (選択の座標変換用)
+    pub fn last_draw_rect(&self) -> Option<&DrawRect> {
+        self.last_draw_rect.as_ref()
+    }
+
+    /// 試験経路: 次の描画でEndDrawがターゲット失効を返したものとして扱う
+    #[cfg(test)]
+    pub(crate) fn simulate_target_loss_on_next_draw(&mut self) {
+        self.injected_end_draw_error = Some(D2DERR_RECREATE_TARGET.into());
+    }
+
+    /// 試験経路: 次のターゲット作成を失敗させる
+    #[cfg(test)]
+    pub(crate) fn fail_next_target_creation(&mut self) {
+        self.fail_next_target_creation = true;
+    }
+
+    /// 試験用: ターゲットの有無と、キャッシュ資源の有無
+    #[cfg(test)]
+    pub(crate) fn target_snapshot(&self) -> Option<TargetSnapshot> {
+        self.target.as_ref().map(|t| TargetSnapshot {
+            has_bitmap: t.cached_bitmap.is_some() || t.prescaled.is_some(),
+            has_checker_brush: t.checker_brush.is_some(),
+        })
+    }
+}
+
+/// 試験用: ターゲットの状態
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TargetSnapshot {
+    pub(crate) has_bitmap: bool,
+    pub(crate) has_checker_brush: bool,
+}
+
+impl TargetResources {
+    /// BeginDraw〜EndDrawを実行する。途中の失敗があってもEndDrawまで到達させる
+    unsafe fn draw_frame(&mut self, params: &FrameParams<'_>) -> FrameResult {
         unsafe {
             self.render_target.BeginDraw();
 
@@ -138,10 +309,10 @@ impl D2DRenderer {
 
             // ファイルリストパネルの右側のみに描画を制限
             // Clear() 前にクリップを設定し、パネル領域を塗りつぶさないようにする
-            let has_clip = self.draw_offset_x > 0.0;
+            let has_clip = params.draw_offset_x > 0.0;
             if has_clip {
                 let clip = D2D_RECT_F {
-                    left: self.draw_offset_x,
+                    left: params.draw_offset_x,
                     top: 0.0,
                     right: size.width,
                     bottom: size.height,
@@ -155,48 +326,63 @@ impl D2DRenderer {
             // クリップ設定後にクリア (パネル領域は保護される)
             self.render_target.Clear(Some(&BG_COLOR));
 
-            if let Some(img) = image {
+            let mut draw_rect_out = None;
+            let content = if let Some(img) = params.image {
                 // パネル幅を差し引いた描画領域でレイアウト計算
-                let avail_width = size.width - self.draw_offset_x;
+                let avail_width = size.width - params.draw_offset_x;
                 let mut draw_rect =
-                    self.layout
+                    params
+                        .layout
                         .calculate(img.width, img.height, avail_width, size.height);
                 // オフセットを加算して実際の描画位置に変換
-                draw_rect.x += self.draw_offset_x;
-
-                // last_draw_rectを更新 (選択の座標変換用)
-                self.last_draw_rect = Some(draw_rect);
-
-                // αチャネル背景を画像領域に描画
-                self.draw_alpha_background(&draw_rect);
-
-                // CPU Lanczos3プリスケーリングで高品質描画
-                let target_w = (draw_rect.width as u32).max(1);
-                let target_h = (draw_rect.height as u32).max(1);
-                if let Ok(bitmap) = self.get_prescaled_bitmap(img, target_w, target_h) {
-                    self.draw_bitmap(&bitmap, &draw_rect);
-                }
-
-                // ピクセルグリッド (8倍以上で表示)
-                let scale = draw_rect.width / img.width as f32;
-                if scale >= 8.0 {
-                    self.draw_pixel_grid(&draw_rect, img.width, img.height, scale);
-                }
-
-                // 選択矩形オーバーレイ
-                if let Some(sel_rect) = selection_rect {
-                    self.draw_selection_overlay(sel_rect, &draw_rect, img.width, img.height);
-                }
+                draw_rect.x += params.draw_offset_x;
+                draw_rect_out = Some(draw_rect);
+                self.draw_image(img, &draw_rect, params)
             } else {
-                self.last_draw_rect = None;
-            }
+                Ok(())
+            };
 
             if has_clip {
                 self.render_target.PopAxisAlignedClip();
             }
 
-            // EndDrawのエラーはリカバリ不要 (次フレームで再試行される)
-            let _ = self.render_target.EndDraw(None, None);
+            let end_draw = self.render_target.EndDraw(None, None);
+            FrameResult {
+                draw_rect: draw_rect_out,
+                content,
+                end_draw,
+            }
+        }
+    }
+
+    /// 画像・α背景・ピクセルグリッド・選択矩形を描画する
+    unsafe fn draw_image(
+        &mut self,
+        img: &DecodedImage,
+        draw_rect: &DrawRect,
+        params: &FrameParams<'_>,
+    ) -> Result<()> {
+        unsafe {
+            // αチャネル背景を画像領域に描画
+            self.draw_alpha_background(draw_rect, params.alpha_bg)?;
+
+            // CPU Lanczos3プリスケーリングで高品質描画
+            let target_w = (draw_rect.width as u32).max(1);
+            let target_h = (draw_rect.height as u32).max(1);
+            let bitmap = self.get_prescaled_bitmap(img, target_w, target_h)?;
+            self.draw_bitmap(&bitmap, draw_rect);
+
+            // ピクセルグリッド (8倍以上で表示)
+            let scale = draw_rect.width / img.width as f32;
+            if scale >= 8.0 {
+                self.draw_pixel_grid(draw_rect, img.width, img.height, scale);
+            }
+
+            // 選択矩形オーバーレイ
+            if let Some(sel_rect) = params.selection_rect {
+                self.draw_selection_overlay(sel_rect, draw_rect, img.width, img.height);
+            }
+            Ok(())
         }
     }
 
@@ -326,7 +512,11 @@ impl D2DRenderer {
     }
 
     /// αチャネル背景を描画 (画像領域のみ)
-    unsafe fn draw_alpha_background(&mut self, rect: &DrawRect) {
+    unsafe fn draw_alpha_background(
+        &mut self,
+        rect: &DrawRect,
+        alpha_bg: AlphaBackground,
+    ) -> Result<()> {
         let dest = D2D_RECT_F {
             left: rect.x,
             top: rect.y,
@@ -335,52 +525,39 @@ impl D2DRenderer {
         };
 
         unsafe {
-            match self.alpha_bg {
-                AlphaBackground::White => {
-                    if let Ok(brush) = self.render_target.CreateSolidColorBrush(
-                        &D2D1_COLOR_F {
-                            r: 1.0,
-                            g: 1.0,
-                            b: 1.0,
-                            a: 1.0,
-                        },
-                        None,
-                    ) {
-                        self.render_target
-                            .FillRectangle(std::ptr::from_ref(&dest), &brush);
-                    }
-                }
-                AlphaBackground::Black => {
-                    if let Ok(brush) = self.render_target.CreateSolidColorBrush(
-                        &D2D1_COLOR_F {
-                            r: 0.0,
-                            g: 0.0,
-                            b: 0.0,
-                            a: 1.0,
-                        },
-                        None,
-                    ) {
-                        self.render_target
-                            .FillRectangle(std::ptr::from_ref(&dest), &brush);
-                    }
+            let solid = |r: f32, g: f32, b: f32| D2D1_COLOR_F { r, g, b, a: 1.0 };
+            match alpha_bg {
+                AlphaBackground::White | AlphaBackground::Black => {
+                    let color = if alpha_bg == AlphaBackground::White {
+                        solid(1.0, 1.0, 1.0)
+                    } else {
+                        solid(0.0, 0.0, 0.0)
+                    };
+                    let brush = self
+                        .render_target
+                        .CreateSolidColorBrush(std::ptr::from_ref(&color), None)
+                        .context("α背景ブラシ作成失敗")?;
+                    self.render_target
+                        .FillRectangle(std::ptr::from_ref(&dest), &brush);
                 }
                 AlphaBackground::Checker => {
-                    self.ensure_checker_brush();
-                    if let Some(ref brush) = self.checker_brush {
-                        self.render_target
-                            .FillRectangle(std::ptr::from_ref(&dest), brush);
-                    }
+                    let brush = self.ensure_checker_brush()?;
+                    self.render_target
+                        .FillRectangle(std::ptr::from_ref(&dest), &brush);
                 }
             }
         }
+        Ok(())
     }
 
     /// チェッカーパターンブラシを遅延作成
-    fn ensure_checker_brush(&mut self) {
-        if self.checker_brush.is_some() {
-            return;
+    fn ensure_checker_brush(&mut self) -> Result<ID2D1BitmapBrush> {
+        if let Some(brush) = &self.checker_brush {
+            return Ok(brush.clone());
         }
-        self.checker_brush = unsafe { self.create_checker_brush().ok() };
+        let brush = unsafe { self.create_checker_brush()? };
+        self.checker_brush = Some(brush.clone());
+        Ok(brush)
     }
 
     /// 16x16の2色チェッカーパターンブラシを作成
@@ -456,33 +633,6 @@ impl D2DRenderer {
                 None,
             );
         }
-    }
-
-    pub fn layout(&self) -> &Layout {
-        &self.layout
-    }
-
-    pub fn layout_mut(&mut self) -> &mut Layout {
-        &mut self.layout
-    }
-
-    /// αチャネル背景を巡回切替 (White → Black → Checker → White)
-    pub fn cycle_alpha_background(&mut self) {
-        self.alpha_bg = match self.alpha_bg {
-            AlphaBackground::White => AlphaBackground::Black,
-            AlphaBackground::Black => AlphaBackground::Checker,
-            AlphaBackground::Checker => AlphaBackground::White,
-        };
-    }
-
-    /// 描画領域の左オフセットを設定 (ファイルリストパネル幅)
-    pub fn set_draw_offset(&mut self, offset_x: f32) {
-        self.draw_offset_x = offset_x;
-    }
-
-    /// 最後に描画した画像の描画矩形を返す (選択の座標変換用)
-    pub fn last_draw_rect(&self) -> Option<&DrawRect> {
-        self.last_draw_rect.as_ref()
     }
 
     /// ピクセルグリッドを描画する (拡大時のピクセル境界表示)
@@ -700,6 +850,113 @@ fn fir_resize_multistage(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 試験用の表示しないウィンドウ (クラス登録不要なSTATICを使う)
+    struct HiddenWindow(HWND);
+
+    impl HiddenWindow {
+        fn new() -> Self {
+            use windows::Win32::UI::WindowsAndMessaging::{
+                CreateWindowExW, WINDOW_EX_STYLE, WS_OVERLAPPED,
+            };
+            let hwnd = unsafe {
+                CreateWindowExW(
+                    WINDOW_EX_STYLE::default(),
+                    windows::core::w!("STATIC"),
+                    None,
+                    WS_OVERLAPPED,
+                    0,
+                    0,
+                    320,
+                    240,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+            }
+            .expect("test window creation failed");
+            Self(hwnd)
+        }
+    }
+
+    impl Drop for HiddenWindow {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = windows::Win32::UI::WindowsAndMessaging::DestroyWindow(self.0);
+            }
+        }
+    }
+
+    /// 半透明の画素を含む8x6画像 (チェッカー背景と縮小ビットマップの作成に到達させる)
+    fn translucent_image() -> DecodedImage {
+        DecodedImage {
+            data: [200, 100, 50, 128].repeat(8 * 6),
+            width: 8,
+            height: 6,
+        }
+    }
+
+    fn rect_tuple(rect: &DrawRect) -> (f32, f32, f32, f32) {
+        (rect.x, rect.y, rect.width, rect.height)
+    }
+
+    /// 失効後の最初の描画は再描画要求を返し、次の描画で同じ表示状態のまま資源を再作成する
+    #[test]
+    fn recovers_after_target_loss_with_same_layout() {
+        let window = HiddenWindow::new();
+        let config = DisplayConfig {
+            alpha_background: AlphaBackground::Checker,
+            ..DisplayConfig::default()
+        };
+        let mut renderer = D2DRenderer::new(window.0, &config).unwrap();
+        renderer.set_draw_offset(40.0);
+        let image = translucent_image();
+        let selection = PixelRect::from_two_points(1, 1, 5, 4);
+
+        assert_eq!(
+            renderer.draw(Some(&image), Some(&selection)).unwrap(),
+            DrawOutcome::Drawn
+        );
+        let before = renderer.target_snapshot().expect("target exists");
+        assert!(before.has_bitmap && before.has_checker_brush);
+        let rect_before = rect_tuple(renderer.last_draw_rect().unwrap());
+
+        renderer.simulate_target_loss_on_next_draw();
+        assert_eq!(
+            renderer.draw(Some(&image), Some(&selection)).unwrap(),
+            DrawOutcome::TargetLost
+        );
+        // 旧ターゲットの資源を残さない
+        assert!(renderer.target_snapshot().is_none());
+
+        assert_eq!(
+            renderer.draw(Some(&image), Some(&selection)).unwrap(),
+            DrawOutcome::Drawn
+        );
+        let after = renderer.target_snapshot().expect("target recreated");
+        assert!(after.has_bitmap && after.has_checker_brush);
+        assert_eq!(rect_tuple(renderer.last_draw_rect().unwrap()), rect_before);
+    }
+
+    /// 失効中のリサイズは失敗にせず、次の描画でターゲットを再作成する
+    #[test]
+    fn resize_without_target_is_deferred_to_next_draw() {
+        let window = HiddenWindow::new();
+        let mut renderer = D2DRenderer::new(window.0, &DisplayConfig::default()).unwrap();
+        let image = translucent_image();
+        renderer.simulate_target_loss_on_next_draw();
+        assert_eq!(
+            renderer.draw(Some(&image), None).unwrap(),
+            DrawOutcome::TargetLost
+        );
+        renderer.resize(200, 100).unwrap();
+        assert!(renderer.target_snapshot().is_none());
+        assert_eq!(
+            renderer.draw(Some(&image), None).unwrap(),
+            DrawOutcome::Drawn
+        );
+    }
 
     #[test]
     fn fir_resize_shrink_output_size() {

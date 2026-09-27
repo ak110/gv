@@ -113,6 +113,15 @@ run = [
   "pinact run --update --min-age 1",
 ]
 
+[tasks.bench]
+description = "表示時間の測定（Windows実機・リリースプロファイル。結果はtarget/gv-bench/へ保存）"
+# 通常のcargo testとCIでは実行しない`#[ignore]`のテストを、名前を完全一致で指定して起動する
+run = "cargo test --release -- --ignored --exact app::benchmark::tests::display_benchmark --nocapture"
+
+[tasks.bench-compare]
+description = "表示時間の測定結果2件の比較（mise run bench-compare -- <基準JSON> <比較JSON>）"
+run = "uv run --no-project scripts/compare_display_bench.py"
+
 [tasks.docs]
 description = "ドキュメントのローカルプレビュー"
 run = "corepack pnpm run docs:dev"

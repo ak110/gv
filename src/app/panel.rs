@@ -208,6 +208,7 @@ impl AppWindow {
                 if became_selected && nmlv.iItem >= 0 {
                     let target = nmlv.iItem as usize;
                     if self.document.file_list().current_index() != Some(target) {
+                        self.begin_user_operation();
                         if !self.guard_unsaved_edit() {
                             // キャンセル時は選択位置を復元
                             if let Some(idx) = self.document.file_list().current_index() {

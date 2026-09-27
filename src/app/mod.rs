@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod benchmark;
 mod file_ops;
 mod image_edit;
 mod navigation;
@@ -10,7 +12,7 @@ use std::os::windows::process::CommandExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use crossbeam_channel::Receiver;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::{InvalidateRect, UpdateWindow, ValidateRect};
@@ -27,6 +29,7 @@ use crate::extension_registry::ExtensionRegistry;
 use crate::image::{DecodedImage, DecoderChain, StandardDecoder};
 use crate::persistent_filter::FilterOperation;
 use crate::render::D2DRenderer;
+use crate::render::d2d_renderer::DrawOutcome;
 use crate::render::layout::DisplayMode;
 use crate::selection::{HandleKind, HitTestResult, PixelRect, Selection};
 use crate::susie::SusieManager;
@@ -46,6 +49,12 @@ const WM_DOCUMENT_EVENT: u32 = WM_APP + 1;
 
 /// スライドショー用タイマーID
 const TIMER_ID_SLIDESHOW: usize = 2;
+
+/// 描画資源の失効から自動で再描画を要求する連続回数の上限
+///
+/// 再作成した直後に再び失効する環境で、再描画要求が無制限に続くことを防ぐ。
+/// 上限到達後は利用者の次の操作による再描画で再試行する。
+const MAX_RENDER_RECOVERY_ATTEMPTS: u32 = 3;
 
 /// 修飾キーVKコード
 const VK_CONTROL: i32 = 0x11;
@@ -91,11 +100,40 @@ pub(crate) struct AppWindow {
     // 値はコンテナ識別キーと前回採用したブックマークファイル名の組。
     // コンテナ切り替え時はコンテナ識別キーの不一致で初期名が自動リセットされる。
     pub(crate) last_bookmark: Option<(PathBuf, String)>,
+    // タイトルバーに表示中のエラー。利用者の次の操作の開始まで通常タイトルより優先する。
+    // 同じ処理内のリスト更新や選択更新がエラー表示を直後に上書きしないようにするため。
+    error_message: Option<String>,
+    // 描画資源の失効から連続して描画に成功していない回数
+    render_recovery_attempts: u32,
+    // 表示中のエラーが描画の失敗か。描画が成功した時点でそのエラーだけを解除する
+    render_error_shown: bool,
+    // このウィンドウが貼り付けで作成した一時ファイル (ウィンドウ破棄時に回収する)
+    pasted_images: file_ops::PastedImageFiles,
+    // 試験用: 再描画要求の回数 (非表示ウィンドウでは無効領域を観測できないため)
+    #[cfg(test)]
+    redraw_request_count: std::cell::Cell<u32>,
 }
 
 impl AppWindow {
     /// AppWindowを作成しウィンドウを表示する
     pub fn create(config: Config, initial_files: &[PathBuf]) -> Result<Box<Self>> {
+        Self::create_with_visibility(config, initial_files, true)
+    }
+
+    /// 試験用: 表示しないAppWindowを作成する
+    ///
+    /// 描画・イベント処理・タイトルバーはウィンドウを表示しなくても実際のWin32/Direct2Dで動作する。
+    #[cfg(test)]
+    pub(crate) fn create_hidden_for_test() -> Box<Self> {
+        Self::create_with_visibility(Config::default(), &[], false)
+            .expect("hidden AppWindow creation failed")
+    }
+
+    fn create_with_visibility(
+        config: Config,
+        initial_files: &[PathBuf],
+        visible: bool,
+    ) -> Result<Box<Self>> {
         let class_name = windows::core::w!("gv_main");
 
         // アイコンをリソースからロード (リソースID 1)
@@ -219,6 +257,12 @@ impl AppWindow {
             slideshow_interval_ms: config.slideshow.interval_ms,
             slideshow_repeat: config.slideshow.repeat,
             last_bookmark: None,
+            error_message: None,
+            render_recovery_attempts: 0,
+            render_error_shown: false,
+            pasted_images: file_ops::PastedImageFiles::new(std::env::temp_dir()),
+            #[cfg(test)]
+            redraw_request_count: std::cell::Cell::new(0),
         });
 
         // GWLP_USERDATAにポインタを格納 (WndProcからアクセスするため)
@@ -282,9 +326,11 @@ impl AppWindow {
             let _ = SetMenu(hwnd, Some(app.menu));
         }
 
-        unsafe {
-            let _ = ShowWindow(hwnd, SW_SHOW);
-            let _ = UpdateWindow(hwnd);
+        if visible {
+            unsafe {
+                let _ = ShowWindow(hwnd, SW_SHOW);
+                let _ = UpdateWindow(hwnd);
+            }
         }
 
         Ok(app)
@@ -307,8 +353,12 @@ impl AppWindow {
     }
 
     /// タイトルバーを更新
+    ///
+    /// エラー表示中は通常タイトルで上書きせず、エラーを表示し続ける。
     fn update_title(&self) {
-        let title = if let Some(source) = self.document.current_source() {
+        let title = if let Some(msg) = &self.error_message {
+            format!("ぐらびゅ - エラー: {msg}")
+        } else if let Some(source) = self.document.current_source() {
             // PendingContainer 上にいる場合は「読み込み中」プレフィックスを付ける
             let loading_prefix = if source.is_pending_container() {
                 "読み込み中: "
@@ -358,11 +408,40 @@ impl AppWindow {
     }
 
     /// タイトルバーにエラーメッセージを表示する
-    fn show_error_title(&self, msg: &str) {
-        let title = format!("ぐらびゅ - エラー: {msg}");
-        let wide = crate::util::to_wide(&title);
-        unsafe {
-            let _ = SetWindowTextW(self.hwnd, windows::core::PCWSTR(wide.as_ptr()));
+    ///
+    /// 表示は利用者の次の操作の開始（`begin_user_operation`）まで保持する。
+    fn show_error_title(&mut self, msg: &str) {
+        self.error_message = Some(msg.to_string());
+        self.render_error_shown = false;
+        self.update_title();
+    }
+
+    /// 描画の失敗を表示する。描画が次に成功した時点で自動的に解除する
+    fn show_render_error(&mut self, msg: &str) {
+        self.show_error_title(msg);
+        self.render_error_shown = true;
+    }
+
+    /// 利用者の操作の開始時に呼ぶ。前の操作のエラー表示を解除して通常タイトルへ戻す
+    fn begin_user_operation(&mut self) {
+        if self.error_message.take().is_some() {
+            self.update_title();
+        }
+    }
+
+    /// 利用者操作の結果を成功・キャンセル・失敗へ分け、失敗だけをタイトルバーへ通知する
+    ///
+    /// ダイアログはキャンセルを`Ok(None)`で返す。Shell操作の中止（`Ok(false)`）は
+    /// `.map(|done| done.then_some(()))`で同じ形へそろえて渡す。
+    /// 失敗をキャンセルと同じ「何もしない」へまとめると利用者へ届かないため、分類をここへ集約する。
+    /// 成功時だけ値を返すので、呼出側は`Some`のときだけ保存先記憶やリスト更新を行う。
+    fn take_success<T>(&mut self, operation: &str, result: Result<Option<T>>) -> Option<T> {
+        match result {
+            Ok(value) => value,
+            Err(e) => {
+                self.show_error_title(&format!("{operation}に失敗しました: {e:#}"));
+                None
+            }
         }
     }
 
@@ -397,6 +476,9 @@ impl AppWindow {
 
     /// 再描画をリクエスト
     fn invalidate(&self) {
+        #[cfg(test)]
+        self.redraw_request_count
+            .set(self.redraw_request_count.get() + 1);
         unsafe {
             let _ = InvalidateRect(Some(self.hwnd), None, false);
         }
@@ -645,6 +727,8 @@ impl AppWindow {
                     return LRESULT(1);
                 }
                 WM_DESTROY => {
+                    // main はメッセージループ後に process::exit するため Drop に頼らずここで回収する
+                    app.pasted_images.remove_all();
                     // ポインタをクリアしてダングリング参照を防止
                     window::set_window_data::<Self>(hwnd, std::ptr::null_mut());
                     unsafe { PostQuitMessage(0) };
@@ -661,12 +745,47 @@ impl AppWindow {
     }
 
     fn on_paint(&mut self) {
-        let sel_rect = self.selection.current_rect();
-        self.renderer
-            .draw(self.document.current_image(), sel_rect.as_ref());
+        let outcome = self.paint();
         // WM_PAINTの無限ループを防ぐためにValidateRectを呼ぶ
+        // (再描画が必要な場合はこの後のinvalidateで改めて要求する)
         unsafe {
             let _ = ValidateRect(Some(self.hwnd), None);
+        }
+        self.handle_paint_outcome(outcome);
+    }
+
+    /// 現在の画像と選択範囲を描画する
+    fn paint(&mut self) -> Result<DrawOutcome> {
+        let sel_rect = self.selection.current_rect();
+        self.renderer
+            .draw(self.document.current_image(), sel_rect.as_ref())
+    }
+
+    /// 描画結果に応じて再描画要求・失敗通知を行う
+    ///
+    /// 描画資源の失効では再描画を要求し、次の描画で資源を再作成する。
+    /// 連続回数の上限到達と描画エラーでは通知だけを行い、自動の再描画要求を止める。
+    fn handle_paint_outcome(&mut self, outcome: Result<DrawOutcome>) {
+        match outcome {
+            Ok(DrawOutcome::Drawn) => {
+                self.render_recovery_attempts = 0;
+                // 復旧した描画エラーは表示し続けない (他の操作のエラーは残す)
+                if std::mem::take(&mut self.render_error_shown) {
+                    self.error_message = None;
+                    self.update_title();
+                }
+            }
+            Ok(DrawOutcome::TargetLost) => {
+                self.render_recovery_attempts += 1;
+                if self.render_recovery_attempts <= MAX_RENDER_RECOVERY_ATTEMPTS {
+                    self.invalidate();
+                } else {
+                    self.show_render_error(
+                        "描画を復旧できませんでした。ウィンドウサイズの変更などで再描画すると再試行します",
+                    );
+                }
+            }
+            Err(e) => self.show_render_error(&format!("描画に失敗しました: {e:#}")),
         }
     }
 
@@ -677,7 +796,9 @@ impl AppWindow {
             self.file_list_panel.resize(height as i32);
 
             // D2Dレンダーターゲットは全体サイズでリサイズ
-            self.renderer.resize(width, height);
+            if let Err(e) = self.renderer.resize(width, height) {
+                self.show_render_error(&format!("{e:#}"));
+            }
 
             // 描画オフセットを設定 (パネル幅分だけ右にずらす)
             self.renderer.set_draw_offset(panel_width as f32);
@@ -781,13 +902,15 @@ impl AppWindow {
         self.prepare_modal_dialog();
         let dialog_result = crate::file_ops::open_file_dialog(self.hwnd, initial_dir.as_deref());
         self.finish_modal_dialog();
-        if let Ok(Some(path)) = dialog_result {
-            match self.document.open(&path) {
-                Ok(()) => self.file_operation_directory.reset(),
-                Err(e) => self.show_error_title(&format!("ファイルを開けませんでした: {e}")),
-            }
-            self.process_document_events();
+        let Some(path) = self.take_success("ファイル選択ダイアログの表示", dialog_result)
+        else {
+            return;
+        };
+        match self.document.open(&path) {
+            Ok(()) => self.file_operation_directory.reset(),
+            Err(e) => self.show_error_title(&format!("ファイルを開けませんでした: {e}")),
         }
+        self.process_document_events();
     }
 
     fn action_open_folder(&mut self) {
@@ -803,21 +926,29 @@ impl AppWindow {
         self.prepare_modal_dialog();
         let dialog_result = crate::file_ops::open_folder_dialog(self.hwnd, initial_dir.as_deref());
         self.finish_modal_dialog();
-        if let Ok(Some(path)) = dialog_result {
-            match self.document.open_folder(&path) {
-                Ok(()) => self.file_operation_directory.reset(),
-                Err(e) => self.show_error_title(&format!("フォルダを開けませんでした: {e}")),
-            }
-            self.process_document_events();
+        let Some(path) = self.take_success("フォルダ選択ダイアログの表示", dialog_result)
+        else {
+            return;
+        };
+        match self.document.open_folder(&path) {
+            Ok(()) => self.file_operation_directory.reset(),
+            Err(e) => self.show_error_title(&format!("フォルダを開けませんでした: {e}")),
         }
+        self.process_document_events();
     }
 
     fn action_new_window(&mut self) {
-        if let Ok(exe) = std::env::current_exe() {
-            // 引数なしで空のウィンドウを起動
-            if let Err(e) = std::process::Command::new(&exe).spawn() {
-                self.show_error_title(&format!("新規ウィンドウの起動に失敗しました: {e}"));
-            }
+        // 引数なしで空のウィンドウを起動
+        let result = std::env::current_exe()
+            .context("実行ファイルのパスを取得できませんでした")
+            .and_then(|exe| {
+                std::process::Command::new(&exe)
+                    .spawn()
+                    .map(|_| ())
+                    .context("プロセスを起動できませんでした")
+            });
+        if let Err(e) = result {
+            self.show_error_title(&format!("新規ウィンドウの起動に失敗しました: {e:#}"));
         }
     }
 
@@ -936,6 +1067,8 @@ impl AppWindow {
 
     /// アクションを実行する
     fn execute_action(&mut self, action: Action) {
+        self.begin_user_operation();
+
         // スライドショー中は、スライドショー関連以外のアクションで自動停止
         if self.slideshow_active
             && !matches!(
@@ -1351,25 +1484,24 @@ impl AppWindow {
             },
         );
         self.finish_modal_dialog();
-        let Some(save_path) = dialog_result.ok().flatten() else {
+        let Some(save_path) = self.take_success("保存ダイアログの表示", dialog_result)
+        else {
             return;
         };
-
-        let Some(img) = self.document.current_image() else {
-            return;
-        };
-        let target = crate::filter::transform::output_image(img, self.selection.current_rect());
-        if let Err(e) = write_image_to_path(
-            target.width,
-            target.height,
-            &target.data,
-            format,
-            &save_path,
-        ) {
-            self.show_error_title(&format!("{e}"));
-        } else {
+        let result = self.write_current_image(format, &save_path);
+        if self.take_success("画像の出力", result.map(Some)).is_some() {
             self.file_operation_directory.remember_file(&save_path);
         }
+    }
+
+    /// 表示中の画像 (選択範囲があればその範囲) を指定形式でファイルへ保存する
+    fn write_current_image(&self, format: ExportFormat, path: &Path) -> Result<()> {
+        let img = self
+            .document
+            .current_image()
+            .context("出力する画像がありません")?;
+        let target = crate::filter::transform::output_image(img, self.selection.current_rect());
+        write_image_to_path(target.width, target.height, &target.data, format, path)
     }
 
     /// 数値を3桁カンマ区切りでフォーマットする
@@ -1387,12 +1519,25 @@ impl AppWindow {
 
     /// 画像情報を表示する
     fn show_image_info(&mut self) {
-        let Some(source) = self.document.current_source() else {
+        let Some(info_lines) = self.build_image_info() else {
             return;
         };
-        let Some(file_info) = self.document.file_list().current() else {
-            return;
-        };
+        let text = info_lines.join(
+            "
+
+",
+        );
+        let font = self.monospace_font.hfont();
+        self.prepare_modal_dialog();
+        let result = info_dialog::show_info_dialog(self.hwnd, "画像情報", &text, font);
+        self.finish_modal_dialog();
+        self.take_success("画像情報ダイアログの表示", result.map(Some));
+    }
+
+    /// 画像情報の表示行を組み立てる。メタデータ取得の失敗はタイトルバーへ通知し、取得済みの基本情報は返す
+    fn build_image_info(&mut self) -> Option<Vec<String>> {
+        let source = self.document.current_source()?;
+        let file_info = self.document.file_list().current()?;
 
         let mut info_lines = Vec::new();
         info_lines.push(format!("パス: {}", source.display_path()));
@@ -1406,26 +1551,28 @@ impl AppWindow {
         }
 
         // メタデータ取得 (デコーダ経由)
-        if let Ok(metadata) = self.document.current_metadata() {
-            info_lines.push(format!("フォーマット: {}", metadata.format));
-            for comment in &metadata.comments {
-                info_lines.push(comment.clone());
-            }
-            // EXIF情報
-            if !metadata.exif.is_empty() {
-                info_lines.push(String::new());
-                info_lines.push("--- EXIF ---".to_string());
-                for (key, value) in &metadata.exif {
-                    info_lines.push(format!("{key}: {value}"));
+        match self.document.current_metadata() {
+            Ok(metadata) => {
+                info_lines.push(format!("フォーマット: {}", metadata.format));
+                for comment in &metadata.comments {
+                    info_lines.push(comment.clone());
+                }
+                // EXIF情報
+                if !metadata.exif.is_empty() {
+                    info_lines.push(String::new());
+                    info_lines.push("--- EXIF ---".to_string());
+                    for (key, value) in &metadata.exif {
+                        info_lines.push(format!("{key}: {value}"));
+                    }
                 }
             }
+            Err(e) => {
+                let msg = format!("メタデータの取得に失敗しました: {e:#}");
+                info_lines.push(msg.clone());
+                self.show_error_title(&msg);
+            }
         }
-
-        let text = info_lines.join("\n\n");
-        let font = self.monospace_font.hfont();
-        self.prepare_modal_dialog();
-        info_dialog::show_info_dialog(self.hwnd, "画像情報", &text, font);
-        self.finish_modal_dialog();
+        Some(info_lines)
     }
 
     /// ヘルプを表示する
@@ -1458,12 +1605,14 @@ Susieプラグイン (.sph/.spi) で拡張可能";
 
         let font = self.monospace_font.hfont();
         self.prepare_modal_dialog();
-        info_dialog::show_info_dialog(self.hwnd, "ぐらびゅ ヘルプ", text, font);
+        let result = info_dialog::show_info_dialog(self.hwnd, "ぐらびゅ ヘルプ", text, font);
         self.finish_modal_dialog();
+        self.take_success("ヘルプの表示", result.map(Some));
     }
 
     /// マウス左ボタン押下: 選択ドラッグ開始
     fn on_lbutton_down(&mut self, lparam: LPARAM) {
+        self.begin_user_operation();
         let Some(draw_rect) = self.renderer.last_draw_rect().copied() else {
             return;
         };
@@ -1587,6 +1736,7 @@ Susieプラグイン (.sph/.spi) で拡張可能";
     }
 
     fn on_drop_files(&mut self, hdrop: HDROP) {
+        self.begin_user_operation();
         if !self.guard_unsaved_edit() {
             unsafe { DragFinish(hdrop) };
             return;
@@ -1695,10 +1845,383 @@ fn write_image_to_path(
     Ok(())
 }
 
+/// 試験用: 表示しないAppWindowと、その補助操作
+#[cfg(test)]
+pub(crate) mod test_support {
+    use super::*;
+
+    /// 表示しないAppWindow。破棄時にウィンドウを閉じる (WM_DESTROYの後始末を通す)
+    pub(crate) struct TestApp(pub(crate) Box<AppWindow>);
+
+    impl TestApp {
+        pub(crate) fn new() -> Self {
+            Self(AppWindow::create_hidden_for_test())
+        }
+
+        /// ウィンドウを閉じる。WM_DESTROYでポインタが外れた後にAppWindowを解放する
+        pub(crate) fn destroy(self) {
+            drop(self);
+        }
+
+        /// ウィンドウを閉じ、本体と同じくAppWindowを解放せずに残す
+        ///
+        /// 本体はメッセージループの後に`process::exit`で終わり、AppWindowを解放しない。
+        /// PDFを描画した後に、ウィンドウ破棄済みのD2DRendererを解放すると、
+        /// テストプロセスの終了時に終了コードが2170になる。測定では本体と同じ終了経路にそろえる。
+        pub(crate) fn close_without_release(self) {
+            let this = std::mem::ManuallyDrop::new(self);
+            unsafe {
+                let _ = DestroyWindow(this.0.hwnd);
+            }
+        }
+
+        pub(crate) fn title(&self) -> String {
+            let mut buf = [0u16; 1024];
+            let len = unsafe { GetWindowTextW(self.0.hwnd, &mut buf) };
+            String::from_utf16_lossy(&buf[..len as usize])
+        }
+
+        /// 描画を1回処理し、その処理が再描画を要求したかを返す
+        pub(crate) fn paint_and_check_redraw(&mut self) -> bool {
+            let before = self.0.redraw_request_count.get();
+            self.0.on_paint();
+            self.0.redraw_request_count.get() != before
+        }
+
+        /// 画像ファイルを単独で開き、表示まで処理する
+        pub(crate) fn open_image_file(&mut self, path: &Path) {
+            self.0.document.open_single(path).unwrap();
+            self.0.process_document_events();
+            assert!(self.0.document.current_image().is_some());
+        }
+
+        /// 画像座標の2点をドラッグして選択範囲を設定する (描画済みであること)
+        pub(crate) fn drag_select(&mut self, from: (i32, i32), to: (i32, i32)) {
+            let rect = *self.0.renderer.last_draw_rect().expect("drawn");
+            let img = self.0.document.current_image().expect("image");
+            let (w, h) = (img.width, img.height);
+            // 画素の中心を指す (画素の端では整数化で隣の画素や画像外へずれるため)
+            let lparam = |p: (i32, i32)| {
+                let sx = rect.x + (p.0 as f32 + 0.5) / w as f32 * rect.width;
+                let sy = rect.y + (p.1 as f32 + 0.5) / h as f32 * rect.height;
+                LPARAM(((sy as isize) << 16) | (sx as isize & 0xFFFF))
+            };
+            self.0.on_lbutton_down(lparam(from));
+            self.0.on_mouse_move(lparam(to));
+            self.0.on_lbutton_up();
+        }
+    }
+
+    impl Drop for TestApp {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = DestroyWindow(self.0.hwnd);
+            }
+        }
+    }
+
+    impl std::ops::Deref for TestApp {
+        type Target = AppWindow;
+        fn deref(&self) -> &AppWindow {
+            &self.0
+        }
+    }
+
+    impl std::ops::DerefMut for TestApp {
+        fn deref_mut(&mut self) -> &mut AppWindow {
+            &mut self.0
+        }
+    }
+
+    /// テスト間で衝突しない一時フォルダを作成する
+    pub(crate) fn unique_temp_dir(stem: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        let dir =
+            std::env::temp_dir().join(format!("gv_test_{stem}_{}_{nanos}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// 画像データをPNGとして保存する
+    pub(crate) fn write_png(path: &Path, image: &DecodedImage) {
+        write_image_to_path(
+            image.width,
+            image.height,
+            &image.data,
+            ExportFormat::Png,
+            path,
+        )
+        .unwrap();
+    }
+
+    /// 単色の画像
+    pub(crate) fn solid_image(width: u32, height: u32, rgba: [u8; 4]) -> DecodedImage {
+        DecodedImage {
+            data: rgba.repeat((width * height) as usize),
+            width,
+            height,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::test_support::{TestApp, solid_image, unique_temp_dir, write_png};
     use super::*;
     use std::fs;
+
+    /// 失効前後で比べる閲覧状態
+    #[derive(Debug, PartialEq)]
+    struct ViewState {
+        image: Vec<u8>,
+        size: (u32, u32),
+        edited: bool,
+        selection: Option<(i32, i32, i32, i32)>,
+        mode: DisplayMode,
+        draw_rect: Option<(f32, f32, f32, f32)>,
+        panel_visible: bool,
+    }
+
+    fn view_state(app: &AppWindow) -> ViewState {
+        let img = app.document.current_image().expect("image");
+        ViewState {
+            image: img.data.clone(),
+            size: (img.width, img.height),
+            edited: app.document.has_unsaved_edit(),
+            selection: app
+                .selection
+                .current_rect()
+                .map(|r| (r.x, r.y, r.width, r.height)),
+            mode: app.renderer.layout().mode,
+            draw_rect: app
+                .renderer
+                .last_draw_rect()
+                .map(|r| (r.x, r.y, r.width, r.height)),
+            panel_visible: app.file_list_panel.is_visible(),
+        }
+    }
+
+    /// 拡大・パネル表示・編集・選択のある状態で失効しても、開き直さずに同じ状態で描画を再開する
+    #[test]
+    fn paint_recovers_after_target_loss_keeping_state() {
+        let dir = unique_temp_dir("paint_recover");
+        let path = dir.join("image.png");
+        write_png(&path, &solid_image(40, 30, [10, 200, 30, 128]));
+        let mut app = TestApp::new();
+        app.open_image_file(&path);
+        app.execute_action(Action::ToggleFileList);
+        app.execute_action(Action::ZoomIn);
+        app.execute_action(Action::FlipHorizontal);
+        app.on_paint();
+        app.drag_select((5, 5), (20, 15));
+        app.on_paint();
+        let before = view_state(&app);
+        assert!(before.edited && before.panel_visible && before.selection.is_some());
+
+        app.renderer.simulate_target_loss_on_next_draw();
+        assert!(app.paint_and_check_redraw(), "loss must request a redraw");
+        assert!(app.renderer.target_snapshot().is_none());
+
+        assert!(!app.paint_and_check_redraw());
+        assert!(app.renderer.target_snapshot().is_some());
+        assert_eq!(view_state(&app), before);
+        assert!(!app.title().contains("エラー"), "{}", app.title());
+
+        app.destroy();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// ターゲットの再作成失敗と連続した失効は通知して自動の再描画要求を止め、
+    /// 次のリサイズで再試行して成功したら描画エラーの表示を解除する
+    #[test]
+    fn paint_reports_recreate_failure_without_endless_redraw() {
+        let dir = unique_temp_dir("paint_fail");
+        let path = dir.join("image.png");
+        write_png(&path, &solid_image(8, 8, [0, 0, 0, 255]));
+        let mut app = TestApp::new();
+        app.open_image_file(&path);
+        app.on_paint();
+
+        // 再作成の失敗: 通知し、再描画を要求しない
+        app.renderer.simulate_target_loss_on_next_draw();
+        assert!(app.paint_and_check_redraw());
+        app.renderer.fail_next_target_creation();
+        assert!(!app.paint_and_check_redraw());
+        assert!(
+            app.title().contains("描画に失敗しました"),
+            "{}",
+            app.title()
+        );
+
+        // 次のリサイズで再試行して成功し、描画エラーの表示を解除する
+        let (w, h) = window::get_client_size(app.hwnd);
+        let before = app.redraw_request_count.get();
+        app.on_size(w, h);
+        assert_ne!(app.redraw_request_count.get(), before);
+        assert!(!app.paint_and_check_redraw());
+        assert!(app.renderer.target_snapshot().is_some());
+        assert!(!app.title().contains("エラー"), "{}", app.title());
+
+        // 連続した失効: 上限回数までは再描画を要求し、超えたら通知して止める
+        for _ in 0..MAX_RENDER_RECOVERY_ATTEMPTS {
+            app.renderer.simulate_target_loss_on_next_draw();
+            assert!(app.paint_and_check_redraw());
+        }
+        app.renderer.simulate_target_loss_on_next_draw();
+        assert!(!app.paint_and_check_redraw());
+        assert!(
+            app.title().contains("描画を復旧できませんでした"),
+            "{}",
+            app.title()
+        );
+
+        app.destroy();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 失敗は操作名と原因をタイトルバーへ表示し、同じ処理のリスト・選択更新で消えない。
+    /// 利用者の次の操作の開始で解除する
+    #[test]
+    fn operation_failure_is_shown_and_survives_title_update() {
+        let dir = unique_temp_dir("op_fail");
+        let path = dir.join("image.png");
+        write_png(&path, &solid_image(4, 4, [0, 0, 0, 255]));
+        let mut app = TestApp::new();
+        app.open_image_file(&path);
+
+        let result: Result<Option<()>> = Err(anyhow::anyhow!("アクセスが拒否されました"));
+        assert_eq!(app.take_success("ファイルの移動", result), None);
+        let title = app.title();
+        assert!(title.contains("ファイルの移動に失敗しました"), "{title}");
+        assert!(title.contains("アクセスが拒否されました"), "{title}");
+
+        // 同じ処理内のリスト更新・選択更新
+        app.document.reload();
+        app.process_document_events();
+        assert_eq!(app.title(), title);
+
+        app.begin_user_operation();
+        assert!(!app.title().contains("エラー"), "{}", app.title());
+
+        app.destroy();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 開いた後に読めなくなったファイルへの移動は、原因とパスを表示する
+    #[test]
+    fn document_read_failure_is_shown() {
+        let dir = unique_temp_dir("read_fail");
+        let first = dir.join("a.png");
+        let second = dir.join("b.png");
+        write_png(&first, &solid_image(4, 4, [0, 0, 0, 255]));
+        write_png(&second, &solid_image(4, 4, [255, 0, 0, 255]));
+        let mut app = TestApp::new();
+        app.document.open(&first).unwrap();
+        app.process_document_events();
+        fs::remove_file(&second).unwrap();
+
+        app.execute_action(Action::NavigateForward);
+        let title = app.title();
+        assert!(title.contains("エラー"), "{title}");
+        assert!(title.contains("b.png"), "{title}");
+
+        app.destroy();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// キャンセル・中止・成功は失敗として通知せず、成功時だけ値を返す
+    #[test]
+    fn cancel_and_success_are_not_reported_as_failure() {
+        let mut app = TestApp::new();
+        let normal = app.title();
+
+        assert_eq!(
+            app.take_success::<PathBuf>("保存ダイアログの表示", Ok(None)),
+            None
+        );
+        let aborted: Result<bool> = Ok(false);
+        assert_eq!(
+            app.take_success("ファイルの削除", aborted.map(|done| done.then_some(()))),
+            None
+        );
+        assert_eq!(app.title(), normal);
+
+        let dest = PathBuf::from("dest");
+        assert_eq!(
+            app.take_success("保存ダイアログの表示", Ok(Some(dest.clone()))),
+            Some(dest)
+        );
+        let done: Result<bool> = Ok(true);
+        assert_eq!(
+            app.take_success("ファイルの削除", done.map(|done| done.then_some(()))),
+            Some(())
+        );
+        assert_eq!(app.title(), normal);
+
+        app.destroy();
+    }
+
+    /// 向きを補正した画像は、画面の向きと座標でトリミング・出力され、元ファイルは変わらない
+    #[test]
+    fn oriented_image_is_exported_as_displayed() {
+        use crate::test_helpers::{
+            asymmetric_rgba, encode_with_exif, exif_with_orientation, expected_oriented,
+        };
+        let dir = unique_temp_dir("oriented_export");
+        let src = asymmetric_rgba(4, 3);
+        let original = encode_with_exif(
+            &src,
+            image::ImageFormat::Png,
+            Some(exif_with_orientation(6)),
+        );
+        let path = dir.join("photo.png");
+        fs::write(&path, &original).unwrap();
+        let displayed = expected_oriented(&src, 6); // 3x4
+
+        let mut app = TestApp::new();
+        app.open_image_file(&path);
+        app.on_paint();
+
+        // 全体の出力 (PNG・BMPは可逆のため画素を、JPEGは寸法を比べる)
+        for (format, name, lossless) in [
+            (ExportFormat::Png, "out.png", true),
+            (ExportFormat::Bmp, "out.bmp", true),
+            (ExportFormat::Jpg, "out.jpg", false),
+        ] {
+            let out = dir.join(name);
+            app.write_current_image(format, &out).unwrap();
+            let written = image::open(&out).unwrap().into_rgba8();
+            assert_eq!(written.dimensions(), (3, 4), "{name}");
+            if lossless {
+                assert_eq!(written.as_raw(), displayed.as_raw(), "{name}");
+            }
+        }
+
+        // 画面座標での選択範囲の出力とトリミング
+        app.drag_select((0, 1), (2, 3));
+        let sel = app.selection.current_rect().expect("selected");
+        let expected_crop = image::imageops::crop_imm(
+            &displayed,
+            sel.x as u32,
+            sel.y as u32,
+            sel.width as u32,
+            sel.height as u32,
+        )
+        .to_image();
+        let out = dir.join("selection.png");
+        app.write_current_image(ExportFormat::Png, &out).unwrap();
+        assert_eq!(image::open(&out).unwrap().into_rgba8(), expected_crop);
+        app.execute_action(Action::Crop);
+        let cropped = app.document.current_image().unwrap();
+        assert_eq!((cropped.width, cropped.height), expected_crop.dimensions());
+        assert_eq!(&cropped.data, expected_crop.as_raw());
+
+        assert_eq!(fs::read(&path).unwrap(), original);
+        app.destroy();
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     /// テスト間で衝突しない一時パスを生成する。
     /// プロセス ID とナノ秒で並列実行に対する競合を避ける。

@@ -27,7 +27,11 @@ pub fn register_window_class_with_icon(
         };
 
         let atom = RegisterClassExW(std::ptr::from_ref(&wc));
-        if atom == 0 {
+        // 同じプロセスで2つ目以降のウィンドウを作成する場合 (テストなど) は登録済みのクラスを使う
+        if atom == 0
+            && windows::Win32::Foundation::GetLastError()
+                != windows::Win32::Foundation::ERROR_CLASS_ALREADY_EXISTS
+        {
             anyhow::bail!("RegisterClassExW失敗");
         }
     }

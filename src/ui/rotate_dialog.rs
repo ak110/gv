@@ -4,6 +4,8 @@
 
 use std::sync::Once;
 
+use anyhow::{Context as _, Result};
+
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::COLOR_BTNFACE;
 use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
@@ -31,7 +33,7 @@ const MARGIN: i32 = 12;
 
 /// 角度指定回転ダイアログを表示する (モーダル)
 /// 戻り値: 入力された角度 (度数法)。キャンセル時は `None`。
-pub fn show_rotate_dialog(parent: HWND) -> Option<f64> {
+pub fn show_rotate_dialog(parent: HWND) -> Result<Option<f64>> {
     unsafe {
         REGISTER_ONCE.call_once(|| {
             let class_wide: Vec<u16> = CLASS_NAME.encode_utf16().collect();
@@ -72,11 +74,7 @@ pub fn show_rotate_dialog(parent: HWND) -> Option<f64> {
             None,
             Some(data_ptr as *const _),
         )
-        .unwrap_or_default();
-
-        if hwnd.is_invalid() {
-            return None;
-        }
+        .context("ダイアログの作成に失敗しました")?;
 
         let frame_w = GetSystemMetrics(SM_CXFIXEDFRAME);
         let client_w = DIALOG_WIDTH - frame_w * 2;
@@ -168,7 +166,7 @@ pub fn show_rotate_dialog(parent: HWND) -> Option<f64> {
             let _ = DestroyWindow(hwnd);
         }
 
-        data.result
+        Ok(data.result)
     }
 }
 

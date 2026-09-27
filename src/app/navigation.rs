@@ -35,6 +35,7 @@ impl AppWindow {
         self.prepare_modal_dialog();
         let dialog_result = crate::ui::page_dialog::show_page_dialog(self.hwnd, current, total);
         self.finish_modal_dialog();
+        let dialog_result = self.take_success("ダイアログの表示", dialog_result);
         if let Some(page) = dialog_result {
             let index = (page.saturating_sub(1)).min(total - 1);
             self.stop_slideshow();

@@ -196,7 +196,8 @@ impl Document {
             let _ = self.event_sender.send(DocumentEvent::FileListChanged);
         }
 
-        self.load_current()
+        self.load_current();
+        Ok(())
     }
 
     /// 単一ファイルを開く (フォルダスキャンしない)
@@ -207,7 +208,8 @@ impl Document {
         self.invalidate_cache();
         self.file_list.populate_single(&path)?;
         let _ = self.event_sender.send(DocumentEvent::FileListChanged);
-        self.load_current()
+        self.load_current();
+        Ok(())
     }
 
     /// ブックマークファイルを開く
@@ -268,7 +270,8 @@ impl Document {
         // 未展開コンテナがあればバックグラウンド展開を起動
         self.start_background_expansion();
 
-        self.load_current()
+        self.load_current();
+        Ok(())
     }
 
     /// 複数パス (フォルダ・コンテナ・画像ファイル混在) をフラットに展開して開く。
@@ -408,7 +411,8 @@ impl Document {
         // 未展開コンテナがあればバックグラウンド展開を起動
         self.start_background_expansion();
 
-        self.load_current()
+        self.load_current();
+        Ok(())
     }
 
     /// コンテナの段階的読み込みヘルパー
@@ -774,7 +778,7 @@ impl Document {
             // apply_container_result はファイルリスト更新のみ行い、これらを呼ばない。
             self.invalidate_cache();
             if intent_resolved && self.file_list.current_index().is_some() {
-                let _ = self.load_current();
+                self.load_current();
             } else {
                 self.schedule_prefetch();
             }
@@ -948,7 +952,7 @@ impl Document {
             NavigationDirection::Backward
         };
         if self.file_list.navigate_relative(offset) {
-            let _ = self.load_current();
+            self.load_current();
         }
     }
 
@@ -956,7 +960,7 @@ impl Document {
     pub fn navigate_first(&mut self) {
         self.last_navigation_direction = NavigationDirection::Forward;
         if self.file_list.navigate_first() {
-            let _ = self.load_current();
+            self.load_current();
         }
     }
 
@@ -964,7 +968,7 @@ impl Document {
     pub fn navigate_to(&mut self, index: usize) {
         self.last_navigation_direction = NavigationDirection::Forward;
         if self.file_list.navigate_to(index) {
-            let _ = self.load_current();
+            self.load_current();
         }
     }
 
@@ -972,15 +976,17 @@ impl Document {
     pub fn navigate_last(&mut self) {
         self.last_navigation_direction = NavigationDirection::Backward;
         if self.file_list.navigate_last() {
-            let _ = self.load_current();
+            self.load_current();
         }
     }
 
     /// 現在のファイルをデコードしてイベント送信
-    fn load_current(&mut self) -> Result<()> {
+    ///
+    /// 読取・デコードの失敗は失敗マークと`DocumentEvent::Error`で通知する。
+    fn load_current(&mut self) {
         let Some(index) = self.file_list.current_index() else {
             self.current_image = None;
-            return Ok(());
+            return;
         };
 
         // 0. PendingContainer なら同期展開せず、非同期待ちに入る
@@ -1004,7 +1010,7 @@ impl Document {
             //   - ImageReady: 画像領域を再描画して黒画面 (current_image=None) を表示
             self.send_navigation_changed();
             let _ = self.event_sender.send(DocumentEvent::ImageReady);
-            return Ok(());
+            return;
         }
 
         // 通常ファイルに到達したので、待機していた intent はクリアする
@@ -1016,7 +1022,7 @@ impl Document {
             let _ = self.event_sender.send(DocumentEvent::ImageReady);
             self.send_navigation_changed();
             self.schedule_prefetch();
-            return Ok(());
+            return;
         }
 
         // 2. キャッシュミス → 同期デコード (フォールバック)
@@ -1033,10 +1039,11 @@ impl Document {
             crate::pdf_renderer::render_pdf_page_safe(pdf_path, *page_index)
         } else {
             // 通常ファイル/アーカイブエントリ: read_file_data → decode
+            // 読取失敗もデコード失敗と同じ経路で通知する (呼出元の多くは戻り値を使わないため)
             let current = self.file_list.current().expect("current_index was Some");
-            let data = self.read_file_data(current)?;
             let filename_hint = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            self.decoder.decode(&data, filename_hint)
+            self.read_file_data(current)
+                .and_then(|data| self.decoder.decode(&data, filename_hint))
         };
 
         match decode_result {
@@ -1057,7 +1064,6 @@ impl Document {
 
         self.send_navigation_changed();
         self.schedule_prefetch();
-        Ok(())
     }
 
     /// NavigationChangedイベントを送信
@@ -1199,7 +1205,7 @@ impl Document {
     pub fn navigate_prev_mark(&mut self) {
         self.last_navigation_direction = NavigationDirection::Backward;
         if self.file_list.navigate_prev_mark() {
-            let _ = self.load_current();
+            self.load_current();
         }
     }
 
@@ -1207,7 +1213,7 @@ impl Document {
     pub fn navigate_next_mark(&mut self) {
         self.last_navigation_direction = NavigationDirection::Forward;
         if self.file_list.navigate_next_mark() {
-            let _ = self.load_current();
+            self.load_current();
         }
     }
 
@@ -1219,7 +1225,7 @@ impl Document {
     pub fn navigate_prev_folder(&mut self) {
         self.last_navigation_direction = NavigationDirection::Forward;
         if self.file_list.navigate_prev_folder() {
-            let _ = self.load_current();
+            self.load_current();
         }
     }
 
@@ -1227,7 +1233,7 @@ impl Document {
     pub fn navigate_next_folder(&mut self) {
         self.last_navigation_direction = NavigationDirection::Forward;
         if self.file_list.navigate_next_folder() {
-            let _ = self.load_current();
+            self.load_current();
         }
     }
 
@@ -1236,7 +1242,7 @@ impl Document {
         self.last_navigation_direction = NavigationDirection::Backward;
         let order = self.file_list.sort_order();
         if self.file_list.sorted_navigate(-1, order) {
-            let _ = self.load_current();
+            self.load_current();
         }
     }
 
@@ -1257,7 +1263,7 @@ impl Document {
         self.last_navigation_direction = NavigationDirection::Forward;
         let order = self.file_list.sort_order();
         if self.file_list.sorted_navigate(1, order) {
-            let _ = self.load_current();
+            self.load_current();
         }
     }
 
@@ -1296,7 +1302,7 @@ impl Document {
         self.invalidate_cache();
         let _ = self.event_sender.send(DocumentEvent::FileListChanged);
         if self.file_list.len() > 0 {
-            let _ = self.load_current();
+            self.load_current();
         }
         Ok(())
     }
@@ -1310,7 +1316,7 @@ impl Document {
         self.reschedule_background_expansion();
         let _ = self.event_sender.send(DocumentEvent::FileListChanged);
         if self.file_list.len() > 0 {
-            let _ = self.load_current();
+            self.load_current();
         } else {
             self.current_image = None;
             let _ = self.event_sender.send(DocumentEvent::ImageReady);
@@ -1320,7 +1326,7 @@ impl Document {
     /// 現在のファイルを再読み込みする
     pub fn reload(&mut self) {
         self.invalidate_cache();
-        let _ = self.load_current();
+        self.load_current();
     }
 
     /// ファイルリストをクリアする
@@ -1383,7 +1389,7 @@ impl Document {
                     .position(|f| FileList::source_matches(&f.source, target_source))
                     .unwrap_or_else(|| data.index.min(self.file_list.len().saturating_sub(1)));
                 self.file_list.navigate_to(target_idx);
-                let _ = self.load_current();
+                self.load_current();
             }
         } else {
             // 通常ファイルのみ
@@ -1406,7 +1412,7 @@ impl Document {
             }
 
             let _ = self.event_sender.send(DocumentEvent::FileListChanged);
-            self.load_current()?;
+            self.load_current();
         }
 
         Ok(())
@@ -1491,7 +1497,7 @@ impl Document {
     /// 永続フィルタ設定変更後にキャッシュを全無効化して再読込する
     pub fn on_persistent_filter_changed(&mut self) {
         self.invalidate_cache();
-        let _ = self.load_current();
+        self.load_current();
     }
 
     /// current_imageを編集結果で置き換える
@@ -1646,5 +1652,91 @@ mod tests {
 
         flag.store(true, Ordering::Relaxed);
         assert!(flag_clone.load(Ordering::Relaxed));
+    }
+
+    /// 通常ファイル・ZIP内画像・先読み (キャッシュ取出) のいずれでも向きを一度だけ適用し、
+    /// 再読込や往復移動で回転が累積しない
+    #[test]
+    fn orientation_is_applied_consistently_for_file_archive_and_prefetch() {
+        use crate::test_helpers::{
+            asymmetric_rgba, encode_with_exif, exif_with_orientation, expected_oriented,
+        };
+        let dir = std::env::temp_dir().join(format!(
+            "gv_test_document_orientation_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = asymmetric_rgba(3, 2);
+        let orientations = [6u16, 5];
+        let files: Vec<(String, Vec<u8>)> = orientations
+            .iter()
+            .enumerate()
+            .map(|(i, &o)| {
+                (
+                    format!("image_{i}.png"),
+                    encode_with_exif(
+                        &src,
+                        image::ImageFormat::Png,
+                        Some(exif_with_orientation(o)),
+                    ),
+                )
+            })
+            .collect();
+        let folder = dir.join("folder");
+        std::fs::create_dir_all(&folder).unwrap();
+        for (name, data) in &files {
+            std::fs::write(folder.join(name), data).unwrap();
+        }
+        let zip_path = dir.join("images.zip");
+        {
+            let mut writer = ::zip::ZipWriter::new(std::fs::File::create(&zip_path).unwrap());
+            let opts = ::zip::write::SimpleFileOptions::default()
+                .compression_method(::zip::CompressionMethod::Stored);
+            for (name, data) in &files {
+                writer.start_file(name.as_str(), opts).unwrap();
+                writer.write_all(data).unwrap();
+            }
+            writer.finish().unwrap();
+        }
+        let expected: Vec<Vec<u8>> = orientations
+            .iter()
+            .map(|&o| expected_oriented(&src, o).into_raw())
+            .collect();
+        let current = |doc: &Document| {
+            let img = doc.current_image().expect("image loaded");
+            assert_eq!((img.width, img.height), (2, 3));
+            img.data.clone()
+        };
+
+        // 通常ファイル (同期デコード) と、先読み済みの次画像への移動 (キャッシュ取出)
+        let (mut doc, _rx) = test_document();
+        doc.start_prefetch(Arc::new(|| {}), 64 * 1024 * 1024, 1024)
+            .unwrap();
+        doc.open_folder(&folder).unwrap();
+        assert_eq!(current(&doc), expected[0], "file");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !doc.prefetch_coord.contains(1) {
+            assert!(std::time::Instant::now() < deadline, "prefetch timed out");
+            doc.process_prefetch_responses();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        doc.navigate_relative(1);
+        assert_eq!(current(&doc), expected[1], "prefetched");
+        doc.navigate_relative(-1);
+        assert_eq!(current(&doc), expected[0], "back");
+        doc.reload();
+        assert_eq!(current(&doc), expected[0], "reload");
+
+        // ZIP内の画像
+        let (mut zip_doc, _rx) = test_document();
+        zip_doc.open(&zip_path).unwrap();
+        assert_eq!(current(&zip_doc), expected[0], "archive");
+        zip_doc.navigate_relative(1);
+        assert_eq!(current(&zip_doc), expected[1], "archive next");
+
+        drop(doc);
+        drop(zip_doc);
+        cleanup_test_dir(&dir);
     }
 }

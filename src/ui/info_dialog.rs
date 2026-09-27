@@ -5,6 +5,8 @@
 
 use std::sync::Once;
 
+use anyhow::{Context as _, Result};
+
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::{COLOR_BTNFACE, HFONT, UpdateWindow};
 use windows::Win32::UI::WindowsAndMessaging::*;
@@ -31,7 +33,7 @@ const DIALOG_HEIGHT: i32 = 480;
 /// `title`: ダイアログタイトル
 /// `text`: 表示テキスト
 /// `font`: EDITコントロールに適用するフォント (HFONTが無効ならデフォルトフォント)
-pub fn show_info_dialog(parent: HWND, title: &str, text: &str, font: HFONT) {
+pub fn show_info_dialog(parent: HWND, title: &str, text: &str, font: HFONT) -> Result<()> {
     unsafe {
         // ウィンドウクラス登録
         REGISTER_ONCE.call_once(|| {
@@ -73,11 +75,7 @@ pub fn show_info_dialog(parent: HWND, title: &str, text: &str, font: HFONT) {
             None,
             Some(data_ptr as *const _),
         )
-        .unwrap_or_default();
-
-        if hwnd.is_invalid() {
-            return;
-        }
+        .context("ダイアログの作成に失敗しました")?;
 
         // クライアント領域の実サイズを取得してEDITコントロールを配置
         let mut client_rect = windows::Win32::Foundation::RECT::default();
@@ -137,6 +135,7 @@ pub fn show_info_dialog(parent: HWND, title: &str, text: &str, font: HFONT) {
             let _ = DestroyWindow(hwnd);
         }
     }
+    Ok(())
 }
 
 /// ダイアログ専用WndProc

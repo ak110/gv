@@ -6,6 +6,8 @@
 
 JPEG、PNG、GIF、BMP、WebP
 
+EXIFの向き情報を持つ画像は、その向きに従って表示する（[画像の表示](./viewing.md#写真の向き)を参照）。
+
 ## PDF
 
 Windows.Data.Pdf APIによるPDFレンダリングに対応している。

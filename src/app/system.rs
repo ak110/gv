@@ -2,9 +2,27 @@
 //!
 //! アップデート確認、シェル統合登録・解除、各種フォルダ・ホームページを開く操作。
 
+use std::path::PathBuf;
+
+use anyhow::{Context as _, Result};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use super::AppWindow;
+
+/// 実行ファイルのあるフォルダを返す
+fn exe_dir() -> Result<PathBuf> {
+    let exe = std::env::current_exe().context("実行ファイルのパスを取得できませんでした")?;
+    exe.parent()
+        .map(std::path::Path::to_path_buf)
+        .with_context(|| format!("実行ファイルの親フォルダがありません: {}", exe.display()))
+}
+
+/// フォルダが無ければ作成してから返す
+fn ensure_dir(dir: PathBuf) -> Result<PathBuf> {
+    std::fs::create_dir_all(&dir)
+        .with_context(|| format!("フォルダを作成できませんでした: {}", dir.display()))?;
+    Ok(dir)
+}
 
 impl AppWindow {
     /// アップデート確認・実行
@@ -163,38 +181,23 @@ impl AppWindow {
     }
 
     pub(crate) fn action_open_exe_folder(&mut self) {
-        if let Ok(exe) = std::env::current_exe()
-            && let Some(dir) = exe.parent()
-        {
-            self.open_in_explorer(dir);
-        }
+        self.open_folder_in_explorer("実行ファイルのフォルダを開く操作", exe_dir());
     }
 
     pub(crate) fn action_open_bookmark_folder(&mut self) {
-        let dir = crate::bookmark::bookmark_dir();
-        if let Err(e) = std::fs::create_dir_all(&dir) {
-            // ディレクトリがすでにある場合は無視されるため、到達するのは権限不足等。
-            // explorer.exe 起動側でも失敗するため致命的にせず警告のみ。
-            eprintln!(
-                "警告: ブックマークディレクトリ作成失敗: {} ({e})",
-                dir.display()
-            );
-        }
-        self.open_in_explorer(&dir);
+        let dir = ensure_dir(crate::bookmark::bookmark_dir());
+        self.open_folder_in_explorer("ブックマークフォルダを開く操作", dir);
     }
 
     pub(crate) fn action_open_spi_folder(&mut self) {
-        if let Ok(exe) = std::env::current_exe()
-            && let Some(dir) = exe.parent()
-        {
-            let spi_dir = dir.join("spi");
-            if let Err(e) = std::fs::create_dir_all(&spi_dir) {
-                eprintln!(
-                    "警告: spi ディレクトリ作成失敗: {} ({e})",
-                    spi_dir.display()
-                );
-            }
-            self.open_in_explorer(&spi_dir);
+        let dir = exe_dir().and_then(|dir| ensure_dir(dir.join("spi")));
+        self.open_folder_in_explorer("spiフォルダを開く操作", dir);
+    }
+
+    /// フォルダの解決に成功した場合だけエクスプローラーで開き、失敗は通知する
+    fn open_folder_in_explorer(&mut self, operation: &str, dir: Result<PathBuf>) {
+        if let Some(dir) = self.take_success(operation, dir.map(Some)) {
+            self.open_in_explorer(&dir);
         }
     }
 

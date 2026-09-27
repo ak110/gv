@@ -4,6 +4,8 @@
 
 use std::sync::Once;
 
+use anyhow::{Context as _, Result};
+
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::{COLOR_BTNFACE, UpdateWindow};
 use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
@@ -43,7 +45,7 @@ const MARGIN: i32 = 12;
 /// `total`: 総ページ数
 ///
 /// 戻り値: 入力されたページ番号 (1-based)。キャンセル時は `None`。
-pub fn show_page_dialog(parent: HWND, current: usize, total: usize) -> Option<usize> {
+pub fn show_page_dialog(parent: HWND, current: usize, total: usize) -> Result<Option<usize>> {
     unsafe {
         // ウィンドウクラス登録
         REGISTER_ONCE.call_once(|| {
@@ -88,11 +90,7 @@ pub fn show_page_dialog(parent: HWND, current: usize, total: usize) -> Option<us
             None,
             Some(data_ptr as *const _),
         )
-        .unwrap_or_default();
-
-        if hwnd.is_invalid() {
-            return None;
-        }
+        .context("ダイアログの作成に失敗しました")?;
 
         let titlebar_h = GetSystemMetrics(SM_CYCAPTION) + GetSystemMetrics(SM_CYSIZEFRAME);
         let frame_w = GetSystemMetrics(SM_CXFIXEDFRAME);
@@ -202,7 +200,7 @@ pub fn show_page_dialog(parent: HWND, current: usize, total: usize) -> Option<us
         // titlebar_h は上で使っているが警告を避けるため明示的に使用
         let _ = titlebar_h;
 
-        data.result
+        Ok(data.result)
     }
 }
 

@@ -16,6 +16,7 @@ impl AppWindow {
         self.prepare_modal_dialog();
         let degrees_opt = crate::ui::rotate_dialog::show_rotate_dialog(self.hwnd);
         self.finish_modal_dialog();
+        let degrees_opt = self.take_success("ダイアログの表示", degrees_opt);
         if let Some(degrees) = degrees_opt
             && let Some(img) = self.document.current_image()
         {
@@ -37,6 +38,7 @@ impl AppWindow {
         self.prepare_modal_dialog();
         let dialog_result = crate::ui::resize_dialog::show_resize_dialog(self.hwnd, w, h);
         self.finish_modal_dialog();
+        let dialog_result = self.take_success("ダイアログの表示", dialog_result);
         if let Some((nw, nh)) = dialog_result
             && let Some(img) = self.document.current_image()
         {
@@ -78,6 +80,7 @@ impl AppWindow {
         self.prepare_modal_dialog();
         let dialog_result = show_filter_dialog(self.hwnd, "塗り潰す", &fields);
         self.finish_modal_dialog();
+        let dialog_result = self.take_success("ダイアログの表示", dialog_result);
         if let Some(vals) = dialog_result
             && let Some(img) = self.document.current_image()
         {
@@ -111,6 +114,7 @@ impl AppWindow {
         self.prepare_modal_dialog();
         let dialog_result = show_filter_dialog(self.hwnd, "レベル補正", &fields);
         self.finish_modal_dialog();
+        let dialog_result = self.take_success("ダイアログの表示", dialog_result);
         if let Some(vals) = dialog_result
             && let Some(img) = self.document.current_image()
         {
@@ -136,6 +140,7 @@ impl AppWindow {
         self.prepare_modal_dialog();
         let dialog_result = show_filter_dialog(self.hwnd, "ガンマ補正", &fields);
         self.finish_modal_dialog();
+        let dialog_result = self.take_success("ダイアログの表示", dialog_result);
         if let Some(vals) = dialog_result
             && let Some(img) = self.document.current_image()
         {
@@ -167,6 +172,7 @@ impl AppWindow {
         self.prepare_modal_dialog();
         let dialog_result = show_filter_dialog(self.hwnd, "明るさとコントラスト", &fields);
         self.finish_modal_dialog();
+        let dialog_result = self.take_success("ダイアログの表示", dialog_result);
         if let Some(vals) = dialog_result
             && let Some(img) = self.document.current_image()
         {
@@ -197,6 +203,7 @@ impl AppWindow {
         self.prepare_modal_dialog();
         let dialog_result = show_filter_dialog(self.hwnd, "モザイク", &fields);
         self.finish_modal_dialog();
+        let dialog_result = self.take_success("ダイアログの表示", dialog_result);
         if let Some(vals) = dialog_result
             && let Some(img) = self.document.current_image()
         {
@@ -221,6 +228,7 @@ impl AppWindow {
         self.prepare_modal_dialog();
         let dialog_result = show_filter_dialog(self.hwnd, "ガウスぼかし", &fields);
         self.finish_modal_dialog();
+        let dialog_result = self.take_success("ダイアログの表示", dialog_result);
         if let Some(vals) = dialog_result
             && let Some(img) = self.document.current_image()
         {
@@ -245,6 +253,7 @@ impl AppWindow {
         self.prepare_modal_dialog();
         let dialog_result = show_filter_dialog(self.hwnd, "アンシャープマスク", &fields);
         self.finish_modal_dialog();
+        let dialog_result = self.take_success("ダイアログの表示", dialog_result);
         if let Some(vals) = dialog_result
             && let Some(img) = self.document.current_image()
         {
@@ -279,6 +288,7 @@ impl AppWindow {
         self.prepare_modal_dialog();
         let dialog_result = show_filter_dialog(self.hwnd, "永続レベル補正", &fields);
         self.finish_modal_dialog();
+        let dialog_result = self.take_success("ダイアログの表示", dialog_result);
         if let Some(vals) = dialog_result {
             let low = vals[0].parse::<u8>().unwrap_or(0);
             let high = vals[1].parse::<u8>().unwrap_or(255);
@@ -304,6 +314,7 @@ impl AppWindow {
         self.prepare_modal_dialog();
         let dialog_result = show_filter_dialog(self.hwnd, "永続ガンマ補正", &fields);
         self.finish_modal_dialog();
+        let dialog_result = self.take_success("ダイアログの表示", dialog_result);
         if let Some(vals) = dialog_result {
             let value = vals[0].parse::<f64>().unwrap_or(1.0).clamp(0.1, 10.0);
             self.document
@@ -338,6 +349,7 @@ impl AppWindow {
         self.prepare_modal_dialog();
         let dialog_result = show_filter_dialog(self.hwnd, "永続明るさとコントラスト", &fields);
         self.finish_modal_dialog();
+        let dialog_result = self.take_success("ダイアログの表示", dialog_result);
         if let Some(vals) = dialog_result {
             let brightness = vals[0].parse::<i32>().unwrap_or(0).clamp(-128, 128);
             let contrast = vals[1].parse::<i32>().unwrap_or(0).clamp(-128, 128);
@@ -366,6 +378,7 @@ impl AppWindow {
         self.prepare_modal_dialog();
         let dialog_result = show_filter_dialog(self.hwnd, "永続ガウスぼかし", &fields);
         self.finish_modal_dialog();
+        let dialog_result = self.take_success("ダイアログの表示", dialog_result);
         if let Some(vals) = dialog_result {
             let radius = vals[0].parse::<f64>().unwrap_or(2.0).clamp(0.1, 10.0);
             self.document
@@ -390,6 +403,7 @@ impl AppWindow {
         self.prepare_modal_dialog();
         let dialog_result = show_filter_dialog(self.hwnd, "永続アンシャープマスク", &fields);
         self.finish_modal_dialog();
+        let dialog_result = self.take_success("ダイアログの表示", dialog_result);
         if let Some(vals) = dialog_result {
             let radius = vals[0].parse::<f64>().unwrap_or(2.0).clamp(0.1, 10.0);
             self.document

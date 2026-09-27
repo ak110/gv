@@ -4,6 +4,8 @@
 
 use std::sync::Once;
 
+use anyhow::{Context as _, Result};
+
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::COLOR_BTNFACE;
 use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
@@ -40,9 +42,13 @@ const FIELD_HEIGHT: i32 = 48; // ラベル (20) + EDIT (24) + gap (4)
 
 /// フィルタパラメータダイアログを表示する
 /// 戻り値: 各フィールドの入力値。キャンセル時はNone。
-pub fn show_filter_dialog(parent: HWND, title: &str, fields: &[FieldDef]) -> Option<Vec<String>> {
+pub fn show_filter_dialog(
+    parent: HWND,
+    title: &str,
+    fields: &[FieldDef],
+) -> Result<Option<Vec<String>>> {
     if fields.is_empty() {
-        return None;
+        return Ok(None);
     }
 
     unsafe {
@@ -94,11 +100,7 @@ pub fn show_filter_dialog(parent: HWND, title: &str, fields: &[FieldDef]) -> Opt
             None,
             Some(data_ptr as *const _),
         )
-        .unwrap_or_default();
-
-        if hwnd.is_invalid() {
-            return None;
-        }
+        .context("ダイアログの作成に失敗しました")?;
 
         let frame_w = GetSystemMetrics(SM_CXFIXEDFRAME);
         let client_w = DIALOG_WIDTH - frame_w * 2;
@@ -206,7 +208,7 @@ pub fn show_filter_dialog(parent: HWND, title: &str, fields: &[FieldDef]) -> Opt
             let _ = DestroyWindow(hwnd);
         }
 
-        data.results
+        Ok(data.results)
     }
 }
 

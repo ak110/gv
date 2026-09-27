@@ -4,6 +4,8 @@
 
 use std::sync::Once;
 
+use anyhow::{Context as _, Result};
+
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::COLOR_BTNFACE;
 use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
@@ -37,7 +39,7 @@ pub fn show_resize_dialog(
     parent: HWND,
     current_width: u32,
     current_height: u32,
-) -> Option<(u32, u32)> {
+) -> Result<Option<(u32, u32)>> {
     unsafe {
         REGISTER_ONCE.call_once(|| {
             let class_wide: Vec<u16> = CLASS_NAME.encode_utf16().collect();
@@ -78,11 +80,7 @@ pub fn show_resize_dialog(
             None,
             Some(data_ptr as *const _),
         )
-        .unwrap_or_default();
-
-        if hwnd.is_invalid() {
-            return None;
-        }
+        .context("ダイアログの作成に失敗しました")?;
 
         let frame_w = GetSystemMetrics(SM_CXFIXEDFRAME);
         let client_w = DIALOG_WIDTH - frame_w * 2;
@@ -222,7 +220,7 @@ pub fn show_resize_dialog(
             let _ = DestroyWindow(hwnd);
         }
 
-        data.result
+        Ok(data.result)
     }
 }
 

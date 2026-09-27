@@ -1113,8 +1113,8 @@ packages:
     resolution: {integrity: sha512-OkTL9umf+He2DZkUq8f8J9of7yL6RJKI24dVITBmNfZBmri9zYZQrKkuXiKhyfPSu8tUhnVBB1iKXevvnlR4Ww==}
     engines: {node: '>= 12'}
 
-  copy-anything@4.1.1:
-    resolution: {integrity: sha512-AoT6Imdr98feSpFfmFwTFN73ccdr7uFPf27cBCgYvyyRyn1BzLRxMvrHNmwXO5LJMddRy4Rdhw2b1h7vSMKsEw==}
+  copy-anything@4.1.4:
+    resolution: {integrity: sha512-/LLeW0CtsoSybVkEpYjifB2Pis8DUSuwY7QD9FiR98fWkdbdrACw3ilckfnAHMecQ+RFEdZlRt6eCXhYHJbl/g==}
     engines: {node: '>=18'}
 
   crypt@0.0.2:
@@ -3526,7 +3526,7 @@ snapshots:
 
   commander@8.3.0: {}
 
-  copy-anything@4.1.1: {}
+  copy-anything@4.1.4: {}
 
   crypt@0.0.2: {}
 
@@ -5042,7 +5042,7 @@ snapshots:
 
   superjson@2.2.6:
     dependencies:
-      copy-anything: 4.1.1
+      copy-anything: 4.1.4
 
   tabbable@6.5.0: {}
 
