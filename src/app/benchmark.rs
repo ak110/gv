@@ -392,28 +392,27 @@ fn measure_input(input: &str, path: &Path, round: u32, settings: &Settings) -> V
     let opened = app.document.open(path).is_ok();
     let drawn = opened && wait_until_drawn(&mut app, 0, start + timeout);
     record("initial", 0, 0, start, drawn, false);
-    if !drawn {
-        return trials;
-    }
-
-    let mut index = 0usize;
-    for (scenario, action, steps) in [
-        ("forward", Action::NavigateForward, settings.forward_steps),
-        ("backward", Action::NavigateBack, settings.backward_steps),
-    ] {
-        for step in 1..=steps {
-            idle(&mut app, interval);
-            let target = if matches!(action, Action::NavigateForward) {
-                index + 1
-            } else {
-                index - 1
-            };
-            let cached = app.document.is_cached(target);
-            let start = Instant::now();
-            app.execute_action(action);
-            let drawn = wait_until_drawn(&mut app, target, start + timeout);
-            record(scenario, step, target, start, drawn, cached);
-            index = app.document.file_list().current_index().unwrap_or(target);
+    // 初回表示に失敗した入力は移動を測らない。失敗時もウィンドウの閉じ方は成功時と同じにする
+    if drawn {
+        let mut index = 0usize;
+        for (scenario, action, steps) in [
+            ("forward", Action::NavigateForward, settings.forward_steps),
+            ("backward", Action::NavigateBack, settings.backward_steps),
+        ] {
+            for step in 1..=steps {
+                idle(&mut app, interval);
+                let target = if matches!(action, Action::NavigateForward) {
+                    index + 1
+                } else {
+                    index - 1
+                };
+                let cached = app.document.is_cached(target);
+                let start = Instant::now();
+                app.execute_action(action);
+                let drawn = wait_until_drawn(&mut app, target, start + timeout);
+                record(scenario, step, target, start, drawn, cached);
+                index = app.document.file_list().current_index().unwrap_or(target);
+            }
         }
     }
     app.close_without_release();
@@ -468,6 +467,24 @@ mod tests {
         // 最初に現れた順を保つ
         assert_eq!(summary[0].input, "zip");
         assert_eq!(summary[0].scenario, "forward");
+    }
+
+    /// 初回表示に失敗した入力は失敗試行1件を返し、移動を測らずに戻る
+    #[test]
+    fn failed_initial_display_is_recorded() {
+        let dir = super::super::test_support::unique_temp_dir("bench-fail");
+        let settings = Settings {
+            rounds: 1,
+            forward_steps: 3,
+            backward_steps: 2,
+            interval_ms: 0,
+            timeout_ms: 200,
+        };
+        let trials = measure_input("missing", &dir.join("missing.png"), 0, &settings);
+        assert_eq!(trials.len(), 1);
+        assert_eq!(trials[0].scenario, "initial");
+        assert!(!trials[0].drawn);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// 表示時間の測定 (`mise run bench`で実行する)
