@@ -1,7 +1,10 @@
 //! Win32 Shell APIによるファイル操作 + ダイアログ
 
+use std::fs::{File, OpenOptions};
+use std::io::Write as _;
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context as _, Result};
 use windows::Win32::Foundation::HWND;
@@ -14,6 +17,87 @@ use crate::util::to_wide;
 
 /// IFileOperation がキャンセルされたことを示す HRESULT (HRESULT_FROM_WIN32(ERROR_CANCELLED))
 const ERROR_CANCELLED_HRESULT: u32 = 0x800704C7;
+
+/// 内容を完成させてから保存先へ反映する。書き込み・置換に失敗しても既存内容を残す。
+///
+/// 同一フォルダで作成するため、置換が別ボリュームへのコピーにならない。
+/// Windowsではstd::fs::renameが既存ファイルの置換を行い、共有違反・読み取り専用なら失敗する。
+pub fn save_atomic(
+    path: &Path,
+    write_contents: impl FnOnce(&mut File) -> Result<()>,
+) -> Result<()> {
+    let mut pending = PendingSave::create(path)?;
+    let mut file = pending.file.take().expect("新規保存ファイルが存在する");
+    let result = write_contents(&mut file).and_then(|()| file.sync_all().map_err(Into::into));
+    // Windowsでの後始末・置換の前に必ずハンドルを閉じる。
+    drop(file);
+    result?;
+    std::fs::rename(&pending.path, path)
+        .with_context(|| format!("保存先を置換できませんでした: {}", path.display()))
+}
+
+pub fn write_atomic(path: &Path, data: &[u8]) -> Result<()> {
+    save_atomic(path, |file| file.write_all(data).map_err(Into::into))
+}
+
+pub fn copy_atomic(source: &Path, destination: &Path) -> Result<()> {
+    let mut source_file = File::open(source)
+        .with_context(|| format!("コピー元を開けませんでした: {}", source.display()))?;
+    save_atomic(destination, |file| {
+        std::io::copy(&mut source_file, file)?;
+        file.set_permissions(source_file.metadata()?.permissions())?;
+        Ok(())
+    })
+}
+
+/// 保存先へ反映するまでの新規ファイルだけを所有し、失敗時も回収する。
+struct PendingSave {
+    path: PathBuf,
+    file: Option<File>,
+}
+
+impl PendingSave {
+    fn create(destination: &Path) -> Result<Self> {
+        static NEXT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+        let directory = destination
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        loop {
+            let sequence = NEXT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+            let path = directory.join(format!(".gv-save-{}-{sequence}.tmp", std::process::id()));
+            match OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(file) => {
+                    return Ok(Self {
+                        path,
+                        file: Some(file),
+                    });
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!(
+                            "保存用ファイルを作成できませんでした: {}",
+                            directory.display()
+                        )
+                    });
+                }
+            }
+        }
+    }
+}
+
+impl Drop for PendingSave {
+    fn drop(&mut self) {
+        drop(self.file.take());
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
 
 /// IFileOperationによるファイル削除 (ごみ箱経由)
 pub fn delete_to_recycle_bin(hwnd: HWND, paths: &[&Path]) -> Result<bool> {
@@ -416,5 +500,66 @@ fn create_shell_item(dir: &Path) -> Option<windows::Win32::UI::Shell::IShellItem
             None,
         )
         .ok()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::windows::fs::OpenOptionsExt as _;
+
+    /// 書き込み途中と置換の失敗は元の内容を残し、失敗後も上書きと複製を実行できる。
+    #[test]
+    fn atomic_save_preserves_existing_content_on_failure_and_recovers() {
+        let dir = crate::app::test_support::unique_temp_dir("atomic_save");
+        let destination = dir.join("保存先.dat");
+        std::fs::write(&destination, b"original").unwrap();
+
+        let result = save_atomic(&destination, |file| {
+            file.write_all(b"partial")?;
+            anyhow::bail!("書き込み途中の障害");
+        });
+        assert!(result.is_err());
+        assert_eq!(std::fs::read(&destination).unwrap(), b"original");
+
+        let locked = OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&destination)
+            .unwrap();
+        assert!(write_atomic(&destination, b"replacement").is_err());
+        drop(locked);
+        assert_eq!(std::fs::read(&destination).unwrap(), b"original");
+        write_atomic(&destination, b"replacement").unwrap();
+        assert_eq!(std::fs::read(&destination).unwrap(), b"replacement");
+
+        let copy = dir.join("複製.dat");
+        copy_atomic(&destination, &copy).unwrap();
+        copy_atomic(&copy, &copy).unwrap();
+        assert_eq!(std::fs::read(&copy).unwrap(), b"replacement");
+        assert!(copy_atomic(&dir.join("missing"), &copy).is_err());
+        assert_eq!(std::fs::read(&copy).unwrap(), b"replacement");
+        let original_permissions = std::fs::metadata(&destination).unwrap().permissions();
+        let mut readonly_permissions = original_permissions.clone();
+        readonly_permissions.set_readonly(true);
+        std::fs::set_permissions(&destination, readonly_permissions).unwrap();
+        let locked_copy = OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&copy)
+            .unwrap();
+        assert!(copy_atomic(&destination, &copy).is_err());
+        drop(locked_copy);
+        std::fs::set_permissions(&destination, original_permissions).unwrap();
+        assert_eq!(std::fs::read(&copy).unwrap(), b"replacement");
+        let mut names: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        names.sort();
+        let mut expected = vec![destination.file_name().unwrap(), copy.file_name().unwrap()];
+        expected.sort();
+        assert_eq!(names, expected);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

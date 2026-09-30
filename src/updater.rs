@@ -210,7 +210,11 @@ fn generate_update_batch(
                 .expect("extra_filesにはファイル名を持つパスのみが渡される前提");
             let file_name = file_name.to_string_lossy();
             let dest = target_dir.join(file_name.as_ref());
-            format!(r#"copy /y "{}" "{}""#, src.display(), dest.display())
+            format!(
+                "copy /y \"{}\" \"{}\"\nif errorlevel 1 goto extra_copy_failed",
+                src.display(),
+                dest.display()
+            )
         })
         .collect::<Vec<_>>()
         .join("\n");
@@ -253,15 +257,33 @@ if %errorlevel% equ 0 goto move_ok
 echo.
 echo エラー: 新しい ぐらびゅ.exe の配置に失敗しました。
 echo ロールバック中...
+if exist "{target}" del /f "{target}"
+if exist "{target}" goto rollback_failed
 rename "{old}" "{target_name}"
+if %errorlevel% neq 0 goto rollback_failed
 echo.
 echo 何かキーを押すとリトライします...
 pause >nul
 goto rename
+:rollback_failed
+echo エラー: 元の実行ファイルを復元できませんでした。
+echo "{old}" を削除せず、アプリケーションを終了してから "{target}" へ戻してください。
+pause >nul
+exit /b 1
 :move_ok
 
+:copy_extra
 {extra_copy_commands}
+goto update_done
 
+:extra_copy_failed
+echo.
+echo エラー: 付属ファイルのコピーに失敗しました。更新は完了していません。
+echo 保存先のアクセス権や空き容量を確認し、何かキーを押すと付属ファイルを再試行します。
+pause >nul
+goto copy_extra
+
+:update_done
 echo.
 echo 更新が完了しました。ぐらびゅ を起動します...
 start "" "{target}"
@@ -574,5 +596,113 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&base_dir);
+    }
+
+    /// 先頭・後続のコピー失敗では完了せず、付属コピーだけの再試行で完了できる。
+    #[test]
+    fn batch_copy_failure_stops_completion_and_retry_preserves_original_backup() {
+        for failed_index in 0..2 {
+            let base = crate::app::test_support::unique_temp_dir("update_copy_failure");
+            let install = base.join("日本語 install");
+            let download = base.join("download");
+            std::fs::create_dir_all(&install).unwrap();
+            std::fs::create_dir_all(&download).unwrap();
+            let target = install.join("ぐらびゅ.exe");
+            let update = download.join("update.exe");
+            std::fs::write(&target, b"old exe").unwrap();
+            std::fs::write(&update, b"new exe").unwrap();
+            let extras = [download.join("first.toml"), download.join("second.toml")];
+            for path in &extras {
+                std::fs::write(path, b"new extra").unwrap();
+            }
+            std::fs::remove_file(&extras[failed_index]).unwrap();
+            let batch = download.join("update.bat");
+            generate_update_batch(&batch, &update, &target, &extras, 1).unwrap();
+            let bytes = std::fs::read(&batch).unwrap();
+            let bytes = neutralize_batch_line(&bytes, b"start ");
+            let bytes = neutralize_batch_line(&bytes, b"del ");
+            // 利用者の入力待ちだけを置換し、失敗地点で終了して完了表示の不在を判定する。
+            let failed = String::from_utf8(bytes.clone())
+                .unwrap()
+                .replace("pause >nul", "rem pause")
+                .replace("goto copy_extra\r\n", "exit /b 1\r\n");
+            let test_batch = download.join("failed.bat");
+            std::fs::write(&test_batch, failed).unwrap();
+            let result = std::process::Command::new("cmd.exe")
+                .arg("/c")
+                .arg(&test_batch)
+                .output()
+                .unwrap();
+            assert!(!result.status.success());
+            let stdout = String::from_utf8_lossy(&result.stdout);
+            assert!(!stdout.contains("更新が完了しました"), "{stdout}");
+            let old = target.with_extension("exe.old");
+            assert_eq!(std::fs::read(&old).unwrap(), b"old exe");
+
+            // 元の生成バッチの追加コピー再試行入口から続け、exeの退避を繰り返さない。
+            std::fs::write(&extras[failed_index], b"new extra").unwrap();
+            let original = String::from_utf8(bytes).unwrap();
+            let resumed =
+                original.replacen("title gv update", "title gv update\r\ngoto copy_extra", 1);
+            let resumed_batch = download.join("resumed.bat");
+            std::fs::write(&resumed_batch, resumed).unwrap();
+            let result = std::process::Command::new("cmd.exe")
+                .arg("/c")
+                .arg(&resumed_batch)
+                .output()
+                .unwrap();
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            assert!(String::from_utf8_lossy(&result.stdout).contains("更新が完了しました"));
+            assert_eq!(std::fs::read(&old).unwrap(), b"old exe");
+            assert_eq!(std::fs::read(&target).unwrap(), b"new exe");
+            for path in &extras {
+                assert_eq!(
+                    std::fs::read(install.join(path.file_name().unwrap())).unwrap(),
+                    b"new extra"
+                );
+            }
+            std::fs::remove_dir_all(base).unwrap();
+        }
+    }
+
+    /// exe配置と元exeの復元がともに失敗した場合は、旧exeを残して失敗終了する。
+    #[test]
+    fn batch_rollback_failure_keeps_backup_and_stops() {
+        let dir = crate::app::test_support::unique_temp_dir("update_rollback_failure");
+        let target = dir.join("gv.exe");
+        let update = dir.join("missing_update.exe");
+        let old = target.with_extension("exe.old");
+        std::fs::write(&target, b"original exe").unwrap();
+        let batch = dir.join("update.bat");
+        generate_update_batch(&batch, &update, &target, &[], 1).unwrap();
+        let content = String::from_utf8(std::fs::read(&batch).unwrap()).unwrap();
+        // 復元操作だけに失敗を注入し、その終了状態を生成バッチに判定させる。
+        let content = content
+            .replace(
+                &format!("rename \"{}\" \"gv.exe\"", old.display()),
+                "cmd /c exit 1",
+            )
+            .replace("pause >nul", "rem pause")
+            .replace("goto rename\r\n", "exit /b 2\r\n");
+        std::fs::write(&batch, content).unwrap();
+        let result = std::process::Command::new("cmd.exe")
+            .arg("/c")
+            .arg(&batch)
+            .output()
+            .unwrap();
+        assert!(!result.status.success());
+        let stdout = String::from_utf8_lossy(&result.stdout);
+        assert!(
+            stdout.contains("元の実行ファイルを復元できませんでした"),
+            "{stdout}"
+        );
+        assert!(!stdout.contains("更新が完了しました"), "{stdout}");
+        assert_eq!(std::fs::read(&old).unwrap(), b"original exe");
+        assert!(!target.exists());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

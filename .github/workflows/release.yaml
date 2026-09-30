@@ -60,71 +60,35 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Check for existing release tag
-        id: existing
-        shell: pwsh
-        run: |
-          $tag = git tag --points-at=HEAD | Where-Object { $_ -match '^v\d+\.' } | Select-Object -First 1
-          if ($tag) {
-            Write-Host "Found existing tag $tag on HEAD, reusing"
-            "version=$($tag.TrimStart('v'))" >> $env:GITHUB_OUTPUT
-            "rerun=true" >> $env:GITHUB_OUTPUT
-          } else {
-            "rerun=false" >> $env:GITHUB_OUTPUT
-          }
-
       - name: Setup tools
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
+      - name: Prepare release from verified source
+        id: release
+        shell: pwsh
+        env:
+          SOURCE_COMMIT: ${{ github.sha }}
+          VERSION_BUMP: ${{ inputs.bump }}
+        run: |
+          uv run --no-project scripts/release.py prepare --source-commit $env:SOURCE_COMMIT --bump $env:VERSION_BUMP --output-file $env:GITHUB_OUTPUT
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Configure git identity
-        if: steps.existing.outputs.rerun != 'true'
+        if: steps.release.outputs.rerun != 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Bump version
-        if: steps.existing.outputs.rerun != 'true'
-        id: bump
-        shell: pwsh
-        run: |
-          $content = Get-Content Cargo.toml -Raw
-          if ($content -match '(?m)^version = "(\d+)\.(\d+)\.(\d+)"') {
-            $major = [int]$Matches[1]
-            $minor = [int]$Matches[2]
-            $patch = [int]$Matches[3]
-          } else {
-            throw "version not found in Cargo.toml"
-          }
-
-          $bump = "${{ inputs.bump }}"
-          switch ($bump) {
-            'PATCH' { $patch++ }
-            'MINOR' { $minor++; $patch = 0 }
-            'MAJOR' { $major++; $minor = 0; $patch = 0 }
-          }
-
-          $newVersion = "$major.$minor.$patch"
-          $content = $content -replace '(?m)^version = "\d+\.\d+\.\d+"', "version = `"$newVersion`""
-          Set-Content Cargo.toml -Value $content -NoNewline
-
-          Write-Output "version=$newVersion" >> $env:GITHUB_OUTPUT
-          Write-Host "New version: $newVersion"
-
-      - name: Update Cargo.lock
-        if: steps.existing.outputs.rerun != 'true'
-        run: cargo generate-lockfile
-
-      - if: steps.existing.outputs.rerun != 'true'
+      - name: Build verified dependencies
         run: mise run build
 
       - name: Create release archive
-        if: steps.existing.outputs.rerun != 'true'
         shell: pwsh
         run: |
-          $version = "${{ steps.bump.outputs.version }}"
+          $version = "${{ steps.release.outputs.version }}"
           $zipName = "gv-v$version.zip"
           # Cargo.tomlの[[bin]] name = "ぐらびゅ" によりこの名前で生成される
           Compress-Archive -Path @(
@@ -136,10 +100,10 @@ jobs:
           ) -DestinationPath $zipName
 
       - name: Update version.json for GitHub Pages
-        if: steps.existing.outputs.rerun != 'true'
+        if: steps.release.outputs.rerun != 'true'
         shell: pwsh
         run: |
-          $version = "${{ steps.bump.outputs.version }}"
+          $version = "${{ steps.release.outputs.version }}"
           $json = @{
             tag_name = "v$version"
             download_url = "https://github.com/${{ github.repository }}/releases/download/v$version/gv-v$version.zip"
@@ -147,26 +111,31 @@ jobs:
           Set-Content -Path "docs/public/version.json" -Value $json
 
       - name: Commit, tag and push
-        if: steps.existing.outputs.rerun != 'true'
+        if: steps.release.outputs.rerun != 'true'
         run: |
           git add Cargo.toml Cargo.lock docs/public/version.json
-          git commit -m "release: v${{ steps.bump.outputs.version }}"
-          git tag "v${{ steps.bump.outputs.version }}"
-          git push origin HEAD --tags
+          git commit -m "release: v${{ steps.release.outputs.version }}"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git tag "${{ steps.release.outputs.tag }}"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git push --atomic origin HEAD --tags
 
       - name: Generate release notes
-        run: git cliff --latest --strip=header --output=CHANGES.md
+        shell: pwsh
+        run: |
+          $tag = "${{ steps.release.outputs.tag }}"
+          $previousTag = git describe --tags --abbrev=0 --match 'v[0-9]*' "$tag^"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git cliff "$previousTag..$tag" --strip=header --output=CHANGES.md
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Append changelog link
         shell: pwsh
         run: |
-          $version = if ("${{ steps.existing.outputs.rerun }}" -eq "true") {
-            "${{ steps.existing.outputs.version }}"
-          } else {
-            "${{ steps.bump.outputs.version }}"
-          }
-          $tags = git tag --sort=version:refname | Where-Object { $_ -match '^v\d' }
-          $prevTag = $tags[-2]
+          $version = "${{ steps.release.outputs.version }}"
+          $tag = "${{ steps.release.outputs.tag }}"
+          $prevTag = git describe --tags --abbrev=0 --match 'v[0-9]*' "$tag^"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Add-Content CHANGES.md "`n**Full Changelog**: https://github.com/${{ github.repository }}/compare/$prevTag...v$version"
 
       - name: Create GitHub Release
@@ -174,19 +143,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
-          $version = if ("${{ steps.existing.outputs.rerun }}" -eq "true") {
-            "${{ steps.existing.outputs.version }}"
-          } else {
-            "${{ steps.bump.outputs.version }}"
-          }
-          $tag = "v$version"
+          $version = "${{ steps.release.outputs.version }}"
           $asset = "gv-v$version.zip"
-          $exists = gh release view $tag 2>&1
-          if ($LASTEXITCODE -eq 0) {
-            Write-Host "Release $tag already exists, skipping"
-          } else {
-            gh release create $tag $asset --title=$tag --notes-file=CHANGES.md
-          }
+          uv run --no-project scripts/release.py publish --repository "${{ github.repository }}" --tag "${{ steps.release.outputs.tag }}" --asset $asset --notes CHANGES.md
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Trigger docs deployment
         env:

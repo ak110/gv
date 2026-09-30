@@ -217,13 +217,11 @@ impl AppWindow {
                 crate::file_info::FileSource::ArchiveEntry { on_demand, .. } => {
                     // アーカイブエントリ: 保存 (リスト除去なし)
                     let result = if *on_demand {
-                        self.document.read_file_data_current().and_then(|data| {
-                            std::fs::write(&dest, &data).map_err(anyhow::Error::from)
-                        })
+                        self.document
+                            .read_file_data_current()
+                            .and_then(|data| crate::file_ops::write_atomic(&dest, &data))
                     } else {
-                        std::fs::copy(&path, &dest)
-                            .map(|_| ())
-                            .map_err(anyhow::Error::from)
+                        crate::file_ops::copy_atomic(&path, &dest)
                     };
                     match result {
                         Ok(()) => self.file_operation_directory.remember_file(&dest),
@@ -280,12 +278,9 @@ impl AppWindow {
                 // オンデマンド: アーカイブから読み込んで保存
                 self.document
                     .read_file_data_current()
-                    .and_then(|data| std::fs::write(&dest, &data).map_err(anyhow::Error::from))
+                    .and_then(|data| crate::file_ops::write_atomic(&dest, &data))
             } else {
-                // 通常ファイル/temp展開済み/PDF: 既存のfs::copy
-                std::fs::copy(&path, &dest)
-                    .map(|_| ())
-                    .map_err(anyhow::Error::from)
+                crate::file_ops::copy_atomic(&path, &dest)
             };
             match result {
                 Ok(()) => self.file_operation_directory.remember_file(&dest),

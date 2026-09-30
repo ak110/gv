@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// 1回の操作の測定結果
 #[derive(Debug, Clone, Serialize)]
@@ -367,6 +367,31 @@ fn environment() -> Environment {
     }
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+struct ProcessMemory {
+    #[serde(rename = "working_set_bytes")]
+    working_set: u64,
+    #[serde(rename = "private_bytes")]
+    private: u64,
+    #[serde(rename = "peak_working_set_bytes")]
+    peak_working_set: u64,
+}
+
+fn process_memory() -> ProcessMemory {
+    let expression = format!(
+        "$p = Get-Process -Id {}; [pscustomobject]@{{working_set_bytes=$p.WorkingSet64; \
+         private_bytes=$p.PrivateMemorySize64; peak_working_set_bytes=$p.PeakWorkingSet64}} \
+         | ConvertTo-Json -Compress",
+        std::process::id()
+    );
+    let json = command_output(
+        "powershell",
+        &["-NoProfile", "-NonInteractive", "-Command", &expression],
+    )
+    .expect("プロセスメモリー取得失敗");
+    serde_json::from_str(&json).expect("プロセスメモリーのJSONデコード失敗")
+}
+
 /// 1入力分の測定 (新しいウィンドウで初回表示・前方移動・逆方向移動を順に行う)
 fn measure_input(input: &str, path: &Path, round: u32, settings: &Settings) -> Vec<Trial> {
     use crate::ui::key_config::Action;
@@ -422,6 +447,8 @@ fn measure_input(input: &str, path: &Path, round: u32, settings: &Settings) -> V
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const LARGE_IMAGE_MATERIAL: (u32, u32, usize) = (8192, 4096, 8);
 
     fn trial(input: &str, scenario: &str, ms: f64, drawn: bool) -> Trial {
         Trial {
@@ -560,5 +587,170 @@ mod tests {
             );
         }
         println!("結果: {}", out.display());
+    }
+
+    /// 素材生成は別プロセスで行い、閲覧プロセスのピークへ生成時の使用量を混入させない。
+    #[test]
+    #[ignore = "bench-memoryから別プロセスで呼ばれる素材生成専用"]
+    fn prepare_large_image_material() {
+        let Some(directory) = std::env::var_os("GV_BENCH_MATERIAL_DIR") else {
+            return;
+        };
+        let directory = PathBuf::from(directory);
+        let padding_mib = std::env::var("GV_BENCH_MATERIAL_PADDING_MIB")
+            .ok()
+            .map_or(0, |value| {
+                value
+                    .parse::<usize>()
+                    .expect("素材負荷には整数のMiBを指定する")
+            });
+        let padding = vec![
+            0xaau8;
+            padding_mib
+                .checked_mul(1024 * 1024)
+                .expect("素材負荷が大きすぎる")
+        ];
+        let (width, height, count) = LARGE_IMAGE_MATERIAL;
+        let jpeg = encode(&material_image(width, height, 0), image::ImageFormat::Jpeg);
+        std::hint::black_box(&padding);
+        for index in 0..count {
+            std::fs::write(directory.join(format!("image_{index:03}.jpg")), &jpeg).unwrap();
+        }
+        drop(jpeg);
+        drop(padding);
+        println!(
+            "GV_MATERIAL_MEMORY={}",
+            serde_json::to_string(&process_memory()).unwrap()
+        );
+    }
+
+    /// キャッシュ格納前のデコードと未回収応答を含め、巨大画像閲覧のプロセス全体を測る。
+    #[test]
+    #[ignore = "巨大画像とWindows実機のGPUを使うため、mise run bench-memoryで明示実行する"]
+    fn large_image_memory_benchmark() {
+        #[derive(Serialize)]
+        struct MemoryReport {
+            environment: Environment,
+            width: u32,
+            height: u32,
+            image_count: usize,
+            cache_budget_bytes: usize,
+            decoded_image_bytes: usize,
+            ui_pause_ms: u64,
+            material_process_memory: ProcessMemory,
+            samples: Vec<(&'static str, ProcessMemory)>,
+            trials: Vec<Trial>,
+            notes: Vec<&'static str>,
+        }
+
+        let (width, height, count) = LARGE_IMAGE_MATERIAL;
+        let budget = 192 * 1024 * 1024;
+        let work = super::super::test_support::unique_temp_dir("large_memory");
+        let material_output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--ignored",
+                "--exact",
+                "app::benchmark::tests::prepare_large_image_material",
+                "--nocapture",
+            ])
+            .env("GV_BENCH_MATERIAL_DIR", &work)
+            .output()
+            .unwrap();
+        assert!(
+            material_output.status.success(),
+            "素材生成失敗: {}",
+            String::from_utf8_lossy(&material_output.stderr)
+        );
+        let material_stdout = String::from_utf8_lossy(&material_output.stdout);
+        let material_json = material_stdout
+            .lines()
+            .find_map(|line| line.strip_prefix("GV_MATERIAL_MEMORY="))
+            .expect("素材生成プロセスのメモリー記録がない");
+        let material_process_memory = serde_json::from_str(material_json).unwrap();
+
+        let mut app = super::super::test_support::TestApp::new();
+        app.document
+            .start_prefetch(
+                std::sync::Arc::new(|| {}),
+                budget,
+                crate::config::Config::default().prefetch.base_image_size(),
+            )
+            .unwrap();
+        let mut samples = vec![("before_open", process_memory())];
+        let start = Instant::now();
+        app.document.open(&work.join("image_000.jpg")).unwrap();
+        let drawn = wait_until_drawn(&mut app, 0, start + Duration::from_secs(30));
+        let mut trials = vec![Trial {
+            input: "large-jpeg-folder".to_string(),
+            scenario: "initial".to_string(),
+            round: 0,
+            step: 0,
+            index: 0,
+            ms: start.elapsed().as_secs_f64() * 1000.0,
+            drawn,
+            cached: false,
+        }];
+        samples.push(("before_ui_pause", process_memory()));
+        // UIが先読み応答を回収しない利用条件そのものを再現する。完了待機のsleepではない。
+        let pause = Duration::from_secs(3);
+        std::thread::sleep(pause);
+        samples.push(("after_ui_pause", process_memory()));
+        app.process_document_events();
+        samples.push(("after_response_drain", process_memory()));
+
+        for index in 1..count {
+            let cached = app.document.is_cached(index);
+            let start = Instant::now();
+            app.execute_action(crate::ui::key_config::Action::NavigateForward);
+            let drawn = wait_until_drawn(&mut app, index, start + Duration::from_secs(30));
+            trials.push(Trial {
+                input: "large-jpeg-folder".to_string(),
+                scenario: "forward".to_string(),
+                round: 0,
+                step: index as u32,
+                index,
+                ms: start.elapsed().as_secs_f64() * 1000.0,
+                drawn,
+                cached,
+            });
+        }
+        samples.push(("after_navigation", process_memory()));
+        app.destroy();
+        samples.push(("after_window_close", process_memory()));
+        std::fs::remove_dir_all(work).unwrap();
+        let report = MemoryReport {
+            environment: environment(),
+            width,
+            height,
+            image_count: count,
+            cache_budget_bytes: budget,
+            decoded_image_bytes: width as usize * height as usize * 4,
+            ui_pause_ms: pause.as_millis() as u64,
+            material_process_memory,
+            samples,
+            trials,
+            notes: vec![
+                "メモリーは測定テスト自身のWindowsプロセスをGet-Processで取得した。GPU専用メモリーは含まない",
+                "samplesは閲覧する親プロセスの値で、素材生成は別プロセスのmaterial_process_memoryへ記録する",
+                "ピーク常駐メモリーは各プロセス起動からの最大値。閲覧側には素材生成のピークを含めない",
+                "メモリー取得のPowerShell起動時間は表示時間に含めないが、その間もUIの応答回収は止まる",
+                "素材は同じ8192×4096のJPEGを別名で8枚配置した。OSのファイルキャッシュは排除しない",
+                "キャッシュ予算はデコード中のバッファ、表示画像、未処理応答、描画資源の総量を制限しない",
+            ],
+        };
+        let out_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/gv-bench");
+        std::fs::create_dir_all(&out_dir).unwrap();
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let out = out_dir.join(format!("memory-{stamp}.json"));
+        std::fs::write(&out, serde_json::to_string_pretty(&report).unwrap()).unwrap();
+        println!("{}", serde_json::to_string_pretty(&report).unwrap());
+        println!("結果: {}", out.display());
+        assert!(
+            report.trials.iter().all(|trial| trial.drawn),
+            "巨大画像の描画が完了しなかった"
+        );
     }
 }

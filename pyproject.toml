@@ -1,6 +1,13 @@
 [tool.uv]
 exclude-newer = "1 day"
 
+[tool.ruff]
+# リリース補助処理は標準のTOMLパーサーを使う。
+target-version = "py311"
+
+[tool.pytest.ini_options]
+asyncio_default_fixture_loop_scope = "function"
+
 [tool.pyfltr]
 preset = "latest"
 rust = true

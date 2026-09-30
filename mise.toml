@@ -77,7 +77,7 @@ run = [
 
 [tasks.build]
 description = "リリースビルド"
-run = "cargo build --release"
+run = "cargo build --release --locked"
 
 [tasks.clean]
 description = "ビルド成果物の削除"
@@ -123,6 +123,10 @@ run = "cargo test --release -- --ignored --exact app::benchmark::tests::display_
 [tasks.bench-compare]
 description = "表示時間の測定結果2件の比較（mise run bench-compare -- <基準JSON> <比較JSON>）"
 run = "uv run --no-project scripts/compare_display_bench.py"
+
+[tasks.bench-memory]
+description = "巨大画像の表示・UI応答回収停止中のプロセスメモリー実測"
+run = "cargo test --release --locked -- --ignored --exact app::benchmark::tests::large_image_memory_benchmark --nocapture"
 
 [tasks.docs]
 description = "ドキュメントのローカルプレビュー"

@@ -124,7 +124,7 @@ pub fn save_bookmark(
         }
     }
 
-    std::fs::write(&save_path, &content)
+    crate::file_ops::write_atomic(&save_path, content.as_bytes())
         .with_context(|| format!("ブックマーク保存失敗: {}", save_path.display()))?;
 
     Ok(Some(save_path))

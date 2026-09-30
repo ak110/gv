@@ -1825,7 +1825,7 @@ impl ExportFormat {
 
 /// RGBA バッファを指定パスへ指定フォーマットで保存する。
 ///
-/// `image::ImageBuffer<Rgba<u8>, _>` を直接 `save_with_format` に渡すと、JPEG エンコーダ
+/// `image::ImageBuffer<Rgba<u8>, _>` を直接エンコードすると、JPEG エンコーダ
 /// が RGBA を受け付けず色型エラーで失敗する。`DynamicImage` を経由することで `image`
 /// crate 側が必要な色変換 (RGBA→RGB 等) を自動で行う。フォーマットを引数で明示する
 /// ため、保存先パスの拡張子有無に依存しない。
@@ -1839,10 +1839,11 @@ fn write_image_to_path(
     let img_buf = image::RgbaImage::from_raw(width, height, rgba.to_vec())
         .ok_or_else(|| anyhow::anyhow!("画像バッファの作成に失敗しました"))?;
     let dynamic = image::DynamicImage::ImageRgba8(img_buf);
-    dynamic
-        .save_with_format(path, format.image_format())
-        .map_err(|e| anyhow::anyhow!("画像の保存に失敗しました: {e}"))?;
-    Ok(())
+    crate::file_ops::save_atomic(path, |file| {
+        dynamic
+            .write_to(file, format.image_format())
+            .context("画像の保存に失敗しました")
+    })
 }
 
 /// 試験用: 表示しないAppWindowと、その補助操作
@@ -2223,6 +2224,38 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    /// 出力先がロックされていても元の画像ファイルと編集状態を保ち、解除後は保存できる。
+    #[test]
+    fn image_export_failure_keeps_existing_file_and_can_retry() {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        let dir = unique_temp_dir("export_preserve");
+        let path = dir.join("保存画像.png");
+        write_png(&path, &solid_image(4, 3, [10, 20, 30, 255]));
+        let before = fs::read(&path).unwrap();
+        let mut app = TestApp::new();
+        app.open_image_file(&path);
+        app.execute_action(Action::InvertColors);
+        let edited = app.document.current_image().unwrap().data.clone();
+        let locked = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&path)
+            .unwrap();
+        let result = app.write_current_image(ExportFormat::Png, &path).map(Some);
+        assert!(app.take_success("画像の出力", result).is_none());
+        assert!(app.title().contains("画像の出力に失敗しました"));
+        drop(locked);
+        assert_eq!(fs::read(&path).unwrap(), before);
+        assert_eq!(app.document.current_image().unwrap().data, edited);
+        assert!(app.document.has_unsaved_edit());
+
+        app.write_current_image(ExportFormat::Png, &path).unwrap();
+        assert_eq!(image::open(&path).unwrap().into_rgba8().into_raw(), edited);
+        app.destroy();
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
     /// テスト間で衝突しない一時パスを生成する。
     /// プロセス ID とナノ秒で並列実行に対する競合を避ける。
     fn unique_temp_path(stem: &str) -> PathBuf {
@@ -2258,7 +2291,7 @@ mod tests {
     }
 
     /// `.txt` のような不一致拡張子でも、指定したフォーマットでバイト列が書かれる
-    /// (`save_with_format` による形式強制の挙動保証)。同時に `DynamicImage` 経由
+    /// (形式指定による挙動保証)。同時に `DynamicImage` 経由
     /// による RGBA→RGB 自動変換が JPEG エンコーダで動くことを検証する。
     #[test]
     fn write_jpg_with_txt_extension_writes_jpeg_bytes() {
