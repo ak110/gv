@@ -18,9 +18,7 @@ impl SusieImageDecoder {
 
 impl ImageDecoder for SusieImageDecoder {
     fn can_decode(&self, data: &[u8], filename_hint: &str) -> bool {
-        let Ok(locked) = self.plugin.lock() else {
-            return false;
-        };
+        let locked = self.plugin.lock().expect("Susie plugin lock poisoned");
         locked.is_supported(filename_hint, data)
     }
 
@@ -46,9 +44,3 @@ impl ImageDecoder for SusieImageDecoder {
         })
     }
 }
-
-// SAFETY: 内部フィールドは Arc<Mutex<Plugin>> である SharedPlugin のみで Send + Sync を満たす。
-// したがって SusieImageDecoder 全体も Send + Sync として扱える。
-unsafe impl Send for SusieImageDecoder {}
-// SAFETY: Send 実装と同じ理由で Sync も成立する (内部は Arc<Mutex<Plugin>> のみ)。
-unsafe impl Sync for SusieImageDecoder {}

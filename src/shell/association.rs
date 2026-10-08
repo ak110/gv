@@ -7,14 +7,14 @@
 //!
 //! gv3.* 旧ProgIDは初回起動時のマイグレーションでクリーンアップされる
 
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use windows::Win32::Foundation::ERROR_SUCCESS;
 use windows::Win32::System::Registry::*;
 use windows::Win32::UI::Shell::{SHCNE_ASSOCCHANGED, SHCNF_IDLIST, SHChangeNotify};
 
 /// exeの絶対パスを返す
 fn exe_path() -> Result<String> {
-    let path = std::env::current_exe().context("exe パス取得失敗")?;
+    let path = crate::paths::exe_path()?;
     Ok(path.to_string_lossy().into_owned())
 }
 
@@ -131,14 +131,8 @@ fn remove_open_with_progid(extension: &str, progid: &str) {
     }
 }
 
-/// 画像拡張子リスト
-const IMAGE_EXTENSIONS: &[&str] = &[".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"];
-
-/// アーカイブ拡張子リスト (コミック用のみ関連付け)
-const ARCHIVE_EXTENSIONS: &[&str] = &[".cbz", ".cbr"];
-
-/// 汎用アーカイブ拡張子 (関連付け解除のみ、登録はしない)
-const GENERIC_ARCHIVE_EXTENSIONS: &[&str] = &[".zip", ".rar", ".7z"];
+use crate::bookmark::{BOOKMARK_EXTENSION, LEGACY_BOOKMARK_EXTENSION, OLD_BOOKMARK_EXTENSION};
+use crate::image::StandardDecoder;
 
 const IMAGE_PROGID: &str = "gv.ImageFile";
 const ARCHIVE_PROGID: &str = "gv.ArchiveFile";
@@ -148,13 +142,6 @@ const BOOKMARK_PROGID: &str = "gv.Bookmark";
 const OLD_IMAGE_PROGID: &str = "gv3.ImageFile";
 const OLD_ARCHIVE_PROGID: &str = "gv3.ArchiveFile";
 const OLD_BOOKMARK_PROGID: &str = "gv3.Bookmark";
-
-/// ブックマーク拡張子
-const BOOKMARK_EXTENSION: &str = ".gvbm";
-/// 旧ブックマーク拡張子 (後方互換)
-const OLD_BOOKMARK_EXTENSION: &str = ".gv3bm";
-/// 旧 C++ 実装のブックマーク拡張子
-const LEGACY_BOOKMARK_EXTENSION: &str = ".gvb";
 
 /// ファイル関連付けを登録する
 pub fn register() -> Result<()> {
@@ -212,15 +199,15 @@ pub fn register() -> Result<()> {
     )?;
 
     // 汎用アーカイブの既存関連付けをクリーンアップ (再登録時に古い関連付けが残らないように)
-    for ext in GENERIC_ARCHIVE_EXTENSIONS {
+    for ext in crate::archive::generic_extensions() {
         remove_open_with_progid(ext, ARCHIVE_PROGID);
     }
 
     // 各拡張子にOpenWithProgidsを登録
-    for ext in IMAGE_EXTENSIONS {
+    for ext in StandardDecoder::extensions() {
         add_open_with_progid(ext, IMAGE_PROGID)?;
     }
-    for ext in ARCHIVE_EXTENSIONS {
+    for ext in crate::archive::comic_extensions() {
         add_open_with_progid(ext, ARCHIVE_PROGID)?;
     }
     add_open_with_progid(BOOKMARK_EXTENSION, BOOKMARK_PROGID)?;
@@ -248,13 +235,13 @@ fn cleanup_old_progids() -> Result<()> {
     )?;
 
     // 各拡張子のOpenWithProgidsから旧ProgIDを削除
-    for ext in IMAGE_EXTENSIONS {
+    for ext in StandardDecoder::extensions() {
         remove_open_with_progid(ext, OLD_IMAGE_PROGID);
     }
-    for ext in ARCHIVE_EXTENSIONS {
+    for ext in crate::archive::comic_extensions() {
         remove_open_with_progid(ext, OLD_ARCHIVE_PROGID);
     }
-    for ext in GENERIC_ARCHIVE_EXTENSIONS {
+    for ext in crate::archive::generic_extensions() {
         remove_open_with_progid(ext, OLD_ARCHIVE_PROGID);
     }
     remove_open_with_progid(OLD_BOOKMARK_EXTENSION, OLD_BOOKMARK_PROGID);
@@ -281,13 +268,13 @@ pub fn unregister() -> Result<()> {
     )?;
 
     // 各拡張子のOpenWithProgidsからProgIDを削除
-    for ext in IMAGE_EXTENSIONS {
+    for ext in StandardDecoder::extensions() {
         remove_open_with_progid(ext, IMAGE_PROGID);
     }
-    for ext in ARCHIVE_EXTENSIONS {
+    for ext in crate::archive::comic_extensions() {
         remove_open_with_progid(ext, ARCHIVE_PROGID);
     }
-    for ext in GENERIC_ARCHIVE_EXTENSIONS {
+    for ext in crate::archive::generic_extensions() {
         remove_open_with_progid(ext, ARCHIVE_PROGID);
     }
     remove_open_with_progid(BOOKMARK_EXTENSION, BOOKMARK_PROGID);

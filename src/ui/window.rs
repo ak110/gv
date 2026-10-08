@@ -69,14 +69,6 @@ pub fn set_window_data<T>(hwnd: HWND, data: *mut T) {
     }
 }
 
-/// GWLP_USERDATAからポインタを取得
-pub fn get_window_data<T>(hwnd: HWND) -> Option<&'static mut T> {
-    unsafe {
-        let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut T;
-        if ptr.is_null() { None } else { Some(&mut *ptr) }
-    }
-}
-
 /// クライアント領域のサイズを取得
 pub fn get_client_size(hwnd: HWND) -> (u32, u32) {
     unsafe {

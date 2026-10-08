@@ -20,9 +20,8 @@ pub(crate) fn group_key(info: &FileInfo) -> GroupKey {
         FileSource::PendingContainer { container_path } => {
             GroupKey::Archive(container_path.clone())
         }
-        FileSource::File(_) => GroupKey::Folder(
-            info.path
-                .parent()
+        FileSource::File(path) => GroupKey::Folder(
+            path.parent()
                 .map(std::path::Path::to_path_buf)
                 .unwrap_or_default(),
         ),

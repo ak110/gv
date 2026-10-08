@@ -7,6 +7,8 @@ use anyhow::{Context as _, Result};
 use super::{ArchiveHandler, ExtractedEntry, extract_filename, resolve_filename};
 use crate::extension_registry::ExtensionRegistry;
 
+pub(super) const EXTENSIONS: &[&str] = &[".7z"];
+
 /// 7zアーカイブハンドラ
 pub struct SevenZHandler {
     registry: Arc<ExtensionRegistry>,
@@ -20,7 +22,7 @@ impl SevenZHandler {
 
 impl ArchiveHandler for SevenZHandler {
     fn supported_extensions(&self) -> Vec<String> {
-        vec![".7z".to_string()]
+        EXTENSIONS.iter().map(ToString::to_string).collect()
     }
 
     fn extract_images(
@@ -44,13 +46,7 @@ impl ArchiveHandler for SevenZHandler {
                 let entry_path = entry.name().to_string();
                 let filename = extract_filename(&entry_path);
 
-                // ディレクトリ、空ファイル名、隠しファイルはスキップ
-                if entry.is_directory() || filename.is_empty() || filename.starts_with('.') {
-                    return Ok(true);
-                }
-
-                // 画像ファイルのみ展開
-                if !registry.is_image_extension(filename) {
+                if !super::is_image_entry(&entry_path, entry.is_directory(), &registry) {
                     return Ok(true);
                 }
 
@@ -61,7 +57,15 @@ impl ArchiveHandler for SevenZHandler {
                 // target_dirに保存
                 let out_path = resolve_filename(&target_dir, filename);
                 std::fs::write(&out_path, &data)?;
-                results.push((out_path, entry_path));
+                results.push((
+                    out_path,
+                    entry_path,
+                    if entry.has_last_modified_date {
+                        entry.last_modified_date().into()
+                    } else {
+                        std::time::SystemTime::UNIX_EPOCH
+                    },
+                ));
 
                 Ok(true)
             })
@@ -86,11 +90,9 @@ mod tests {
     fn nonexistent_7z_returns_error() {
         let reg = Arc::new(ExtensionRegistry::new());
         let handler = SevenZHandler::new(reg);
-        let dir = std::env::temp_dir().join("gv_test_7z_noexist");
-        let _ = std::fs::create_dir_all(&dir);
+        let dir = crate::test_helpers::TempDir::new("7z_noexist");
         let result: Result<Vec<super::ExtractedEntry>> =
             handler.extract_images(Path::new("nonexistent.7z"), &dir);
         assert!(result.is_err());
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

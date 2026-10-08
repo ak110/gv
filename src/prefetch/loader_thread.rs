@@ -9,19 +9,17 @@ use crossbeam_channel::{Receiver, Sender};
 
 use crate::archive::ArchiveManager;
 use crate::document::ZipBuffer;
+use crate::file_info::FileSource;
 use crate::image::{DecodedImage, DecoderChain};
+use crate::persistent_filter::PersistentFilter;
 
 /// ワーカースレッドへのリクエスト
 enum LoadRequest {
     Load {
         index: usize,
-        path: PathBuf,
+        source: FileSource,
+        filter: PersistentFilter,
         generation: u64,
-        /// PDFページの場合: (pdf_path, page_index)
-        pdf_page: Option<(PathBuf, u32)>,
-        /// オンデマンドアーカイブエントリの場合: (archive_path, entry_name, entry_index)
-        /// entry_indexは新規ZIPオープン時のみ`Some`、ブックマーク等の旧形式復元時は`None`
-        archive_entry: Option<(PathBuf, String, Option<u32>)>,
     },
     Shutdown,
 }
@@ -34,8 +32,6 @@ pub enum LoadResponse {
         generation: u64,
     },
     Failed {
-        #[allow(dead_code)] // enum構造体フィールド: ログ出力等で参照可能にする
-        index: usize,
         error: String,
         generation: u64,
     },
@@ -92,19 +88,12 @@ impl PrefetchEngine {
     }
 
     /// 現在のgenerationを付与してロードリクエストを送信
-    pub fn request_load(
-        &self,
-        index: usize,
-        path: PathBuf,
-        pdf_page: Option<(PathBuf, u32)>,
-        archive_entry: Option<(PathBuf, String, Option<u32>)>,
-    ) {
+    pub fn request_load(&self, index: usize, source: FileSource, filter: PersistentFilter) {
         let _ = self.request_tx.send(LoadRequest::Load {
             index,
-            path,
+            source,
+            filter,
             generation: self.generation,
-            pdf_page,
-            archive_entry,
         });
     }
 
@@ -198,105 +187,31 @@ fn worker_loop(
         match request {
             LoadRequest::Load {
                 index,
-                path,
+                source,
+                filter,
                 generation,
-                pdf_page,
-                archive_entry,
             } => {
                 // デコード前に世代チェック → 古いリクエストはスキップ
                 if generation < current_generation.load(Ordering::Relaxed) {
                     continue;
                 }
 
-                let response = if let Some((pdf_path, page_index)) = pdf_page {
-                    // PDFページ: レンダリング
-                    match crate::pdf_renderer::render_pdf_page(&pdf_path, page_index) {
-                        Ok(image) => LoadResponse::Loaded {
-                            index,
-                            image,
-                            generation,
-                        },
-                        Err(e) => LoadResponse::Failed {
-                            index,
-                            error: format!("{} page {}: {}", pdf_path.display(), page_index + 1, e),
-                            generation,
-                        },
-                    }
-                } else if let Some((archive_path, entry_name, entry_index)) = archive_entry {
-                    // オンデマンドアーカイブエントリ: バッファ→decode
-                    let read_result = {
-                        let buffers = zip_buffers.read().expect("zip_buffers lock poisoned");
-                        if let Some(buffer) = buffers.get(&archive_path) {
-                            if let Some(idx) = entry_index {
-                                crate::archive::ArchiveManager::read_zip_entry_from_buffer_at(
-                                    buffer.as_ref(),
-                                    idx,
-                                )
-                            } else {
-                                crate::archive::zip::ZipHandler::read_entry_from_buffer(
-                                    buffer.as_ref(),
-                                    &entry_name,
-                                )
-                            }
-                        } else {
-                            drop(buffers);
-                            if let Some(idx) = entry_index {
-                                crate::archive::ArchiveManager::read_zip_entry_at(
-                                    &archive_path,
-                                    idx,
-                                )
-                            } else {
-                                archive_manager.read_entry(&archive_path, &entry_name)
-                            }
-                        }
-                    };
-                    let filename_hint = crate::archive::extract_filename(&entry_name).to_string();
-                    match read_result {
-                        Ok(data) => match decoder.decode(&data, &filename_hint) {
-                            Ok(image) => LoadResponse::Loaded {
-                                index,
-                                image,
-                                generation,
-                            },
-                            Err(e) => LoadResponse::Failed {
-                                index,
-                                error: format!(
-                                    "{} > {}: {}",
-                                    archive_path.display(),
-                                    entry_name,
-                                    e
-                                ),
-                                generation,
-                            },
-                        },
-                        Err(e) => LoadResponse::Failed {
-                            index,
-                            error: format!("{} > {}: {}", archive_path.display(), entry_name, e),
-                            generation,
-                        },
-                    }
-                } else {
-                    // 通常ファイル: fs::read → decode
-                    let filename_hint = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                    match std::fs::read(&path) {
-                        Ok(data) => match decoder.decode(&data, filename_hint) {
-                            Ok(image) => LoadResponse::Loaded {
-                                index,
-                                image,
-                                generation,
-                            },
-                            Err(e) => LoadResponse::Failed {
-                                index,
-                                error: format!("{}: {}", path.display(), e),
-                                generation,
-                            },
-                        },
-                        Err(e) => LoadResponse::Failed {
-                            index,
-                            error: format!("{}: {}", path.display(), e),
-                            generation,
-                        },
-                    }
+                let response = match crate::image::decode_source(
+                    &source,
+                    &decoder,
+                    &archive_manager,
+                    &zip_buffers,
+                    false,
+                ) {
+                    Ok(image) => LoadResponse::Loaded {
+                        index,
+                        image: filter.apply(&image).unwrap_or(image),
+                        generation,
+                    },
+                    Err(error) => LoadResponse::Failed {
+                        error: format!("{}: {error}", source.display_path()),
+                        generation,
+                    },
                 };
 
                 let _ = response_tx.send(response);
@@ -310,38 +225,14 @@ fn worker_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_helpers::{
+        create_1x1_white_png, test_archive_manager, test_decoder, test_zip_buffers,
+    };
     use std::io::Write;
-
-    use crate::image::StandardDecoder;
-
-    fn test_decoder() -> Arc<DecoderChain> {
-        Arc::new(DecoderChain::new(vec![Box::new(StandardDecoder::new())]))
-    }
-
-    fn test_archive_manager() -> Arc<ArchiveManager> {
-        Arc::new(ArchiveManager::new(Arc::new(
-            crate::extension_registry::ExtensionRegistry::new(),
-        )))
-    }
-
-    fn test_zip_buffers() -> Arc<RwLock<HashMap<PathBuf, ZipBuffer>>> {
-        Arc::new(RwLock::new(HashMap::new()))
-    }
-
-    /// テスト用: 1x1 白ピクセルのPNGバイナリを生成
-    fn create_1x1_white_png() -> Vec<u8> {
-        use image::{ImageBuffer, Rgba};
-        let img: ImageBuffer<Rgba<u8>, Vec<u8>> =
-            ImageBuffer::from_pixel(1, 1, Rgba([255, 255, 255, 255]));
-        let mut buf = std::io::Cursor::new(Vec::new());
-        img.write_to(&mut buf, image::ImageFormat::Png).unwrap();
-        buf.into_inner()
-    }
 
     #[test]
     fn load_and_receive_response() {
-        let dir = std::env::temp_dir().join("gv_test_prefetch_load");
-        let _ = std::fs::create_dir_all(&dir);
+        let dir = crate::test_helpers::TempDir::new("prefetch_load");
         let path = dir.join("test.png");
         {
             let mut f = std::fs::File::create(&path).unwrap();
@@ -351,11 +242,13 @@ mod tests {
         let engine = PrefetchEngine::new(
             Box::new(|| {}),
             test_decoder(),
-            test_archive_manager(),
+            Arc::new(test_archive_manager(&Arc::new(
+                crate::extension_registry::ExtensionRegistry::new(),
+            ))),
             test_zip_buffers(),
         )
         .expect("test PrefetchEngine::new");
-        engine.request_load(0, path, None, None);
+        engine.request_load(0, FileSource::File(path), PersistentFilter::new());
 
         // ワーカーの処理完了を recv_timeout で確定的に待つ
         let responses = engine.recv_responses_blocking(std::time::Duration::from_secs(1));
@@ -374,14 +267,11 @@ mod tests {
             }
         }
         assert!(loaded, "レスポンスが受信できなかった");
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn stale_generation_is_skipped() {
-        let dir = std::env::temp_dir().join("gv_test_prefetch_gen");
-        let _ = std::fs::create_dir_all(&dir);
+        let dir = crate::test_helpers::TempDir::new("prefetch_gen");
         let path = dir.join("test.png");
         {
             let mut f = std::fs::File::create(&path).unwrap();
@@ -391,17 +281,19 @@ mod tests {
         let mut engine = PrefetchEngine::new(
             Box::new(|| {}),
             test_decoder(),
-            test_archive_manager(),
+            Arc::new(test_archive_manager(&Arc::new(
+                crate::extension_registry::ExtensionRegistry::new(),
+            ))),
             test_zip_buffers(),
         )
         .expect("test PrefetchEngine::new");
 
         // generation=0でリクエストを送信する前に世代を進める
-        engine.request_load(0, path.clone(), None, None);
+        engine.request_load(0, FileSource::File(path.clone()), PersistentFilter::new());
         engine.advance_generation(); // → generation=1
 
         // generation=1で新しいリクエスト
-        engine.request_load(1, path, None, None);
+        engine.request_load(1, FileSource::File(path), PersistentFilter::new());
 
         // generation=1 のレスポンスが届くまで recv_timeout で確定的に待機する。
         // generation=0 のレスポンスはスキップされる可能性があるため has_gen1 まで繰り返す。
@@ -421,8 +313,6 @@ mod tests {
             }
         }
         assert!(has_gen1, "generation=1のレスポンスが存在するべき");
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -430,11 +320,17 @@ mod tests {
         let engine = PrefetchEngine::new(
             Box::new(|| {}),
             test_decoder(),
-            test_archive_manager(),
+            Arc::new(test_archive_manager(&Arc::new(
+                crate::extension_registry::ExtensionRegistry::new(),
+            ))),
             test_zip_buffers(),
         )
         .expect("test PrefetchEngine::new");
-        engine.request_load(0, PathBuf::from("nonexistent_file_xyz.png"), None, None);
+        engine.request_load(
+            0,
+            FileSource::File(PathBuf::from("nonexistent_file_xyz.png")),
+            PersistentFilter::new(),
+        );
 
         let responses = engine.recv_responses_blocking(std::time::Duration::from_secs(1));
         let failed = responses
@@ -448,11 +344,105 @@ mod tests {
         let engine = PrefetchEngine::new(
             Box::new(|| {}),
             test_decoder(),
-            test_archive_manager(),
+            Arc::new(test_archive_manager(&Arc::new(
+                crate::extension_registry::ExtensionRegistry::new(),
+            ))),
             test_zip_buffers(),
         )
         .expect("test PrefetchEngine::new");
         drop(engine);
         // パニックせずに終了すればOK
+    }
+    #[test]
+    fn synchronous_and_prefetch_use_original_hint_and_request_filter() {
+        struct HintDecoder(Arc<std::sync::Mutex<Vec<String>>>);
+        impl crate::image::ImageDecoder for HintDecoder {
+            fn can_decode(&self, _data: &[u8], _hint: &str) -> bool {
+                true
+            }
+            fn decode(&self, _data: &[u8], hint: &str) -> Result<DecodedImage> {
+                self.0.lock().unwrap().push(hint.into());
+                Ok(DecodedImage {
+                    data: vec![10, 20, 30, 255],
+                    width: 1,
+                    height: 1,
+                })
+            }
+            fn metadata(&self, _data: &[u8], _hint: &str) -> Result<crate::image::ImageMetadata> {
+                anyhow::bail!("試験ではメタデータを取得しない")
+            }
+        }
+        let dir = crate::test_helpers::TempDir::new("prefetch_source_hint");
+        let path = dir.join("actual.png");
+        let temp = dir.join("unrelated.tmp");
+        std::fs::write(&path, b"image").unwrap();
+        std::fs::write(&temp, b"image").unwrap();
+        let archive = dir.join("images.zip");
+        let mut writer = ::zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        writer
+            .start_file(
+                "folder/actual.png",
+                ::zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+        writer.write_all(b"image").unwrap();
+        let bytes = writer.finish().unwrap().into_inner();
+        let buffers = test_zip_buffers();
+        buffers
+            .write()
+            .unwrap()
+            .insert(archive.clone(), ZipBuffer::Memory(bytes));
+        let hints = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let decoder = Arc::new(DecoderChain::new(vec![Box::new(HintDecoder(Arc::clone(
+            &hints,
+        )))]));
+        let manager = Arc::new(test_archive_manager(&Arc::new(
+            crate::extension_registry::ExtensionRegistry::new(),
+        )));
+        let engine = PrefetchEngine::new(
+            Box::new(|| {}),
+            Arc::clone(&decoder),
+            Arc::clone(&manager),
+            Arc::clone(&buffers),
+        )
+        .unwrap();
+        let sources = [
+            FileSource::File(path),
+            FileSource::ArchiveEntry {
+                archive: archive.clone(),
+                entry: "folder/actual.png".into(),
+                on_demand: false,
+                temp_path: Some(temp),
+                entry_index: None,
+            },
+            FileSource::ArchiveEntry {
+                archive,
+                entry: "folder/actual.png".into(),
+                on_demand: true,
+                temp_path: None,
+                entry_index: Some(0),
+            },
+        ];
+        for (index, source) in sources.into_iter().enumerate() {
+            let image =
+                crate::image::decode_source(&source, &decoder, &manager, &buffers, true).unwrap();
+            assert_eq!(image.data, vec![10, 20, 30, 255]);
+            let mut filter = PersistentFilter::new();
+            filter.toggle_enabled();
+            filter.add_operation(crate::persistent_filter::FilterOperation::InvertColors);
+            engine.request_load(index, source, filter.clone());
+            filter.toggle_enabled();
+            let responses = engine.recv_responses_blocking(std::time::Duration::from_secs(5));
+            assert_eq!(responses.len(), 1);
+            match &responses[0] {
+                LoadResponse::Loaded { image, .. } => {
+                    assert_eq!(image.data, vec![245, 235, 225, 255]);
+                }
+                LoadResponse::Failed { error, .. } => panic!("{error}"),
+            }
+        }
+        assert_eq!(*hints.lock().unwrap(), vec!["actual.png"; 6]);
+        drop(engine);
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

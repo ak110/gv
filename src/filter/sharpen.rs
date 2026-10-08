@@ -60,18 +60,7 @@ fn apply_kernel(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn uniform_image(w: u32, h: u32, value: u8) -> DecodedImage {
-        let data = vec![[value, value, value, 255u8]; (w * h) as usize]
-            .into_iter()
-            .flatten()
-            .collect();
-        DecodedImage {
-            data,
-            width: w,
-            height: h,
-        }
-    }
+    use crate::test_helpers::uniform_image;
 
     #[test]
     fn sharpen_uniform_unchanged() {

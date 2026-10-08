@@ -5,8 +5,10 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 
-use super::{ArchiveHandler, ExtractedEntry, extract_filename, resolve_filename};
+use super::{ArchiveHandler, extract_filename};
 use crate::extension_registry::ExtensionRegistry;
+
+pub(super) const EXTENSIONS: &[&str] = &[".zip", ".cbz"];
 
 /// ZIP/cbzアーカイブハンドラ
 pub struct ZipHandler {
@@ -66,30 +68,6 @@ impl ZipHandler {
         Ok(data)
     }
 
-    /// インメモリバッファから名前指定でエントリを取得する (旧形式ブックマーク互換用)
-    ///
-    /// zipクレートv8の`by_name`は内部キーとして原バイト列を使うため、
-    /// CP932で記録された日本語ファイル名にはマッチしない。
-    /// 新規呼び出しは`read_entry_from_buffer_at`を使うこと。
-    pub(crate) fn read_entry_from_buffer(buffer: &[u8], entry_name: &str) -> Result<Vec<u8>> {
-        let cursor = std::io::Cursor::new(buffer);
-        let mut archive = zip::ZipArchive::new(cursor).context("ZIPバッファの読み取りに失敗")?;
-        let mut entry = archive
-            .by_name(entry_name)
-            .with_context(|| format!("エントリが見つからない: {entry_name}"))?;
-
-        if entry.compression() == zip::CompressionMethod::Stored {
-            let start = entry.data_start().context("データ開始位置の取得に失敗")? as usize;
-            let size = entry.size() as usize;
-            drop(entry);
-            return Ok(buffer[start..start + size].to_vec());
-        }
-
-        let mut data = Vec::with_capacity(entry.size() as usize);
-        entry.read_to_end(&mut data)?;
-        Ok(data)
-    }
-
     /// ファイルパスからエントリ一覧を取得する
     #[cfg(test)]
     pub fn list_images(&self, archive_path: &Path) -> Result<Vec<super::ArchiveImageEntry>> {
@@ -110,16 +88,10 @@ impl ZipHandler {
             let Ok(entry) = archive.by_index_raw(i) else {
                 continue;
             };
-            if entry.is_dir() {
-                continue;
-            }
             let entry_name = decode_zip_entry_name(entry.name_raw());
             let file_size = entry.size();
             let filename = extract_filename(&entry_name).to_string();
-            if filename.is_empty() || filename.starts_with('.') {
-                continue;
-            }
-            if !registry.is_image_extension(&filename) {
+            if !super::is_image_entry(&entry_name, entry.is_dir(), registry) {
                 continue;
             }
             results.push(super::ArchiveImageEntry {
@@ -127,6 +99,13 @@ impl ZipHandler {
                 file_name: filename,
                 file_size,
                 entry_index: i as u32,
+                modified: entry
+                    .last_modified()
+                    .map_or(std::time::SystemTime::UNIX_EPOCH, |time| {
+                        super::dos_modified(
+                            (u32::from(time.datepart()) << 16) | u32::from(time.timepart()),
+                        )
+                    }),
             });
         }
         results
@@ -135,75 +114,22 @@ impl ZipHandler {
 
 impl ArchiveHandler for ZipHandler {
     fn supported_extensions(&self) -> Vec<String> {
-        vec![".zip".to_string(), ".cbz".to_string()]
+        EXTENSIONS.iter().map(ToString::to_string).collect()
     }
 
     fn supports_on_demand(&self) -> bool {
         true
     }
 
-    fn read_entry(&self, archive_path: &Path, entry_name: &str) -> Result<Vec<u8>> {
-        let file = File::open(archive_path)
-            .with_context(|| format!("アーカイブを開けない: {}", archive_path.display()))?;
-        let mut archive = zip::ZipArchive::new(file)
-            .with_context(|| format!("ZIP読み取り失敗: {}", archive_path.display()))?;
-        let mut entry = archive
-            .by_name(entry_name)
-            .with_context(|| format!("エントリが見つからない: {entry_name}"))?;
-        let mut data = Vec::with_capacity(entry.size() as usize);
-        entry.read_to_end(&mut data)?;
-        Ok(data)
+    fn list_images_from_buffer(&self, buffer: &[u8]) -> Result<Vec<super::ArchiveImageEntry>> {
+        Self::list_images_from_buffer(buffer, &self.registry)
     }
 
-    fn extract_images(
-        &self,
-        archive_path: &Path,
-        target_dir: &Path,
-    ) -> Result<Vec<ExtractedEntry>> {
-        let file = File::open(archive_path)
-            .with_context(|| format!("アーカイブを開けない: {}", archive_path.display()))?;
-        let mut archive = zip::ZipArchive::new(file)
-            .with_context(|| format!("ZIP読み取り失敗: {}", archive_path.display()))?;
-
-        let mut results = Vec::new();
-
-        for i in 0..archive.len() {
-            let Ok(mut entry) = archive.by_index(i) else {
-                continue;
-            };
-
-            // ディレクトリエントリはスキップ
-            if entry.is_dir() {
-                continue;
-            }
-
-            let entry_name = decode_zip_entry_name(entry.name_raw());
-            let filename = extract_filename(&entry_name).to_string();
-
-            // 空ファイル名やドット始まりの隠しファイルはスキップ
-            if filename.is_empty() || filename.starts_with('.') {
-                continue;
-            }
-
-            // 画像ファイルのみ展開
-            if !self.registry.is_image_extension(&filename) {
-                continue;
-            }
-
-            // ファイルデータを取得
-            let mut data = Vec::new();
-            if entry.read_to_end(&mut data).is_err() {
-                continue;
-            }
-
-            // target_dirに保存 (重複時はリネーム)
-            let out_path = resolve_filename(target_dir, &filename);
-            if std::fs::write(&out_path, &data).is_ok() {
-                results.push((out_path, entry_name));
-            }
+    fn read_entry_at(&self, path: &Path, buffer: Option<&[u8]>, index: u32) -> Result<Vec<u8>> {
+        match buffer {
+            Some(buffer) => Self::read_entry_from_buffer_at(buffer, index),
+            None => Self::read_entry_at(path, index),
         }
-
-        Ok(results)
     }
 }
 
@@ -256,113 +182,12 @@ fn decode_cp932(bytes: &[u8]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_helpers::{build_cp932_zip, create_test_zip, create_test_zip_buffer};
     use std::io::Write;
-
-    /// テスト用ZIPをメモリ上で作成してtempに保存する
-    fn create_test_zip(path: &Path, entries: &[(&str, &[u8])]) {
-        let file = File::create(path).unwrap();
-        let mut writer = zip::ZipWriter::new(file);
-        let options = zip::write::SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Stored);
-
-        for (name, data) in entries {
-            writer.start_file(*name, options).unwrap();
-            writer.write_all(data).unwrap();
-        }
-        writer.finish().unwrap();
-    }
-
-    #[test]
-    fn extract_images_from_zip() {
-        let dir = std::env::temp_dir().join("gv_test_zip_extract");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-
-        let zip_path = dir.join("test.zip");
-        create_test_zip(
-            &zip_path,
-            &[
-                ("image1.jpg", b"fake-jpg-data"),
-                ("subfolder/image2.png", b"fake-png-data"),
-                ("readme.txt", b"not an image"),
-                ("image3.bmp", b"fake-bmp-data"),
-            ],
-        );
-
-        let out_dir = dir.join("out");
-        std::fs::create_dir_all(&out_dir).unwrap();
-
-        let reg = Arc::new(ExtensionRegistry::new());
-        let handler = ZipHandler::new(reg);
-        let entries = handler.extract_images(&zip_path, &out_dir).unwrap();
-
-        assert_eq!(entries.len(), 3);
-        assert!(out_dir.join("image1.jpg").exists());
-        assert!(out_dir.join("image2.png").exists()); // サブフォルダはフラット化
-        assert!(out_dir.join("image3.bmp").exists());
-        assert!(!out_dir.join("readme.txt").exists());
-
-        // エントリパスが元のアーカイブ内パスを保持していることを確認
-        let entry_paths: Vec<&str> = entries.iter().map(|(_, e)| e.as_str()).collect();
-        assert!(entry_paths.contains(&"image1.jpg"));
-        assert!(entry_paths.contains(&"subfolder/image2.png"));
-        assert!(entry_paths.contains(&"image3.bmp"));
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn extract_handles_duplicate_filenames() {
-        let dir = std::env::temp_dir().join("gv_test_zip_dup");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-
-        let zip_path = dir.join("dup.zip");
-        create_test_zip(
-            &zip_path,
-            &[("a/image.jpg", b"data1"), ("b/image.jpg", b"data2")],
-        );
-
-        let out_dir = dir.join("out");
-        std::fs::create_dir_all(&out_dir).unwrap();
-
-        let reg = Arc::new(ExtensionRegistry::new());
-        let handler = ZipHandler::new(reg);
-        let entries = handler.extract_images(&zip_path, &out_dir).unwrap();
-
-        assert_eq!(entries.len(), 2);
-        assert!(out_dir.join("image.jpg").exists());
-        assert!(out_dir.join("image_2.jpg").exists());
-
-        // 元エントリパスはそれぞれ異なる
-        assert_eq!(entries[0].1, "a/image.jpg");
-        assert_eq!(entries[1].1, "b/image.jpg");
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// ZIPをメモリ上で作成しバイト列として返す
-    fn create_test_zip_buffer(entries: &[(&str, &[u8])]) -> Vec<u8> {
-        let mut buf = Vec::new();
-        {
-            let cursor = std::io::Cursor::new(&mut buf);
-            let mut writer = zip::ZipWriter::new(cursor);
-            let options = zip::write::SimpleFileOptions::default()
-                .compression_method(zip::CompressionMethod::Stored);
-            for (name, data) in entries {
-                writer.start_file(*name, options).unwrap();
-                writer.write_all(data).unwrap();
-            }
-            writer.finish().unwrap();
-        }
-        buf
-    }
 
     #[test]
     fn list_images_returns_image_entries_only() {
-        let dir = std::env::temp_dir().join("gv_test_zip_list");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_helpers::TempDir::new("zip_list");
         let zip_path = dir.join("test.zip");
         create_test_zip(
             &zip_path,
@@ -384,24 +209,18 @@ mod tests {
         assert_eq!(entries[1].entry_name, "subfolder/image2.png");
         assert_eq!(entries[1].file_name, "image2.png");
         assert_eq!(entries[1].entry_index, 1);
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn read_entry_returns_data() {
-        let dir = std::env::temp_dir().join("gv_test_zip_read");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_helpers::TempDir::new("zip_read");
         let zip_path = dir.join("test.zip");
         create_test_zip(&zip_path, &[("image.jpg", b"fake-jpg-data-123")]);
 
         let reg = Arc::new(ExtensionRegistry::new());
         let handler = ZipHandler::new(reg);
-        let data = handler.read_entry(&zip_path, "image.jpg").unwrap();
+        let data = handler.read_entry_at(&zip_path, None, 0).unwrap();
         assert_eq!(data, b"fake-jpg-data-123");
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -445,16 +264,6 @@ mod tests {
     }
 
     #[test]
-    fn read_entry_from_buffer_legacy_name_lookup() {
-        // pub(crate) APIで名前ベースのlookupが従来通り動くことを確認 (旧ブックマーク互換用)
-        let buffer = create_test_zip_buffer(&[("img.jpg", b"legacy-data")]);
-        let data = ZipHandler::read_entry_from_buffer(&buffer, "img.jpg").unwrap();
-        assert_eq!(data, b"legacy-data");
-    }
-
-    // --- decode_zip_entry_name テスト ---
-
-    #[test]
     fn decode_ascii_name() {
         assert_eq!(decode_zip_entry_name(b"image.jpg"), "image.jpg");
     }
@@ -484,100 +293,6 @@ mod tests {
 
     // --- CP932 ファイル名ZIPの再現テスト ---
 
-    /// ファイル名フィールドにCP932バイト列を直接書き込んだ最小ZIPバイナリを組み立てる
-    ///
-    /// 目的: zipクレートの`ZipWriter`はファイル名をUTF-8で書き込み汎用ビットフラグの
-    /// 第11ビット (UTF-8) を設定するため、後処理ではCP932記録ZIPを再現できない。
-    /// 本関数はZIP仕様 (APPNOTE 4.3) に従い、ローカルファイルヘッダー・セントラル
-    /// ディレクトリ・EOCDの長さとオフセットを整合させた上で、ファイル名フィールドへ
-    /// CP932バイト列をそのまま書き込む。
-    ///
-    /// データはStored (無圧縮) で書き込み、CRC32は標準的なIEEEテーブルで計算する。
-    fn build_cp932_zip(entries: &[(&[u8], &[u8])]) -> Vec<u8> {
-        let mut buf = Vec::new();
-        let mut central_dir_records = Vec::new();
-        let mut central_dir_offset_per_entry = Vec::new();
-
-        for (name, data) in entries {
-            let crc = crc32(data);
-            let local_header_offset = buf.len() as u32;
-            central_dir_offset_per_entry.push(local_header_offset);
-
-            // Local file header (signature 0x04034b50)
-            buf.extend_from_slice(&0x04034b50u32.to_le_bytes());
-            buf.extend_from_slice(&20u16.to_le_bytes()); // version needed
-            buf.extend_from_slice(&0u16.to_le_bytes()); // general purpose bit flag (UTF-8 ビット非設定)
-            buf.extend_from_slice(&0u16.to_le_bytes()); // compression: stored
-            buf.extend_from_slice(&0u16.to_le_bytes()); // mod time
-            buf.extend_from_slice(&0u16.to_le_bytes()); // mod date
-            buf.extend_from_slice(&crc.to_le_bytes());
-            buf.extend_from_slice(&(data.len() as u32).to_le_bytes()); // compressed size
-            buf.extend_from_slice(&(data.len() as u32).to_le_bytes()); // uncompressed size
-            buf.extend_from_slice(&(name.len() as u16).to_le_bytes());
-            buf.extend_from_slice(&0u16.to_le_bytes()); // extra field length
-            buf.extend_from_slice(name);
-            buf.extend_from_slice(data);
-
-            // Central directory record (構築は後段で行い、各エントリのバイト列だけを生成する)
-            let mut cd = Vec::new();
-            cd.extend_from_slice(&0x02014b50u32.to_le_bytes()); // signature
-            cd.extend_from_slice(&20u16.to_le_bytes()); // version made by
-            cd.extend_from_slice(&20u16.to_le_bytes()); // version needed
-            cd.extend_from_slice(&0u16.to_le_bytes()); // general purpose bit flag
-            cd.extend_from_slice(&0u16.to_le_bytes()); // compression
-            cd.extend_from_slice(&0u16.to_le_bytes()); // mod time
-            cd.extend_from_slice(&0u16.to_le_bytes()); // mod date
-            cd.extend_from_slice(&crc.to_le_bytes());
-            cd.extend_from_slice(&(data.len() as u32).to_le_bytes());
-            cd.extend_from_slice(&(data.len() as u32).to_le_bytes());
-            cd.extend_from_slice(&(name.len() as u16).to_le_bytes());
-            cd.extend_from_slice(&0u16.to_le_bytes()); // extra field length
-            cd.extend_from_slice(&0u16.to_le_bytes()); // file comment length
-            cd.extend_from_slice(&0u16.to_le_bytes()); // disk number start
-            cd.extend_from_slice(&0u16.to_le_bytes()); // internal file attributes
-            cd.extend_from_slice(&0u32.to_le_bytes()); // external file attributes
-            cd.extend_from_slice(&local_header_offset.to_le_bytes());
-            cd.extend_from_slice(name);
-            central_dir_records.push(cd);
-        }
-
-        let central_dir_start = buf.len() as u32;
-        let mut central_dir_size: u32 = 0;
-        for cd in &central_dir_records {
-            buf.extend_from_slice(cd);
-            central_dir_size += cd.len() as u32;
-        }
-
-        // End of central directory record (signature 0x06054b50)
-        buf.extend_from_slice(&0x06054b50u32.to_le_bytes());
-        buf.extend_from_slice(&0u16.to_le_bytes()); // disk number
-        buf.extend_from_slice(&0u16.to_le_bytes()); // disk where central dir starts
-        buf.extend_from_slice(&(entries.len() as u16).to_le_bytes()); // central dir records on this disk
-        buf.extend_from_slice(&(entries.len() as u16).to_le_bytes()); // total central dir records
-        buf.extend_from_slice(&central_dir_size.to_le_bytes());
-        buf.extend_from_slice(&central_dir_start.to_le_bytes());
-        buf.extend_from_slice(&0u16.to_le_bytes()); // comment length
-        buf
-    }
-
-    /// IEEE 802.3 CRC32 (zip仕様)。標準テーブル方式で1バイトずつ計算する
-    fn crc32(data: &[u8]) -> u32 {
-        const POLY: u32 = 0xEDB88320;
-        let mut table = [0u32; 256];
-        for (i, slot) in table.iter_mut().enumerate() {
-            let mut c = i as u32;
-            for _ in 0..8 {
-                c = if c & 1 == 1 { POLY ^ (c >> 1) } else { c >> 1 };
-            }
-            *slot = c;
-        }
-        let mut crc = 0xFFFF_FFFFu32;
-        for &b in data {
-            crc = table[((crc ^ u32::from(b)) & 0xFF) as usize] ^ (crc >> 8);
-        }
-        crc ^ 0xFFFF_FFFF
-    }
-
     #[test]
     fn cp932_filename_zip_lists_and_reads_correctly() {
         // 「画像.jpg」のCP932バイト列
@@ -596,36 +311,5 @@ mod tests {
         // 取得: インデックスベースで成功すること
         let data = ZipHandler::read_entry_from_buffer_at(&buffer, 0).unwrap();
         assert_eq!(data, payload);
-
-        // 名前ベースの旧APIでは復号後の文字列ではマッチしないことも確認 (再lookupが失敗する仕様)
-        let result = ZipHandler::read_entry_from_buffer(&buffer, "画像.jpg");
-        assert!(result.is_err(), "復号後の名前で再lookupは失敗するべき");
-    }
-
-    #[test]
-    fn cp932_filename_zip_extract_images_decodes_name() {
-        let cp932_name: &[u8] = &[0x89, 0xE6, 0x91, 0x9C, b'.', b'j', b'p', b'g'];
-        let payload = b"image-data";
-        let buffer = build_cp932_zip(&[(cp932_name, payload)]);
-
-        let dir = std::env::temp_dir().join("gv_test_zip_cp932_extract");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let zip_path = dir.join("cp932.zip");
-        std::fs::write(&zip_path, &buffer).unwrap();
-        let out_dir = dir.join("out");
-        std::fs::create_dir_all(&out_dir).unwrap();
-
-        let reg = Arc::new(ExtensionRegistry::new());
-        let handler = ZipHandler::new(reg);
-        let entries = handler.extract_images(&zip_path, &out_dir).unwrap();
-
-        assert_eq!(entries.len(), 1);
-        // 展開先ファイル名が日本語として正しいこと
-        assert!(out_dir.join("画像.jpg").exists());
-        // エントリ名 (展開先と元名の対応) も日本語に復号されていること
-        assert_eq!(entries[0].1, "画像.jpg");
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

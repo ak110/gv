@@ -61,12 +61,23 @@ pub fn check_for_update() -> Result<UpdateInfo> {
 /// ダウンロード→ZIP展開→バッチスクリプト生成→起動
 /// 成功すればOk(true) を返し、呼び出し元はアプリを終了する
 pub fn perform_update(info: &UpdateInfo) -> Result<bool> {
-    let exe_path = std::env::current_exe().context("現在のexeパス取得失敗")?;
+    let exe_path = crate::paths::exe_path()?;
     // ダウンロード
-    let temp_dir = std::env::temp_dir().join(format!("gv_update_{}", std::process::id()));
-    let _ = std::fs::create_dir_all(&temp_dir);
+    let temp_dir = crate::temp_cleanup::create_temp_dir(crate::temp_cleanup::TempPurpose::Update)
+        .context("更新用の一時フォルダを作成できませんでした")?;
+    let result = prepare_update(info, &exe_path, &temp_dir);
+    if result.is_err() {
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+    result
+}
 
-    let download_path = temp_dir.join("gv_update_download");
+fn prepare_update(
+    info: &UpdateInfo,
+    exe_path: &std::path::Path,
+    temp_dir: &std::path::Path,
+) -> Result<bool> {
+    let download_path = temp_dir.join("download");
     download_file(&info.download_url, &download_path)?;
 
     // ZIP展開またはそのまま使用
@@ -74,10 +85,10 @@ pub fn perform_update(info: &UpdateInfo) -> Result<bool> {
         .extension()
         .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"))
     {
-        extract_files_from_zip(&download_path, &temp_dir)?
+        extract_files_from_zip(&download_path, temp_dir)?
     } else {
         // 直接exeの場合
-        let dest = temp_dir.join("gv_update.exe");
+        let dest = temp_dir.join("update.exe");
         std::fs::rename(&download_path, &dest).context("ダウンロードファイルのリネーム失敗")?;
         ExtractedFiles {
             exe_path: dest,
@@ -86,11 +97,11 @@ pub fn perform_update(info: &UpdateInfo) -> Result<bool> {
     };
 
     // バッチスクリプト生成・起動
-    let batch_path = temp_dir.join("gv_update.bat");
+    let batch_path = temp_dir.join("update.bat");
     generate_update_batch(
         &batch_path,
         &extracted.exe_path,
-        &exe_path,
+        exe_path,
         &extracted.extra_files,
         std::process::id(),
     )?;
@@ -149,7 +160,7 @@ fn extract_files_from_zip(
 
         let lower = file_name.to_lowercase();
         if lower == "ぐらびゅ.exe" {
-            let dest = temp_dir.join("gv_update.exe");
+            let dest = temp_dir.join("update.exe");
             let mut out = std::fs::File::create(&dest).context("展開先ファイル作成失敗")?;
             std::io::copy(&mut entry, &mut out).context("ZIPエントリ展開失敗")?;
             exe_path = Some(dest);
@@ -176,6 +187,7 @@ fn extract_files_from_zip(
 /// 2. 実行中のexeを.oldにリネーム (Windowsはリネームを許可する)
 /// 3. 新しいexeを本来の名前で配置
 /// 4. 新exeを起動
+/// 5. 作業フォルダをバッチ自身ごと削除する
 ///
 /// `cleanup_old_exe()`が次回起動時に.oldを削除する。
 ///
@@ -187,6 +199,8 @@ fn extract_files_from_zip(
 /// - 改行: `format!` が出力する LF を `replace('\n', "\r\n")` で CRLF に変換する
 /// - 制御フロー: `if ( ... )` ブロック内に日本語リテラルを置かない。
 ///   DBCSトレイルバイトが特殊文字と誤認されるため `goto` で制御する
+/// - 作業フォルダの削除は最後の行で`rmdir`と`exit 0`を連結する。
+///   自身を削除した後にバッチへ戻らず、所有するcmd.exeを終了する。
 fn generate_update_batch(
     batch_path: &std::path::Path,
     update_exe: &std::path::Path,
@@ -198,6 +212,9 @@ fn generate_update_batch(
     let target_dir = target_exe
         .parent()
         .ok_or_else(|| anyhow::anyhow!("exeの親ディレクトリ取得失敗"))?;
+    let work_dir = batch_path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("更新用バッチの親ディレクトリ取得失敗"))?;
 
     // exe以外のファイルのコピーコマンドを生成
     let extra_copy_commands = extra_files
@@ -287,11 +304,13 @@ goto copy_extra
 echo.
 echo 更新が完了しました。ぐらびゅ を起動します...
 start "" "{target}"
-del "%~f0" & exit
+cd /d "%TEMP%"
+rmdir /s /q "{work}" & exit 0
 "#,
         pid = pid,
         update = update_exe.display(),
         target = target_exe.display(),
+        work = work_dir.display(),
         old = old_exe.display(),
         // 呼び出し元 perform_update が exe ファイルの絶対パスから組み立てるため
         // file_name() は必ず Some を返す前提
@@ -301,7 +320,7 @@ del "%~f0" & exit
             .to_string_lossy(),
         target_name = target_exe
             .file_name()
-            .expect("target_exe は std::env::current_exe() 由来でファイル名を持つ前提")
+            .expect("target_exe は crate::paths::exe_path() 由来でファイル名を持つ前提")
             .to_string_lossy(),
         extra_copy_commands = extra_copy_commands,
     );
@@ -353,7 +372,7 @@ fn parse_version(s: &str) -> Option<(u32, u32, u32)> {
 
 /// 起動時にぐらびゅ.exe.oldが残っていれば削除を試みる
 pub fn cleanup_old_exe() {
-    if let Ok(exe) = std::env::current_exe() {
+    if let Ok(exe) = crate::paths::exe_path() {
         let old = exe.with_extension("exe.old");
         if old.exists() {
             let _ = std::fs::remove_file(&old);
@@ -364,6 +383,7 @@ pub fn cleanup_old_exe() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_helpers::neutralize_batch_line;
 
     #[test]
     fn parse_version_semver() {
@@ -392,59 +412,27 @@ mod tests {
         assert!(parse_version("0.1.0").unwrap() <= parse_version("0.1.0").unwrap());
     }
 
-    /// CP932バッチのバイト列から、テストに不要な行を無効化する。
-    /// ASCIIプレフィクスで行を特定するためCP932でも安全に動作する。
-    fn neutralize_batch_line(bytes: &[u8], ascii_prefix: &[u8]) -> Vec<u8> {
-        let crlf = b"\r\n";
-        let mut result = Vec::new();
-        let mut pos = 0;
-        while pos < bytes.len() {
-            // 行末 (次のCRLFまたはEOF) を探す
-            let line_end = bytes[pos..]
-                .windows(2)
-                .position(|w| w == crlf)
-                .map_or(bytes.len(), |p| pos + p);
-            let line = &bytes[pos..line_end];
-
-            if line.starts_with(ascii_prefix) {
-                // "rem " + 元の行でコメントアウト
-                result.extend_from_slice(b"rem ");
-                result.extend_from_slice(line);
-            } else {
-                result.extend_from_slice(line);
-            }
-
-            if line_end + 2 <= bytes.len() {
-                result.extend_from_slice(crlf);
-                pos = line_end + 2;
-            } else {
-                pos = bytes.len();
-            }
-        }
-        result
-    }
-
     #[test]
     fn batch_execution_renames_and_moves_files() {
         // テスト用ディレクトリとダミーファイルを作成
-        let dir = std::env::temp_dir().join("gv_test_batch_exec");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_helpers::TempDir::new("batch_exec");
+        let work =
+            crate::temp_cleanup::create_temp_dir_in(&dir, crate::temp_cleanup::TempPurpose::Update)
+                .unwrap();
 
         let target = dir.join("gv.exe");
-        let update = dir.join("gv_update.exe");
+        let update = work.join("update.exe");
         std::fs::write(&target, b"OLD_CONTENT").unwrap();
         std::fs::write(&update, b"NEW_CONTENT").unwrap();
 
         // 存在しないPIDでバッチ生成 (wait_exitを即通過)
-        let batch_path = dir.join("update.bat");
-        generate_update_batch(&batch_path, &update, &target, &[], 1).unwrap();
+        let batch_path = work.join("update.bat");
+        generate_update_batch(&batch_path, &update, &target, &[], u32::MAX).unwrap();
 
-        // start と del 行を無効化してテスト用バッチを作成
+        // アプリの起動だけを無効化し、作業フォルダの削除まで実行する。
         let bytes = std::fs::read(&batch_path).unwrap();
         let bytes = neutralize_batch_line(&bytes, b"start ");
-        let bytes = neutralize_batch_line(&bytes, b"del ");
-        let test_batch = dir.join("update_test.bat");
+        let test_batch = work.join("update_test.bat");
         std::fs::write(&test_batch, bytes).unwrap();
 
         // バッチ実行
@@ -455,6 +443,15 @@ mod tests {
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "stdout: {stdout}\nstderr: {stderr}"
+        );
+        assert!(
+            !work.exists(),
+            "更新作業フォルダが残った: {}",
+            work.display()
+        );
 
         // ファイル操作の結果を検証
         let old = target.with_extension("exe.old");
@@ -477,31 +474,29 @@ mod tests {
             "gv.exe の中身は新しいexeであるべき"
         );
         assert!(!update.exists(), "gv_update.exe は move で消えているべき");
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn batch_execution_cleans_up_existing_old() {
         // .old が既に存在する場合に削除してからリネームすることを確認
-        let dir = std::env::temp_dir().join("gv_test_batch_old");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_helpers::TempDir::new("batch_old");
+        let work =
+            crate::temp_cleanup::create_temp_dir_in(&dir, crate::temp_cleanup::TempPurpose::Update)
+                .unwrap();
 
         let target = dir.join("gv.exe");
-        let update = dir.join("gv_update.exe");
+        let update = work.join("update.exe");
         let old = target.with_extension("exe.old");
         std::fs::write(&target, b"CURRENT").unwrap();
         std::fs::write(&update, b"UPDATED").unwrap();
         std::fs::write(&old, b"STALE_OLD").unwrap();
 
-        let batch_path = dir.join("update.bat");
-        generate_update_batch(&batch_path, &update, &target, &[], 1).unwrap();
+        let batch_path = work.join("update.bat");
+        generate_update_batch(&batch_path, &update, &target, &[], u32::MAX).unwrap();
 
         let bytes = std::fs::read(&batch_path).unwrap();
         let bytes = neutralize_batch_line(&bytes, b"start ");
-        let bytes = neutralize_batch_line(&bytes, b"del ");
-        let test_batch = dir.join("update_test.bat");
+        let test_batch = work.join("update_test.bat");
         std::fs::write(&test_batch, bytes).unwrap();
 
         let output = std::process::Command::new("cmd.exe")
@@ -511,6 +506,15 @@ mod tests {
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "stdout: {stdout}\nstderr: {stderr}"
+        );
+        assert!(
+            !work.exists(),
+            "更新作業フォルダが残った: {}",
+            work.display()
+        );
 
         assert_eq!(
             std::fs::read(&old).unwrap(),
@@ -522,18 +526,19 @@ mod tests {
             b"UPDATED",
             "gv.exe は新しいexeであるべき"
         );
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn batch_execution_copies_extra_files() {
         // exe更新と同時に追加ファイル (*.default.toml, README.md等) もコピーされることを確認
-        let base_dir = std::env::temp_dir().join("gv_test_batch_extra");
-        let _ = std::fs::remove_dir_all(&base_dir);
+        let base_dir = crate::test_helpers::TempDir::new("batch_extra");
         // exeのあるディレクトリと、展開先の一時ディレクトリを分離
         let install_dir = base_dir.join("install");
-        let temp_dir = base_dir.join("temp");
+        let temp_dir = crate::temp_cleanup::create_temp_dir_in(
+            &base_dir,
+            crate::temp_cleanup::TempPurpose::Update,
+        )
+        .unwrap();
         std::fs::create_dir_all(&install_dir).unwrap();
         std::fs::create_dir_all(&temp_dir).unwrap();
 
@@ -558,13 +563,12 @@ mod tests {
             &update,
             &target,
             &[extra1.clone(), extra2.clone()],
-            1,
+            u32::MAX,
         )
         .unwrap();
 
         let bytes = std::fs::read(&batch_path).unwrap();
         let bytes = neutralize_batch_line(&bytes, b"start ");
-        let bytes = neutralize_batch_line(&bytes, b"del ");
         let test_batch = temp_dir.join("update_test.bat");
         std::fs::write(&test_batch, bytes).unwrap();
 
@@ -575,6 +579,15 @@ mod tests {
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "stdout: {stdout}\nstderr: {stderr}"
+        );
+        assert!(
+            !temp_dir.exists(),
+            "更新作業フォルダが残った: {}",
+            temp_dir.display()
+        );
 
         // exe が更新されていること
         assert_eq!(
@@ -594,19 +607,20 @@ mod tests {
             b"NEW_README",
             "README.md が更新されるべき\nstdout: {stdout}\nstderr: {stderr}"
         );
-
-        let _ = std::fs::remove_dir_all(&base_dir);
     }
 
     /// 先頭・後続のコピー失敗では完了せず、付属コピーだけの再試行で完了できる。
     #[test]
     fn batch_copy_failure_stops_completion_and_retry_preserves_original_backup() {
         for failed_index in 0..2 {
-            let base = crate::app::test_support::unique_temp_dir("update_copy_failure");
+            let base = crate::test_helpers::TempDir::new("update_copy_failure");
             let install = base.join("日本語 install");
-            let download = base.join("download");
+            let download = crate::temp_cleanup::create_temp_dir_in(
+                &base,
+                crate::temp_cleanup::TempPurpose::Update,
+            )
+            .unwrap();
             std::fs::create_dir_all(&install).unwrap();
-            std::fs::create_dir_all(&download).unwrap();
             let target = install.join("ぐらびゅ.exe");
             let update = download.join("update.exe");
             std::fs::write(&target, b"old exe").unwrap();
@@ -617,10 +631,9 @@ mod tests {
             }
             std::fs::remove_file(&extras[failed_index]).unwrap();
             let batch = download.join("update.bat");
-            generate_update_batch(&batch, &update, &target, &extras, 1).unwrap();
+            generate_update_batch(&batch, &update, &target, &extras, u32::MAX).unwrap();
             let bytes = std::fs::read(&batch).unwrap();
             let bytes = neutralize_batch_line(&bytes, b"start ");
-            let bytes = neutralize_batch_line(&bytes, b"del ");
             // 利用者の入力待ちだけを置換し、失敗地点で終了して完了表示の不在を判定する。
             let failed = String::from_utf8(bytes.clone())
                 .unwrap()
@@ -633,11 +646,19 @@ mod tests {
                 .arg(&test_batch)
                 .output()
                 .unwrap();
-            assert!(!result.status.success());
+            assert_eq!(
+                result.status.code(),
+                Some(1),
+                "stdout: {}\nstderr: {}",
+                String::from_utf8_lossy(&result.stdout),
+                String::from_utf8_lossy(&result.stderr)
+            );
             let stdout = String::from_utf8_lossy(&result.stdout);
             assert!(!stdout.contains("更新が完了しました"), "{stdout}");
             let old = target.with_extension("exe.old");
             assert_eq!(std::fs::read(&old).unwrap(), b"old exe");
+            assert_eq!(std::fs::read(&target).unwrap(), b"new exe");
+            assert!(download.exists(), "再試行用の作業フォルダを保持する");
 
             // 元の生成バッチの追加コピー再試行入口から続け、exeの退避を繰り返さない。
             std::fs::write(&extras[failed_index], b"new extra").unwrap();
@@ -665,20 +686,23 @@ mod tests {
                     b"new extra"
                 );
             }
-            std::fs::remove_dir_all(base).unwrap();
+            assert!(!download.exists(), "成功後に作業フォルダを回収する");
         }
     }
 
     /// exe配置と元exeの復元がともに失敗した場合は、旧exeを残して失敗終了する。
     #[test]
     fn batch_rollback_failure_keeps_backup_and_stops() {
-        let dir = crate::app::test_support::unique_temp_dir("update_rollback_failure");
+        let dir = crate::test_helpers::TempDir::new("update_rollback_failure");
+        let work =
+            crate::temp_cleanup::create_temp_dir_in(&dir, crate::temp_cleanup::TempPurpose::Update)
+                .unwrap();
         let target = dir.join("gv.exe");
-        let update = dir.join("missing_update.exe");
+        let update = work.join("missing_update.exe");
         let old = target.with_extension("exe.old");
         std::fs::write(&target, b"original exe").unwrap();
-        let batch = dir.join("update.bat");
-        generate_update_batch(&batch, &update, &target, &[], 1).unwrap();
+        let batch = work.join("update.bat");
+        generate_update_batch(&batch, &update, &target, &[], u32::MAX).unwrap();
         let content = String::from_utf8(std::fs::read(&batch).unwrap()).unwrap();
         // 復元操作だけに失敗を注入し、その終了状態を生成バッチに判定させる。
         let content = content
@@ -694,7 +718,13 @@ mod tests {
             .arg(&batch)
             .output()
             .unwrap();
-        assert!(!result.status.success());
+        assert_eq!(
+            result.status.code(),
+            Some(1),
+            "stdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
         let stdout = String::from_utf8_lossy(&result.stdout);
         assert!(
             stdout.contains("元の実行ファイルを復元できませんでした"),
@@ -703,6 +733,6 @@ mod tests {
         assert!(!stdout.contains("更新が完了しました"), "{stdout}");
         assert_eq!(std::fs::read(&old).unwrap(), b"original exe");
         assert!(!target.exists());
-        std::fs::remove_dir_all(dir).unwrap();
+        assert!(work.exists(), "復元失敗時は作業フォルダを回収しない");
     }
 }

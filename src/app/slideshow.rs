@@ -60,15 +60,13 @@ impl AppWindow {
 
         if at_end {
             if self.slideshow_repeat {
-                self.document.navigate_first();
-                self.process_document_events();
+                self.navigate_with_guard(crate::document::Document::navigate_first);
             } else {
                 self.stop_slideshow();
             }
             return;
         }
-        self.document.navigate_relative(1);
-        self.process_document_events();
+        self.navigate_with_guard(|document| document.navigate_relative(1));
     }
 
     /// スライドショー間隔を変更 (最小500ms、最大30000ms)

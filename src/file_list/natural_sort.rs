@@ -1,47 +1,96 @@
-//! 自然順ソート用の軽量PRNG実装。
+//! Windows エクスプローラー互換の自然順比較。
+//!
+//! `shlwapi.dll` の `StrCmpLogicalW` を呼び出し、エクスプローラー表示と事実上同じ並びを得る。
+//! クロスプラットフォーム実装 (例: `natord`) は先頭ゼロ付き数値の扱いがエクスプローラーと
+//! 乖離するため使わない。例えば `018, 19, 020` の並びは、`natord` では `018, 020, 19` と
+//! なるが、`StrCmpLogicalW` では `018, 19, 020` となりエクスプローラーと一致する。
+//!
+//! `StrCmpLogicalW` は仕様上ケースインセンシティブのため、大小文字無視の自然順比較として
+//! そのまま利用できる。
 
-/// 軽量PRNG(xorshift64)。シャッフル用途のため暗号強度は不要。
-pub(crate) struct SimpleRng(u64);
+use std::cmp::Ordering;
+use std::ffi::OsStr;
+use std::os::windows::ffi::OsStrExt;
 
-impl SimpleRng {
-    pub(crate) fn new() -> Self {
-        let mut buf = [0u8; 8];
-        // OS 乱数源が取れない場合はシステム時刻ベースのシードにフォールバックする。
-        // シャッフル用途のため暗号強度は不要で、決定的な再現を避けられれば十分。
-        let seed = if getrandom::fill(&mut buf).is_ok() {
-            u64::from_ne_bytes(buf)
-        } else {
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0x9E37_79B9_7F4A_7C15, |d| d.as_nanos() as u64)
-        };
-        Self(seed | 1) // 0シード回避
+use windows::Win32::UI::Shell::StrCmpLogicalW;
+use windows::core::PCWSTR;
+
+/// エクスプローラー互換の自然順比較を行う。
+///
+/// 文字列をヌル終端 UTF-16 列に変換してから `StrCmpLogicalW` を呼ぶ。
+pub(super) fn compare_explorer(a: &str, b: &str) -> Ordering {
+    let wa = to_wide_null(a);
+    let wb = to_wide_null(b);
+    // SAFETY: `wa` / `wb` はいずれも末尾 `0` 付きの有効な UTF-16 バッファで、
+    // 関数呼び出し中は所有権を保持しているため、`PCWSTR` の指す先は live である。
+    // `StrCmpLogicalW` は読み取りのみで副作用を持たない。
+    let result = unsafe { StrCmpLogicalW(PCWSTR(wa.as_ptr()), PCWSTR(wb.as_ptr())) };
+    result.cmp(&0)
+}
+
+/// `&str` を末尾ヌル付きの UTF-16 バッファに変換する。
+fn to_wide_null(s: &str) -> Vec<u16> {
+    OsStr::new(s)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sorted(input: &[&str]) -> Vec<String> {
+        let mut v: Vec<String> = input.iter().map(|s| (*s).to_string()).collect();
+        v.sort_by(|a, b| compare_explorer(a, b));
+        v
     }
 
-    /// xorshift64ステップを実行し、次の状態を返す
-    pub(crate) fn step(&mut self) -> u64 {
-        self.0 ^= self.0 << 13;
-        self.0 ^= self.0 >> 7;
-        self.0 ^= self.0 << 17;
-        self.0
+    #[test]
+    fn leading_zero_user_scenario() {
+        // ユーザー提示シナリオ: 19 が 100 の方へ移動せず、018 と 020 の間に位置する
+        let result = sorted(&["018.jpg", "19.jpg", "020.jpg"]);
+        assert_eq!(result, vec!["018.jpg", "19.jpg", "020.jpg"]);
     }
 
-    /// [0, bound) の範囲で一様分布する乱数を返す (Lemire法)
-    ///
-    /// 参考: Daniel Lemire, "Fast Random Integer Generation in an Interval",
-    /// ACM Trans. Model. Comput. Simul., 2019
-    pub(crate) fn next_usize(&mut self, bound: usize) -> usize {
-        let s = bound as u64;
-        let mut m = self.step() as u128 * s as u128;
-        let mut l = m as u64;
-        if l < s {
-            // rejection threshold: (2^64 - s) % s
-            let t = s.wrapping_neg() % s;
-            while l < t {
-                m = self.step() as u128 * s as u128;
-                l = m as u64;
-            }
-        }
-        (m >> 64) as usize
+    #[test]
+    fn leading_zero_with_three_digit_neighbor() {
+        // 旧 natord では 19 が 100 の手前に位置するが、エクスプローラーでは 100 より前に位置する
+        let result = sorted(&["019.jpg", "020.jpg", "099.jpg", "19.jpg", "100.jpg"]);
+        assert_eq!(
+            result,
+            vec!["019.jpg", "19.jpg", "020.jpg", "099.jpg", "100.jpg"]
+        );
+    }
+
+    #[test]
+    fn case_insensitive_mixed() {
+        let result = sorted(&["IMG1.png", "img2.png", "Img10.png"]);
+        assert_eq!(result, vec!["IMG1.png", "img2.png", "Img10.png"]);
+    }
+
+    #[test]
+    fn empty_string_compares_less() {
+        assert_eq!(compare_explorer("", "a"), Ordering::Less);
+        assert_eq!(compare_explorer("a", ""), Ordering::Greater);
+        assert_eq!(compare_explorer("", ""), Ordering::Equal);
+    }
+
+    #[test]
+    fn alphanumeric_mixed() {
+        let result = sorted(&["a10", "a2", "a1"]);
+        assert_eq!(result, vec!["a1", "a2", "a10"]);
+    }
+
+    #[test]
+    fn path_separator_mixed() {
+        let result = sorted(&["foo/bar10", "foo/bar2", "foo/bar1"]);
+        assert_eq!(result, vec!["foo/bar1", "foo/bar2", "foo/bar10"]);
+    }
+
+    #[test]
+    fn pure_numeric_simple_order() {
+        let result = sorted(&["10", "2", "1"]);
+        assert_eq!(result, vec!["1", "2", "10"]);
     }
 }

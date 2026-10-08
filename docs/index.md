@@ -6,7 +6,7 @@ hero:
   actions:
     - theme: brand
       text: はじめに
-      link: /getting-started
+      link: /guide/getting-started
     - theme: alt
       text: ダウンロード
       link: https://github.com/ak110/gv/releases

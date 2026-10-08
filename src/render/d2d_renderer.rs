@@ -21,7 +21,7 @@ use crate::image::DecodedImage;
 use crate::selection::{self, HANDLE_DRAW_SIZE, PixelRect};
 
 /// αチャネル背景モード
-#[derive(Debug, Clone, Copy, PartialEq, Default, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AlphaBackground {
     White,
@@ -850,56 +850,9 @@ fn fir_resize_multistage(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// 試験用の表示しないウィンドウ (クラス登録不要なSTATICを使う)
-    struct HiddenWindow(HWND);
-
-    impl HiddenWindow {
-        fn new() -> Self {
-            use windows::Win32::UI::WindowsAndMessaging::{
-                CreateWindowExW, WINDOW_EX_STYLE, WS_OVERLAPPED,
-            };
-            let hwnd = unsafe {
-                CreateWindowExW(
-                    WINDOW_EX_STYLE::default(),
-                    windows::core::w!("STATIC"),
-                    None,
-                    WS_OVERLAPPED,
-                    0,
-                    0,
-                    320,
-                    240,
-                    None,
-                    None,
-                    None,
-                    None,
-                )
-            }
-            .expect("test window creation failed");
-            Self(hwnd)
-        }
-    }
-
-    impl Drop for HiddenWindow {
-        fn drop(&mut self) {
-            unsafe {
-                let _ = windows::Win32::UI::WindowsAndMessaging::DestroyWindow(self.0);
-            }
-        }
-    }
-
-    /// 半透明の画素を含む8x6画像 (チェッカー背景と縮小ビットマップの作成に到達させる)
-    fn translucent_image() -> DecodedImage {
-        DecodedImage {
-            data: [200, 100, 50, 128].repeat(8 * 6),
-            width: 8,
-            height: 6,
-        }
-    }
-
-    fn rect_tuple(rect: &DrawRect) -> (f32, f32, f32, f32) {
-        (rect.x, rect.y, rect.width, rect.height)
-    }
+    use crate::test_helpers::HiddenWindow;
+    use crate::test_helpers::rect_tuple;
+    use crate::test_helpers::translucent_image;
 
     /// 失効後の最初の描画は再描画要求を返し、次の描画で同じ表示状態のまま資源を再作成する
     #[test]

@@ -27,10 +27,6 @@ cache_base_height = 1536
 default_sort = "natural"
 
 [window]
-# ウィンドウ位置の記憶
-remember_position = false
-# ウィンドウサイズの記憶
-remember_size = false
 # 常に手前に表示
 always_on_top = false
 # フルスクリーン時のタイトルバー表示
@@ -39,10 +35,6 @@ keep_titlebar_in_fullscreen = false
 [susie]
 # Susie プラグインディレクトリ (exe からの相対パス)
 plugin_dir = "spi"
-# 画像プラグイン優先度 (上ほど高優先、空は自動検出順)
-image_plugins = []
-# アーカイブプラグイン優先度
-archive_plugins = []
 
 [slideshow]
 # スライドショー間隔 (ミリ秒)

@@ -4,27 +4,35 @@
 //! 回転、リサイズ、レベル補正、ガンマ、明るさ/コントラスト、モザイク、
 //! ガウスぼかし、アンシャープマスク、およびそれらの永続フィルタ版。
 
-use crate::persistent_filter::FilterOperation;
+use crate::filter_spec::{FilterKind, FilterSpec};
 
 use super::AppWindow;
 
 impl AppWindow {
+    pub(crate) fn action_filter_for_action(&mut self, action: crate::action::Action) {
+        if let Some((spec, persistent)) = crate::filter_spec::for_action(action) {
+            self.action_filter(spec, persistent);
+        }
+    }
+
     pub(crate) fn action_rotate_arbitrary(&mut self) {
         if self.document.current_image().is_none() {
             return;
         }
-        self.prepare_modal_dialog();
-        let degrees_opt = crate::ui::rotate_dialog::show_rotate_dialog(self.hwnd);
-        self.finish_modal_dialog();
-        let degrees_opt = self.take_success("ダイアログの表示", degrees_opt);
-        if let Some(degrees) = degrees_opt
-            && let Some(img) = self.document.current_image()
-        {
-            let result = crate::filter::transform::rotate_arbitrary(img, degrees);
-            self.selection.deselect();
-            self.document.apply_edit(result);
-            self.process_document_events();
-        }
+        let hwnd = self.hwnd;
+        self.defer_modal(
+            move || crate::ui::rotate_dialog::show_rotate_dialog(hwnd),
+            |app, result| {
+                if let Some(degrees) = app.take_success("ダイアログの表示", result)
+                    && let Some(img) = app.document.current_image()
+                {
+                    let result = crate::filter::transform::rotate_arbitrary(img, degrees);
+                    app.selection.deselect();
+                    app.document.apply_edit(result);
+                    app.process_document_events();
+                }
+            },
+        );
     }
 
     pub(crate) fn action_resize(&mut self) {
@@ -35,382 +43,126 @@ impl AppWindow {
         else {
             return;
         };
-        self.prepare_modal_dialog();
-        let dialog_result = crate::ui::resize_dialog::show_resize_dialog(self.hwnd, w, h);
-        self.finish_modal_dialog();
-        let dialog_result = self.take_success("ダイアログの表示", dialog_result);
-        if let Some((nw, nh)) = dialog_result
-            && let Some(img) = self.document.current_image()
-        {
-            match crate::filter::transform::resize(img, nw, nh) {
-                Ok(result) => {
-                    self.selection.deselect();
-                    self.document.apply_edit(result);
-                    self.process_document_events();
+        let hwnd = self.hwnd;
+        self.defer_modal(
+            move || crate::ui::resize_dialog::show_resize_dialog(hwnd, w, h),
+            |app, result| {
+                if let Some((nw, nh)) = app.take_success("ダイアログの表示", result)
+                    && let Some(img) = app.document.current_image()
+                {
+                    match crate::filter::transform::resize(img, nw, nh) {
+                        Ok(result) => {
+                            app.selection.deselect();
+                            app.document.apply_edit(result);
+                            app.process_document_events();
+                        }
+                        Err(e) => {
+                            app.show_error_title(&format!("リサイズに失敗しました: {e:#}"));
+                        }
+                    }
                 }
-                Err(e) => {
-                    self.show_error_title(&format!("リサイズに失敗しました: {e}"));
-                }
+            },
+        );
+    }
+
+    pub(crate) fn action_filter(&mut self, spec: &FilterSpec, persistent: bool) {
+        if persistent {
+            if self.remove_persistent_filter_if_exists(spec.kind) {
+                return;
             }
-        }
-    }
-
-    pub(crate) fn action_fill(&mut self) {
-        if self.document.current_image().is_none() {
+        } else if self.document.current_image().is_none() {
             return;
         }
-        use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
-        let fields = [
-            FieldDef {
-                label: "赤 (0-255)",
-                default: "255".into(),
-                integer_only: true,
-            },
-            FieldDef {
-                label: "緑 (0-255)",
-                default: "255".into(),
-                integer_only: true,
-            },
-            FieldDef {
-                label: "青 (0-255)",
-                default: "255".into(),
-                integer_only: true,
-            },
-        ];
-        self.prepare_modal_dialog();
-        let dialog_result = show_filter_dialog(self.hwnd, "塗り潰す", &fields);
-        self.finish_modal_dialog();
-        let dialog_result = self.take_success("ダイアログの表示", dialog_result);
-        if let Some(vals) = dialog_result
-            && let Some(img) = self.document.current_image()
-        {
-            let r = vals[0].parse::<u8>().unwrap_or(255);
-            let g = vals[1].parse::<u8>().unwrap_or(255);
-            let b = vals[2].parse::<u8>().unwrap_or(255);
-            let sel = self.selection.current_rect();
-            let result = crate::filter::color::fill(img, sel.as_ref(), r, g, b);
-            self.document.apply_edit(result);
-            self.process_document_events();
-        }
-    }
-
-    pub(crate) fn action_levels(&mut self) {
-        if self.document.current_image().is_none() {
-            return;
-        }
-        use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
-        let fields = [
-            FieldDef {
-                label: "下限 (0-255)",
-                default: "0".into(),
-                integer_only: true,
-            },
-            FieldDef {
-                label: "上限 (0-255)",
-                default: "255".into(),
-                integer_only: true,
-            },
-        ];
-        self.prepare_modal_dialog();
-        let dialog_result = show_filter_dialog(self.hwnd, "レベル補正", &fields);
-        self.finish_modal_dialog();
-        let dialog_result = self.take_success("ダイアログの表示", dialog_result);
-        if let Some(vals) = dialog_result
-            && let Some(img) = self.document.current_image()
-        {
-            let low = vals[0].parse::<u8>().unwrap_or(0);
-            let high = vals[1].parse::<u8>().unwrap_or(255);
-            let sel = self.selection.current_rect();
-            let result = crate::filter::brightness::levels(img, sel.as_ref(), low, high);
-            self.document.apply_edit(result);
-            self.process_document_events();
-        }
-    }
-
-    pub(crate) fn action_gamma(&mut self) {
-        if self.document.current_image().is_none() {
-            return;
-        }
-        use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
-        let fields = [FieldDef {
-            label: "ガンマ値 (0.1〜10.0)",
-            default: "1.0".into(),
-            integer_only: false,
-        }];
-        self.prepare_modal_dialog();
-        let dialog_result = show_filter_dialog(self.hwnd, "ガンマ補正", &fields);
-        self.finish_modal_dialog();
-        let dialog_result = self.take_success("ダイアログの表示", dialog_result);
-        if let Some(vals) = dialog_result
-            && let Some(img) = self.document.current_image()
-        {
-            let gamma = vals[0].parse::<f64>().unwrap_or(1.0).clamp(0.1, 10.0);
-            let sel = self.selection.current_rect();
-            let result = crate::filter::brightness::gamma(img, sel.as_ref(), gamma);
-            self.document.apply_edit(result);
-            self.process_document_events();
-        }
-    }
-
-    pub(crate) fn action_brightness_contrast(&mut self) {
-        if self.document.current_image().is_none() {
-            return;
-        }
-        use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
-        let fields = [
-            FieldDef {
-                label: "明るさ (-128〜128)",
-                default: "0".into(),
-                integer_only: false,
-            },
-            FieldDef {
-                label: "コントラスト (-128〜128)",
-                default: "0".into(),
-                integer_only: false,
-            },
-        ];
-        self.prepare_modal_dialog();
-        let dialog_result = show_filter_dialog(self.hwnd, "明るさとコントラスト", &fields);
-        self.finish_modal_dialog();
-        let dialog_result = self.take_success("ダイアログの表示", dialog_result);
-        if let Some(vals) = dialog_result
-            && let Some(img) = self.document.current_image()
-        {
-            let brightness = vals[0].parse::<i32>().unwrap_or(0).clamp(-128, 128);
-            let contrast = vals[1].parse::<i32>().unwrap_or(0).clamp(-128, 128);
-            let sel = self.selection.current_rect();
-            let result = crate::filter::brightness::brightness_contrast(
-                img,
-                sel.as_ref(),
-                brightness,
-                contrast,
-            );
-            self.document.apply_edit(result);
-            self.process_document_events();
-        }
-    }
-
-    pub(crate) fn action_mosaic(&mut self) {
-        if self.document.current_image().is_none() {
-            return;
-        }
-        use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
-        let fields = [FieldDef {
-            label: "ブロックサイズ",
-            default: "10".into(),
-            integer_only: true,
-        }];
-        self.prepare_modal_dialog();
-        let dialog_result = show_filter_dialog(self.hwnd, "モザイク", &fields);
-        self.finish_modal_dialog();
-        let dialog_result = self.take_success("ダイアログの表示", dialog_result);
-        if let Some(vals) = dialog_result
-            && let Some(img) = self.document.current_image()
-        {
-            let size = vals[0].parse::<u32>().unwrap_or(10).max(1);
-            let sel = self.selection.current_rect();
-            let result = crate::filter::blur::mosaic(img, sel.as_ref(), size);
-            self.document.apply_edit(result);
-            self.process_document_events();
-        }
-    }
-
-    pub(crate) fn action_gaussian_blur(&mut self) {
-        if self.document.current_image().is_none() {
-            return;
-        }
-        use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
-        let fields = [FieldDef {
-            label: "半径 (0.1〜10.0)",
-            default: "2.0".into(),
-            integer_only: false,
-        }];
-        self.prepare_modal_dialog();
-        let dialog_result = show_filter_dialog(self.hwnd, "ガウスぼかし", &fields);
-        self.finish_modal_dialog();
-        let dialog_result = self.take_success("ダイアログの表示", dialog_result);
-        if let Some(vals) = dialog_result
-            && let Some(img) = self.document.current_image()
-        {
-            let radius = vals[0].parse::<f64>().unwrap_or(2.0).clamp(0.1, 10.0);
-            let sel = self.selection.current_rect();
-            let result = crate::filter::blur::gaussian_blur(img, sel.as_ref(), radius);
-            self.document.apply_edit(result);
-            self.process_document_events();
-        }
-    }
-
-    pub(crate) fn action_unsharp_mask(&mut self) {
-        if self.document.current_image().is_none() {
-            return;
-        }
-        use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
-        let fields = [FieldDef {
-            label: "半径 (0.1〜10.0)",
-            default: "2.0".into(),
-            integer_only: false,
-        }];
-        self.prepare_modal_dialog();
-        let dialog_result = show_filter_dialog(self.hwnd, "アンシャープマスク", &fields);
-        self.finish_modal_dialog();
-        let dialog_result = self.take_success("ダイアログの表示", dialog_result);
-        if let Some(vals) = dialog_result
-            && let Some(img) = self.document.current_image()
-        {
-            let radius = vals[0].parse::<f64>().unwrap_or(2.0).clamp(0.1, 10.0);
-            let sel = self.selection.current_rect();
-            let result = crate::filter::blur::unsharp_mask(img, sel.as_ref(), radius);
-            self.document.apply_edit(result);
-            self.process_document_events();
-        }
-    }
-
-    // --- 永続フィルタ（パラメータあり） ---
-
-    pub(crate) fn action_pfilter_levels(&mut self) {
-        let probe = FilterOperation::Levels { low: 0, high: 0 };
-        if self.remove_persistent_filter_if_exists(&probe) {
-            return;
-        }
-        use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
-        let fields = [
-            FieldDef {
-                label: "下限 (0-255)",
-                default: "0".into(),
-                integer_only: true,
-            },
-            FieldDef {
-                label: "上限 (0-255)",
-                default: "255".into(),
-                integer_only: true,
-            },
-        ];
-        self.prepare_modal_dialog();
-        let dialog_result = show_filter_dialog(self.hwnd, "永続レベル補正", &fields);
-        self.finish_modal_dialog();
-        let dialog_result = self.take_success("ダイアログの表示", dialog_result);
-        if let Some(vals) = dialog_result {
-            let low = vals[0].parse::<u8>().unwrap_or(0);
-            let high = vals[1].parse::<u8>().unwrap_or(255);
-            self.document
-                .persistent_filter_mut()
-                .add_operation(FilterOperation::Levels { low, high });
-            self.document.on_persistent_filter_changed();
-            self.process_document_events();
-        }
-    }
-
-    pub(crate) fn action_pfilter_gamma(&mut self) {
-        let probe = FilterOperation::Gamma { value: 0.0 };
-        if self.remove_persistent_filter_if_exists(&probe) {
-            return;
-        }
-        use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
-        let fields = [FieldDef {
-            label: "ガンマ値 (0.1〜10.0)",
-            default: "1.0".into(),
-            integer_only: false,
-        }];
-        self.prepare_modal_dialog();
-        let dialog_result = show_filter_dialog(self.hwnd, "永続ガンマ補正", &fields);
-        self.finish_modal_dialog();
-        let dialog_result = self.take_success("ダイアログの表示", dialog_result);
-        if let Some(vals) = dialog_result {
-            let value = vals[0].parse::<f64>().unwrap_or(1.0).clamp(0.1, 10.0);
-            self.document
-                .persistent_filter_mut()
-                .add_operation(FilterOperation::Gamma { value });
-            self.document.on_persistent_filter_changed();
-            self.process_document_events();
-        }
-    }
-
-    pub(crate) fn action_pfilter_brightness_contrast(&mut self) {
-        let probe = FilterOperation::BrightnessContrast {
-            brightness: 0,
-            contrast: 0,
-        };
-        if self.remove_persistent_filter_if_exists(&probe) {
-            return;
-        }
-        use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
-        let fields = [
-            FieldDef {
-                label: "明るさ (-128〜128)",
-                default: "0".into(),
-                integer_only: false,
-            },
-            FieldDef {
-                label: "コントラスト (-128〜128)",
-                default: "0".into(),
-                integer_only: false,
-            },
-        ];
-        self.prepare_modal_dialog();
-        let dialog_result = show_filter_dialog(self.hwnd, "永続明るさとコントラスト", &fields);
-        self.finish_modal_dialog();
-        let dialog_result = self.take_success("ダイアログの表示", dialog_result);
-        if let Some(vals) = dialog_result {
-            let brightness = vals[0].parse::<i32>().unwrap_or(0).clamp(-128, 128);
-            let contrast = vals[1].parse::<i32>().unwrap_or(0).clamp(-128, 128);
-            self.document.persistent_filter_mut().add_operation(
-                FilterOperation::BrightnessContrast {
-                    brightness,
-                    contrast,
+        if spec.parameters.is_empty() {
+            self.apply_filter_values(spec, persistent, Vec::new());
+        } else {
+            let fields = spec.fields();
+            let title = if persistent {
+                format!("永続{}", spec.title)
+            } else {
+                spec.title.into()
+            };
+            let hwnd = self.hwnd;
+            let spec = FilterSpec {
+                kind: spec.kind,
+                title: spec.title,
+                action: spec.action,
+                persistent_action: spec.persistent_action,
+                parameters: spec.parameters,
+            };
+            self.defer_modal(
+                move || crate::ui::filter_dialog::show_filter_dialog(hwnd, &title, &fields),
+                move |app, result| {
+                    if let Some(values) = app.take_success("ダイアログの表示", result) {
+                        app.apply_filter_values(&spec, persistent, values);
+                    }
                 },
             );
-            self.document.on_persistent_filter_changed();
-            self.process_document_events();
         }
     }
 
-    pub(crate) fn action_pfilter_gaussian_blur(&mut self) {
-        let probe = FilterOperation::GaussianBlur { radius: 0.0 };
-        if self.remove_persistent_filter_if_exists(&probe) {
+    fn apply_filter_values(&mut self, spec: &FilterSpec, persistent: bool, values: Vec<String>) {
+        let Some(operation) =
+            self.take_success("フィルター入力の検証", spec.operation(&values).map(Some))
+        else {
             return;
-        }
-        use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
-        let fields = [FieldDef {
-            label: "半径 (0.1〜10.0)",
-            default: "2.0".into(),
-            integer_only: false,
-        }];
-        self.prepare_modal_dialog();
-        let dialog_result = show_filter_dialog(self.hwnd, "永続ガウスぼかし", &fields);
-        self.finish_modal_dialog();
-        let dialog_result = self.take_success("ダイアログの表示", dialog_result);
-        if let Some(vals) = dialog_result {
-            let radius = vals[0].parse::<f64>().unwrap_or(2.0).clamp(0.1, 10.0);
+        };
+        if persistent {
             self.document
                 .persistent_filter_mut()
-                .add_operation(FilterOperation::GaussianBlur { radius });
+                .add_operation(operation);
+            self.document.on_persistent_filter_changed();
+        } else if let Some(image) = self.document.current_image() {
+            let selection = self.selection.current_rect();
+            let result =
+                crate::persistent_filter::apply_operation(image, &operation, selection.as_ref());
+            if matches!(
+                spec.kind,
+                FilterKind::FlipHorizontal
+                    | FilterKind::FlipVertical
+                    | FilterKind::Rotate180
+                    | FilterKind::Rotate90CW
+                    | FilterKind::Rotate90CCW
+            ) {
+                self.selection.deselect();
+            }
+            self.document.apply_edit(result);
+        }
+        self.process_document_events();
+    }
+}
+
+impl AppWindow {
+    /// パラメータ付き永続フィルタのトグル (既存なら削除してtrue、なければfalse)
+    pub(super) fn remove_persistent_filter_if_exists(
+        &mut self,
+        kind: crate::filter_spec::FilterKind,
+    ) -> bool {
+        let pf = self.document.persistent_filter_mut();
+        if pf.remove_operation_type(kind) {
             self.document.on_persistent_filter_changed();
             self.process_document_events();
+            true
+        } else {
+            false
         }
     }
 
-    pub(crate) fn action_pfilter_unsharp_mask(&mut self) {
-        let probe = FilterOperation::UnsharpMask { radius: 0.0 };
-        if self.remove_persistent_filter_if_exists(&probe) {
-            return;
-        }
-        use crate::ui::filter_dialog::{FieldDef, show_filter_dialog};
-        let fields = [FieldDef {
-            label: "半径 (0.1〜10.0)",
-            default: "2.0".into(),
-            integer_only: false,
-        }];
-        self.prepare_modal_dialog();
-        let dialog_result = show_filter_dialog(self.hwnd, "永続アンシャープマスク", &fields);
-        self.finish_modal_dialog();
-        let dialog_result = self.take_success("ダイアログの表示", dialog_result);
-        if let Some(vals) = dialog_result {
-            let radius = vals[0].parse::<f64>().unwrap_or(2.0).clamp(0.1, 10.0);
-            self.document
-                .persistent_filter_mut()
-                .add_operation(FilterOperation::UnsharpMask { radius });
-            self.document.on_persistent_filter_changed();
+    pub(super) fn action_p_filter_toggle(&mut self) {
+        self.document.persistent_filter_mut().toggle_enabled();
+        self.document.on_persistent_filter_changed();
+        self.process_document_events();
+    }
+
+    pub(super) fn action_crop(&mut self) {
+        if let Some(sel_rect) = self.selection.current_rect()
+            && let Some(img) = self.document.current_image()
+        {
+            let cropped = crate::filter::transform::crop(img, &sel_rect);
+            self.selection.deselect();
+            self.document.apply_edit(cropped);
             self.process_document_events();
+            self.update_title();
         }
     }
 }

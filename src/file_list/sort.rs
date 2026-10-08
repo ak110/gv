@@ -1,10 +1,10 @@
 //! ソート順と比較ロジック。
 
 use crate::file_info::FileInfo;
-use crate::file_list::natural_sort_explorer::compare_explorer;
+use crate::file_list::natural_sort::compare_explorer;
 
 /// ソート順
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SortOrder {
     /// ファイル名順

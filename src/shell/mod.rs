@@ -1,5 +1,6 @@
 mod association;
 mod context_menu;
+pub mod file_operations;
 mod sendto;
 
 use anyhow::Result;

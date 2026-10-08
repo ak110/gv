@@ -10,6 +10,7 @@ Windows用画像ビューアー（Rust製）。多形式対応と高速切り替
 - 普段使うのは`mise run format`（フォーマット + 軽量lint）と`mise run test`（全チェック実行）
 - リリースは`releaser patch`で実行する（minor・majorも同様）
   - releaserは未コミット変更と既定ブランチを確認し、pushとCI完了待機を経てリリースする
+  - 導入元と初回の起動方法は[開発ガイドのリリース手順](docs/development/development.md#リリース手順)を参照する
 - コミット前の検証方法: `mise run test`
   - 特定ファイルに限定する場合は `uvx --exclude-newer-package pyfltr=false pyfltr run <path>` を使う
   - 修正後の再実行時は`--commands=cargo-clippy,cargo-test`等で限定して実行する（最終検証はCIに委ねる前提）
@@ -29,8 +30,8 @@ Windowsバッチファイル生成の規約（CP932・UTF-8 BOM・chcp・goto構
 
 ## サブエージェント・スキル連携
 
-`unsafe`ブロックを新規追加・変更した直後は、必ず`Task`ツールで
-`subagent_type=unsafe-reviewer`を呼び出し、対象ファイルの絶対パスを与えてレビューを依頼する。
+`unsafe`ブロックを新規追加・変更した直後は、必ずサブエージェント`unsafe-reviewer`へ
+対象ファイルの絶対パスを渡してレビューを依頼する。
 既存の`unsafe`を含むファイルを編集しても、`unsafe`部分そのものに変更がなければ対象外。
 
 SAFETYコメントの粒度判定基準は[.claude/agents/unsafe-reviewer.md](.claude/agents/unsafe-reviewer.md)をSSOTとする。

@@ -17,17 +17,21 @@ paths:
 - 上記方針はsusie系を含むすべてのモジュールに適用する。
   `map_err`で`anyhow::Error`化する旧パターンは禁止し、新規・既存ともに`expect`形式へ揃える
 
-## 配布TOMLのSSOT
+## 設定値とキー割り当て
 
-配布TOMLが正規ソースとなる種別（キーバインド・既定ソート種別など）は、
-TOML側を唯一のSSOTとし、ソースコード内に同等のハードコードデフォルトを置かない。
+アプリケーション設定の初期値は`Config::default()`が定める。
+`ぐらびゅ.default.toml`は設定項目と初期値を説明する配布ファイルとし、
+全キーと値が`Config::default()`のシリアライズ結果と一致することをテストする。
+配布ファイルへの未知キー追加と設定構造体への項目追加による不足を、両方とも検出する。
+ユーザーの設定ファイルは未知キーを無視する互換性を保つ。
 
-- ビルド時は`include_str!`で取り込み、起動時にパースして反映する
-- Rust側の`Default`実装と配布TOMLの既定値が一致することを単体テストで保証する
-- 配布TOMLが正しくパースできることも単体テストで保証する
+キー割り当ては`ぐらびゅ.keys.default.toml`が定める。
+ビルド時は`include_str!`で取り込み、起動時にパースして反映する。
+ソースコードに同等のキー割り当てを重複定義しない。
+キーのメニュー表示とヘルプは、配布TOMLへユーザー設定を重ねた`KeyConfig`から生成する。
+表示用のキー文字列を別に定義しない。
 
-例として、デフォルトキーバインドは`ぐらびゅ.keys.default.toml`を唯一のSSOTとして管理する。
-パース可否と既定値の一致は`KeyConfig::parse_toml`の単体テスト
+パース可否とキー割り当ては`KeyConfig::parse_toml`の単体テスト
 （`default_toml_parses_and_resolves`）で検証する。
 
 ## ファイル名の自然順比較
@@ -55,29 +59,29 @@ zipクレートv8の`ZipFile::name()`はファイル名をまずUTF-8として�
 - ユーザーが明示的に実行した操作（ファイル移動・コピー・保存・クリップボード操作など）が失敗した場合は、
   必ず`show_error_title()`でタイトルバーにエラーを表示する。
   `eprintln!`のみでの出力は禁止（ユーザーから視認できない）
+- アップデート確認、シェル登録・解除は、事前の確認と結果の通知を同じモーダル操作として扱う。
+  これらの操作では成功・失敗とも結果のメッセージボックスで通知し、タイトルバー通知の例外とする
 - ダイアログ（キャンセルは`Ok(None)`）やShell操作（中止は`Ok(false)`）の結果は`take_success()`へ渡し、
   失敗だけを通知して成功時の値だけを使う。`if let Ok(Some(..))`で失敗をキャンセルと同じ扱いにしない
 - Susieプラグインのロード・設定ファイルのパースなど、バックグラウンド処理や初期化時のエラーは
   `eprintln!`でstderrに出力する（デバッグ用）。
   フォールバック動作がある場合はそのまま続行してよい
-- 可能な限り`Result`で呼び出し元に返し、`app.rs`のアクションハンドラでエラー表示を行う。
+- 可能な限り`Result`で呼び出し元に返し、`app/`のアクションハンドラでエラー表示を行う。
   中間層でエラーを握り潰さない
 
 ## モーダルダイアログ表示前のカーソル可視化
 
 フルスクリーンモードのカーソル自動非表示の状態でモーダルダイアログを開いた際は、
 ダイアログ表示中もカーソルが不可視のままになる事象が発生する。
-`AppWindow`メソッドからモーダルダイアログを開く場合は
-`prepare_modal_dialog`と`finish_modal_dialog`のペアで囲む。
+`AppWindow`メソッドはモーダル処理に必要な所有値を取得し、
+`defer_modal(run, finish)`へ渡す。`WindowState`がアプリの借用を終了してから
+`prepare_modal_dialog`、`run`、`finish_modal_dialog`を実行し、結果を適用する。
 
-- 事前条件判定の後・ダイアログ呼び出しの直前で`self.prepare_modal_dialog()`を呼ぶ
-- ダイアログ呼び出しの直後で`self.finish_modal_dialog()`を呼ぶ
-- 対象は`file_ops::open_file_dialog`などのCommon Item Dialog系関数、
-  `util::show_message_box`・`ui::info_dialog::show_info_dialog`などの自作モーダル、
-  `file_ops::delete_to_recycle_bin`などの`IFileOperation`系関数を含む
-- `bookmark::save_bookmark`などが内部でこれらの関数を呼ぶ場合は
-  呼び出し元の`AppWindow`メソッド側でペアを配置する
-- 早期returnを含め、関数を抜けるときは必ず`finish_modal_dialog`を呼ぶ。ただし`DestroyWindow(self.hwnd)`後は呼ばずに関数を抜ける
-- ペアは`&mut self`を取るため、`Document`など`&self`から借りた参照を持ったまま呼ぶとborrow checkerがコンパイルを通さない。
-  ダイアログ呼び出し前に必要な値を所有値として取り出しておく
-- 単一メソッド内で複数のダイアログを順次呼ぶ場合は最初の直前で`prepare`、最後の直後で`finish`と1回ずつでよい
+- 対象はCommon Item Dialog、自作ダイアログ、MessageBox、IFileOperationを含む
+- `run`はHWND、文字列、設定値、FileSourceなどの所有値だけを保持する。
+  AppWindowやDocumentへの参照を保持したままモーダルループへ入らない
+- キャンセルと失敗の区別、保存先記憶、文書更新は既存の結果処理を維持する
+- 親ウィンドウの破棄後はカーソル終了処理と結果の適用をしない。
+  所有者とフォントの寿命は同期コールバックとモーダル処理の終了まで保持する
+- モーダルを伴わない同期Win32操作は`defer_ui`または結果付きの`defer_call`へ渡す。
+  ListViewの同期表示情報要求は、元の通知中に応答し、通知ポインターを保留しない

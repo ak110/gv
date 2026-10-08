@@ -10,8 +10,31 @@ use anyhow::{Result, bail};
 
 use crate::extension_registry::ExtensionRegistry;
 
-/// アーカイブ展開結果: (展開先tempパス, アーカイブ内エントリパス)
-pub type ExtractedEntry = (PathBuf, String);
+/// 組み込みハンドラの形式名と拡張子。拡張子の実体は各ハンドラが定義する。
+pub fn builtin_formats() -> [(&'static str, &'static [&'static str]); 3] {
+    [
+        ("ZIP", zip::EXTENSIONS),
+        ("RAR", rar::EXTENSIONS),
+        ("7z", sevenz::EXTENSIONS),
+    ]
+}
+
+/// コミック用の拡張子だけをシェルへ関連付ける。
+pub fn comic_extensions() -> [&'static str; 2] {
+    [zip::EXTENSIONS[1], rar::EXTENSIONS[1]]
+}
+
+/// 汎用アーカイブは過去の関連付けを解除する対象として使う。
+pub fn generic_extensions() -> [&'static str; 3] {
+    [
+        zip::EXTENSIONS[0],
+        rar::EXTENSIONS[0],
+        sevenz::EXTENSIONS[0],
+    ]
+}
+
+/// アーカイブ展開結果: (展開先パス, アーカイブ内エントリパス, 元の更新日時)
+pub type ExtractedEntry = (PathBuf, String, std::time::SystemTime);
 
 /// オンデマンド取得用のアーカイブ内画像エントリ情報
 pub struct ArchiveImageEntry {
@@ -23,9 +46,10 @@ pub struct ArchiveImageEntry {
     /// 非圧縮サイズ
     pub file_size: u64,
     /// アーカイブ内エントリのインデックス (再アクセス用キー)
-    /// ZIPでは`ZipArchive::by_index`の引数に対応する。
-    /// 再lookupを行わないハンドラ (RAR・7z) では意味を持たず、`u32::MAX`が入る
+    /// この型を生成するZIPの`ZipArchive::by_index`の引数に対応する。
     pub entry_index: u32,
+    /// アーカイブ内の更新日時。
+    pub modified: std::time::SystemTime,
 }
 
 /// アーカイブハンドラのトレイト
@@ -34,17 +58,24 @@ pub trait ArchiveHandler: Send + Sync {
     fn supported_extensions(&self) -> Vec<String>;
 
     /// アーカイブ内の画像ファイルをtarget_dirに展開する
-    /// 戻り値: (展開先tempパス, アーカイブ内エントリパス) のペア一覧
-    fn extract_images(&self, archive_path: &Path, target_dir: &Path)
-    -> Result<Vec<ExtractedEntry>>;
+    /// 戻り値は展開先・元のエントリ名・更新日時の一覧。
+    fn extract_images(
+        &self,
+        _archive_path: &Path,
+        _target_dir: &Path,
+    ) -> Result<Vec<ExtractedEntry>> {
+        bail!("一括展開未対応")
+    }
 
-    /// オンデマンド取得に対応しているかどうか
     fn supports_on_demand(&self) -> bool {
         false
     }
 
-    /// アーカイブから指定エントリのデータを取得する
-    fn read_entry(&self, _archive_path: &Path, _entry_name: &str) -> Result<Vec<u8>> {
+    fn list_images_from_buffer(&self, _buffer: &[u8]) -> Result<Vec<ArchiveImageEntry>> {
+        bail!("オンデマンド列挙未対応")
+    }
+
+    fn read_entry_at(&self, _path: &Path, _buffer: Option<&[u8]>, _index: u32) -> Result<Vec<u8>> {
         bail!("オンデマンド取得未対応")
     }
 }
@@ -113,37 +144,25 @@ impl ArchiveManager {
             .is_ok_and(ArchiveHandler::supports_on_demand)
     }
 
-    /// アーカイブから指定エントリのデータを取得する (オンデマンド用)
-    pub fn read_entry(&self, archive_path: &Path, entry_name: &str) -> Result<Vec<u8>> {
-        self.find_handler(archive_path)?
-            .read_entry(archive_path, entry_name)
-    }
-
-    /// インメモリバッファからエントリ一覧を取得する (ZIPキャッシュ用)
+    /// ハンドラの抽象を通じてバッファから画像を列挙する。
     pub fn list_images_from_buffer(
         &self,
         buffer: &[u8],
         archive_path: &Path,
     ) -> Result<Vec<ArchiveImageEntry>> {
-        let ext = Self::normalized_extension(archive_path);
-        if ext == ".zip" || ext == ".cbz" {
-            return zip::ZipHandler::list_images_from_buffer(buffer, &self.registry);
-        }
-        bail!("バッファベース取得未対応: {}", archive_path.display());
+        self.find_handler(archive_path)?
+            .list_images_from_buffer(buffer)
     }
 
-    /// インメモリZIPバッファからインデックス指定でエントリを取得する
-    pub fn read_zip_entry_from_buffer_at(buffer: &[u8], index: u32) -> Result<Vec<u8>> {
-        zip::ZipHandler::read_entry_from_buffer_at(buffer, index)
-    }
-
-    /// ZIPファイルからインデックス指定でエントリを取得する
-    pub fn read_zip_entry_at(archive_path: &Path, index: u32) -> Result<Vec<u8>> {
-        let ext = Self::normalized_extension(archive_path);
-        if ext == ".zip" || ext == ".cbz" {
-            return zip::ZipHandler::read_entry_at(archive_path, index);
-        }
-        bail!("インデックス指定取得未対応: {}", archive_path.display());
+    /// ハンドラの抽象を通じて番号指定の内容を取得する。
+    pub fn read_entry_at(
+        &self,
+        archive_path: &Path,
+        buffer: Option<&[u8]>,
+        index: u32,
+    ) -> Result<Vec<u8>> {
+        self.find_handler(archive_path)?
+            .read_entry_at(archive_path, buffer, index)
     }
 }
 
@@ -187,6 +206,41 @@ pub fn extract_filename(entry_path: &str) -> &str {
     entry_path.rsplit(['/', '\\']).next().unwrap_or(entry_path)
 }
 
+/// 全アーカイブ形式で共通の画像エントリ選別。
+pub fn is_image_entry(path: &str, is_directory: bool, registry: &ExtensionRegistry) -> bool {
+    let name = extract_filename(path);
+    !is_directory && !name.is_empty() && !name.starts_with('.') && registry.is_image_extension(name)
+}
+
+/// DOS日時を暦の成分から変換する。タイムゾーン情報は格納されていないためUTCとして扱う。
+/// 不正な成分は更新日時なしとしてUNIX epochを返す。
+pub fn dos_modified(packed: u32) -> std::time::SystemTime {
+    let Ok(time) = ::zip::DateTime::try_from_msdos((packed >> 16) as u16, packed as u16) else {
+        return std::time::SystemTime::UNIX_EPOCH;
+    };
+    let year = time.year();
+    let leap = |year: u16| {
+        year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400))
+    };
+    let mut months = [31u64, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    if leap(year) {
+        months[1] = 29;
+    }
+    if u64::from(time.day()) > months[usize::from(time.month() - 1)] {
+        return std::time::SystemTime::UNIX_EPOCH;
+    }
+    let days = (1970..year)
+        .map(|year| if leap(year) { 366u64 } else { 365 })
+        .sum::<u64>()
+        + months[..usize::from(time.month() - 1)].iter().sum::<u64>()
+        + u64::from(time.day() - 1);
+    let seconds = days * 86400
+        + u64::from(time.hour()) * 3600
+        + u64::from(time.minute()) * 60
+        + u64::from(time.second());
+    std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(seconds)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -216,8 +270,7 @@ mod tests {
 
     #[test]
     fn resolve_filename_handles_duplicates() {
-        let dir = std::env::temp_dir().join("gv_test_resolve_fn");
-        let _ = std::fs::create_dir_all(&dir);
+        let dir = crate::test_helpers::TempDir::new("resolve_fn");
 
         // 重複なし
         let path = resolve_filename(&dir, "unique.jpg");
@@ -227,8 +280,6 @@ mod tests {
         std::fs::write(dir.join("dup.jpg"), b"").unwrap();
         let path = resolve_filename(&dir, "dup.jpg");
         assert_eq!(path.file_name().unwrap().to_str().unwrap(), "dup_2.jpg");
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -355,7 +406,7 @@ mod tests {
         let result = mgr.list_images_from_buffer(b"", Path::new("test.rar"));
         assert!(result.is_err());
         let msg = result.err().unwrap().to_string();
-        assert!(msg.contains("バッファベース取得未対応"), "got: {msg}");
+        assert!(msg.contains("オンデマンド列挙未対応"), "got: {msg}");
     }
 
     #[test]
@@ -378,7 +429,7 @@ mod tests {
     fn read_entry_fails_for_unsupported_extension() {
         let reg = Arc::new(ExtensionRegistry::new());
         let mgr = ArchiveManager::new(reg);
-        let result = mgr.read_entry(Path::new("test.xyz"), "entry.jpg");
+        let result = mgr.read_entry_at(Path::new("test.xyz"), None, 0);
         assert!(result.is_err());
     }
 
@@ -392,29 +443,23 @@ mod tests {
 
     #[test]
     fn resolve_filename_no_extension() {
-        let dir = std::env::temp_dir().join("gv_test_resolve_noext");
-        let _ = std::fs::create_dir_all(&dir);
+        let dir = crate::test_helpers::TempDir::new("resolve_noext");
 
         // 拡張子なしファイルの重複解決
         std::fs::write(dir.join("README"), b"").unwrap();
         let path = resolve_filename(&dir, "README");
         assert_eq!(path.file_name().unwrap().to_str().unwrap(), "README_2");
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn resolve_filename_multiple_duplicates() {
-        let dir = std::env::temp_dir().join("gv_test_resolve_multi");
-        let _ = std::fs::create_dir_all(&dir);
+        let dir = crate::test_helpers::TempDir::new("resolve_multi");
 
         // 連番の重複解決: _2, _3 と順に増える
         std::fs::write(dir.join("img.png"), b"").unwrap();
         std::fs::write(dir.join("img_2.png"), b"").unwrap();
         let path = resolve_filename(&dir, "img.png");
         assert_eq!(path.file_name().unwrap().to_str().unwrap(), "img_3.png");
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

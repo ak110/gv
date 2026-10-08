@@ -20,7 +20,7 @@ impl DecodedImage {
     }
 }
 
-/// 画像メタデータ (document.rs::current_metadata() で構築・返却される)
+/// 画像メタデータ (Document::current_metadata() で構築・返却される)
 pub struct ImageMetadata {
     pub format: String,
     pub comments: Vec<String>,
@@ -82,6 +82,40 @@ impl DecoderChain {
     }
 }
 
-// DecoderChainはSend + Sync(内部のdecoderが全てSend + Syncのため)
-unsafe impl Send for DecoderChain {}
-unsafe impl Sync for DecoderChain {}
+/// ソースをデコードする。同期PDFはSTAの待機を避けるMTA経路を使う。
+pub fn decode_source(
+    source: &crate::file_info::FileSource,
+    decoder: &DecoderChain,
+    manager: &crate::archive::ArchiveManager,
+    buffers: &std::sync::RwLock<
+        std::collections::HashMap<std::path::PathBuf, crate::document::ZipBuffer>,
+    >,
+    synchronous: bool,
+) -> anyhow::Result<DecodedImage> {
+    if let crate::file_info::FileSource::PdfPage {
+        pdf_path,
+        page_index,
+    } = source
+    {
+        if synchronous {
+            crate::pdf_renderer::render_pdf_page_safe(pdf_path, *page_index)
+        } else {
+            crate::pdf_renderer::render_pdf_page(pdf_path, *page_index)
+        }
+    } else {
+        decoder.decode(
+            &source.read_bytes(manager, buffers)?,
+            &source.filename_hint(),
+        )
+    }
+}
+
+/// デコード済み画像をPNGの内容へ変換する。
+pub fn encode_png(image: &DecodedImage) -> anyhow::Result<Vec<u8>> {
+    use anyhow::Context as _;
+    let buffer = image::RgbaImage::from_raw(image.width, image.height, image.data.clone())
+        .context("画像バッファの作成に失敗")?;
+    let mut output = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(buffer).write_to(&mut output, image::ImageFormat::Png)?;
+    Ok(output.into_inner())
+}

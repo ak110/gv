@@ -14,8 +14,8 @@ use crate::file_info::{FileInfo, FileSource};
 // 責務別の各モジュール
 mod groups;
 mod natural_sort;
-mod natural_sort_explorer;
 pub mod navigation;
+mod random;
 mod sort;
 
 // 外部から使用される型・関数を再エクスポート
@@ -23,13 +23,13 @@ pub use navigation::NavigationDirection;
 pub use sort::SortOrder;
 
 use groups::{compute_group_layout, group_key};
-use natural_sort::SimpleRng;
+use random::SimpleRng;
 
 /// Windows エクスプローラー互換の自然順比較を外部に公開するヘルパー。
 ///
 /// パス列の整列など、`SortOrder::compare` を介さない箇所からも同じ比較規則を利用できるようにする。
 pub fn compare_paths_natural(a: &str, b: &str) -> std::cmp::Ordering {
-    natural_sort_explorer::compare_explorer(a, b)
+    natural_sort::compare_explorer(a, b)
 }
 
 /// ファイル一覧管理
@@ -65,6 +65,11 @@ impl FileList {
     /// 拡張子レジストリへの参照を返す
     pub fn registry(&self) -> &ExtensionRegistry {
         &self.registry
+    }
+
+    /// モーダル処理中にアプリを借用せず拡張子情報を参照するための共有所有権。
+    pub fn registry_handle(&self) -> Arc<ExtensionRegistry> {
+        Arc::clone(&self.registry)
     }
 
     /// フォルダ内の画像ファイルを列挙してリストを構築する
@@ -131,32 +136,27 @@ impl FileList {
                 FileSource::PendingContainer { container_path: c1 },
                 FileSource::PendingContainer { container_path: c2 },
             ) => c1 == c2,
+            (FileSource::File(a), FileSource::File(b)) => a == b,
             _ => false,
         }
     }
 
-    /// ソート/削除後の位置復元 (コンテナ内エントリはsourceで、通常ファイルはpathで復元)
-    fn restore_current_position(&mut self, path: &Path, source: &FileSource) {
-        if source.is_contained() {
-            // コンテナ内エントリはsourceで位置復元
-            if let Some(idx) = self
-                .files
-                .iter()
-                .position(|f| Self::source_matches(&f.source, source))
-            {
-                self.current_index = Some(idx);
-                return;
-            }
-        }
-        // 通常ファイル or sourceマッチ失敗 → pathで復元
-        if !self.set_current_by_path(path) {
-            self.current_index = if self.files.is_empty() { None } else { Some(0) };
-        }
+    /// ソート・削除後は論理ソースの同一性で位置を復元する
+    fn restore_current_position(&mut self, source: &FileSource) {
+        self.current_index = self
+            .files
+            .iter()
+            .position(|f| Self::source_matches(&f.source, source))
+            .or_else(|| (!self.files.is_empty()).then_some(0));
     }
 
     /// パスで現在位置を設定する
     pub fn set_current_by_path(&mut self, path: &Path) -> bool {
-        if let Some(idx) = self.files.iter().position(|f| f.path == path) {
+        if let Some(idx) = self
+            .files
+            .iter()
+            .position(|f| f.source.file_path() == Some(path))
+        {
             self.current_index = Some(idx);
             true
         } else {
@@ -334,10 +334,10 @@ impl FileList {
 
     /// 操作前後で現在位置を維持するヘルパー
     fn with_position_preserved<F: FnOnce(&mut Self)>(&mut self, f: F) {
-        let saved = self.current().map(|f| (f.path.clone(), f.source.clone()));
+        let saved = self.current().map(|f| f.source.clone());
         f(self);
-        if let Some((path, source)) = saved {
-            self.restore_current_position(&path, &source);
+        if let Some(source) = saved {
+            self.restore_current_position(&source);
         }
     }
 
@@ -475,7 +475,7 @@ impl FileList {
     /// 削除されたファイル一覧を返す
     pub fn remove_marked(&mut self) -> Vec<FileInfo> {
         // 現在のパスとsourceを記憶 (位置復元用)
-        let current_info = self.current().map(|f| (f.path.clone(), f.source.clone()));
+        let current_info = self.current().map(|f| f.source.clone());
 
         let mut removed = Vec::new();
         let mut kept = Vec::new();
@@ -489,8 +489,8 @@ impl FileList {
         self.files = kept;
 
         // current_indexの復元 (コンテナ内エントリはsourceベース)
-        if let Some((path, source)) = current_info {
-            self.restore_current_position(&path, &source);
+        if let Some(source) = current_info {
+            self.restore_current_position(&source);
         } else {
             self.current_index = if self.files.is_empty() { None } else { Some(0) };
         }
@@ -532,32 +532,6 @@ impl FileList {
             }
         }
         false
-    }
-
-    /// マーク済みファイルのパスを移動先ディレクトリに更新する
-    /// 各エントリを `dest_dir/元ファイル名` で再構築し、マーク状態は維持する。
-    ///
-    /// 副次処理ではファイル一覧全体を自動再ソートしない方針のため、リスト順序および現在位置は
-    /// そのまま維持し、対象エントリのフィールドのみ書き換える。
-    pub fn update_marked_paths(&mut self, dest_dir: &Path) -> Result<()> {
-        for info in &mut self.files {
-            if !info.marked {
-                continue;
-            }
-            let file_name = info
-                .path
-                .file_name()
-                .ok_or_else(|| anyhow::anyhow!("ファイル名取得失敗: {}", info.path.display()))?;
-            let new_path = dest_dir.join(file_name);
-            let new_info = FileInfo::from_path(&new_path)?;
-            info.path = new_info.path;
-            info.source = FileSource::File(new_path);
-            info.file_name = new_info.file_name;
-            info.file_size = new_info.file_size;
-            info.modified = new_info.modified;
-            // marked状態は維持 (trueのまま)
-        }
-        Ok(())
     }
 
     /// 前のフォルダ/アーカイブの最初のファイルへ移動する
@@ -668,63 +642,61 @@ impl FileList {
     pub fn sort_order(&self) -> SortOrder {
         self.sort_order
     }
-
-    /// 指定インデックスのファイルエントリを新パスで再構築する (リネーム/移動後の更新用)
-    /// リスト内の位置 (current_index) はそのまま維持する
-    pub fn update_file_at(&mut self, index: usize, new_path: &Path) -> Result<()> {
-        let info = self
-            .files
-            .get_mut(index)
-            .ok_or_else(|| anyhow::anyhow!("インデックス範囲外: {index}"))?;
-
-        let new_info = FileInfo::from_path(new_path)?;
-        info.path = new_info.path;
-        info.source = FileSource::File(new_path.to_path_buf());
-        info.file_name = new_info.file_name;
-        info.file_size = new_info.file_size;
-        info.modified = new_info.modified;
-
-        Ok(())
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::io::Write;
-
-    fn test_registry() -> Arc<ExtensionRegistry> {
-        Arc::new(ExtensionRegistry::new())
-    }
-
-    /// テスト用のダミー画像ファイルを作成するヘルパー
-    fn create_test_files(dir: &Path, names: &[&str]) {
-        let _ = std::fs::create_dir_all(dir);
-        for name in names {
-            let mut f = std::fs::File::create(dir.join(name)).unwrap();
-            f.write_all(b"dummy").unwrap();
+    #[test]
+    fn unsupported_standard_formats_need_plugin_registration() {
+        let dir = crate::test_helpers::TempDir::new("supported_formats");
+        let unsupported = [".tiff", ".tif", ".tga", ".ico", ".cur"];
+        for extension in crate::image::StandardDecoder::extensions().chain(unsupported) {
+            std::fs::write(dir.join(format!("image{extension}")), b"fixture").unwrap();
         }
+        let registry = std::sync::Arc::new(crate::extension_registry::ExtensionRegistry::new());
+        let mut list = super::FileList::new(registry.clone());
+        list.populate_from_folder(dir.path()).unwrap();
+        assert_eq!(
+            list.len(),
+            crate::image::StandardDecoder::extensions().count()
+        );
+        for file in list.files() {
+            assert!(
+                !unsupported
+                    .iter()
+                    .any(|extension| file.file_name.ends_with(extension))
+            );
+        }
+        let mut plugin_registry = crate::extension_registry::ExtensionRegistry::new();
+        plugin_registry.register_image_extensions(&[".tiff".to_string()]);
+        let mut list = super::FileList::new(std::sync::Arc::new(plugin_registry));
+        list.populate_from_folder(dir.path()).unwrap();
+        assert!(
+            list.files()
+                .iter()
+                .any(|file| file.file_name == "image.tiff")
+        );
     }
-
-    fn cleanup(dir: &Path) {
-        let _ = std::fs::remove_dir_all(dir);
-    }
+    use super::*;
+    use crate::test_helpers::{
+        create_test_files, make_archive_file_info, make_file_info_with_source,
+        make_pending_container_info, test_registry,
+    };
 
     #[test]
     fn populate_filters_by_extension() {
-        let dir = std::env::temp_dir().join("gv_test_fl_populate");
+        let dir = crate::test_helpers::TempDir::new("fl_populate");
         create_test_files(&dir, &["a.jpg", "b.png", "c.txt", "d.bmp", "readme.md"]);
 
         let mut fl = FileList::new(test_registry());
         fl.populate_from_folder(&dir).unwrap();
 
         assert_eq!(fl.len(), 3); // jpg, png, bmp
-        cleanup(&dir);
     }
 
     #[test]
     fn natural_sort_order() {
-        let dir = std::env::temp_dir().join("gv_test_fl_natural");
+        let dir = crate::test_helpers::TempDir::new("fl_natural");
         create_test_files(&dir, &["img2.png", "img10.png", "img1.png"]);
 
         let mut fl = FileList::new(test_registry());
@@ -733,12 +705,11 @@ mod tests {
 
         let names: Vec<&str> = fl.files.iter().map(|f| f.file_name.as_str()).collect();
         assert_eq!(names, vec!["img1.png", "img2.png", "img10.png"]);
-        cleanup(&dir);
     }
 
     #[test]
     fn natural_sort_case_insensitive() {
-        let dir = std::env::temp_dir().join("gv_test_fl_natural_ci");
+        let dir = crate::test_helpers::TempDir::new("fl_natural_ci");
         create_test_files(&dir, &["IMG1.png", "img2.png", "Img10.png"]);
 
         let mut fl = FileList::new(test_registry());
@@ -747,7 +718,6 @@ mod tests {
 
         let names: Vec<&str> = fl.files.iter().map(|f| f.file_name.as_str()).collect();
         assert_eq!(names, vec!["IMG1.png", "img2.png", "Img10.png"]);
-        cleanup(&dir);
     }
 
     /// 先頭ゼロ付き数値混在 (`018, 19, 020`) でもエクスプローラーと同じ並びになることを確認する。
@@ -756,7 +726,7 @@ mod tests {
     /// `StrCmpLogicalW` ベースの自然順比較に切り替わると `018, 19, 020` 順となる。
     #[test]
     fn natural_sort_leading_zero_explorer_order() {
-        let dir = std::env::temp_dir().join("gv_test_fl_natural_leadzero");
+        let dir = crate::test_helpers::TempDir::new("fl_natural_leadzero");
         create_test_files(&dir, &["018.jpg", "19.jpg", "020.jpg"]);
 
         let mut fl = FileList::new(test_registry());
@@ -765,12 +735,11 @@ mod tests {
 
         let names: Vec<&str> = fl.files.iter().map(|f| f.file_name.as_str()).collect();
         assert_eq!(names, vec!["018.jpg", "19.jpg", "020.jpg"]);
-        cleanup(&dir);
     }
 
     #[test]
     fn navigate_relative_wraps_around() {
-        let dir = std::env::temp_dir().join("gv_test_fl_nav");
+        let dir = crate::test_helpers::TempDir::new("fl_nav");
         create_test_files(&dir, &["a.png", "b.png", "c.png"]);
 
         let mut fl = FileList::new(test_registry());
@@ -789,13 +758,11 @@ mod tests {
         fl.navigate_to(1);
         assert!(fl.navigate_relative(1));
         assert_eq!(fl.current_index(), Some(2));
-
-        cleanup(&dir);
     }
 
     #[test]
     fn navigate_first_last() {
-        let dir = std::env::temp_dir().join("gv_test_fl_firstlast");
+        let dir = crate::test_helpers::TempDir::new("fl_firstlast");
         create_test_files(&dir, &["a.png", "b.png", "c.png"]);
 
         let mut fl = FileList::new(test_registry());
@@ -807,13 +774,11 @@ mod tests {
 
         fl.navigate_first();
         assert_eq!(fl.current_index(), Some(0));
-
-        cleanup(&dir);
     }
 
     #[test]
     fn set_current_by_path_found() {
-        let dir = std::env::temp_dir().join("gv_test_fl_setpath");
+        let dir = crate::test_helpers::TempDir::new("fl_setpath");
         create_test_files(&dir, &["a.png", "b.png"]);
 
         let mut fl = FileList::new(test_registry());
@@ -821,13 +786,11 @@ mod tests {
 
         assert!(fl.set_current_by_path(&dir.join("b.png")));
         assert_eq!(fl.current().unwrap().file_name, "b.png");
-
-        cleanup(&dir);
     }
 
     #[test]
     fn sort_preserves_current_position() {
-        let dir = std::env::temp_dir().join("gv_test_fl_sortpreserve");
+        let dir = crate::test_helpers::TempDir::new("fl_sortpreserve");
         create_test_files(&dir, &["c.png", "a.png", "b.png"]);
 
         let mut fl = FileList::new(test_registry());
@@ -837,8 +800,6 @@ mod tests {
         fl.sort(SortOrder::Name);
         // ソート後もb.pngが選択されている
         assert_eq!(fl.current().unwrap().file_name, "b.png");
-
-        cleanup(&dir);
     }
 
     #[test]
@@ -854,7 +815,7 @@ mod tests {
 
     #[test]
     fn mark_and_unmark() {
-        let dir = std::env::temp_dir().join("gv_test_fl_mark");
+        let dir = crate::test_helpers::TempDir::new("fl_mark");
         create_test_files(&dir, &["a.png", "b.png", "c.png"]);
 
         let mut fl = FileList::new(test_registry());
@@ -870,13 +831,11 @@ mod tests {
         fl.unmark_at(1);
         assert!(!fl.files[1].marked);
         assert_eq!(fl.marked_count(), 0);
-
-        cleanup(&dir);
     }
 
     #[test]
     fn invert_all_marks() {
-        let dir = std::env::temp_dir().join("gv_test_fl_invert");
+        let dir = crate::test_helpers::TempDir::new("fl_invert");
         create_test_files(&dir, &["a.png", "b.png", "c.png"]);
 
         let mut fl = FileList::new(test_registry());
@@ -888,13 +847,11 @@ mod tests {
         assert!(fl.files[1].marked);
         assert!(fl.files[2].marked);
         assert_eq!(fl.marked_count(), 2);
-
-        cleanup(&dir);
     }
 
     #[test]
     fn invert_marks_to_here() {
-        let dir = std::env::temp_dir().join("gv_test_fl_invert_here");
+        let dir = crate::test_helpers::TempDir::new("fl_invert_here");
         create_test_files(&dir, &["a.png", "b.png", "c.png"]);
 
         let mut fl = FileList::new(test_registry());
@@ -906,13 +863,11 @@ mod tests {
         assert!(fl.files[0].marked);
         assert!(fl.files[1].marked);
         assert!(!fl.files[2].marked);
-
-        cleanup(&dir);
     }
 
     #[test]
     fn remove_at_adjusts_current_index() {
-        let dir = std::env::temp_dir().join("gv_test_fl_removeat");
+        let dir = crate::test_helpers::TempDir::new("fl_removeat");
         create_test_files(&dir, &["a.png", "b.png", "c.png"]);
 
         let mut fl = FileList::new(test_registry());
@@ -928,13 +883,11 @@ mod tests {
         fl.remove_at(1);
         assert_eq!(fl.current_index(), Some(0));
         assert_eq!(fl.len(), 1);
-
-        cleanup(&dir);
     }
 
     #[test]
     fn remove_marked() {
-        let dir = std::env::temp_dir().join("gv_test_fl_removemarked");
+        let dir = crate::test_helpers::TempDir::new("fl_removemarked");
         create_test_files(&dir, &["a.png", "b.png", "c.png"]);
 
         let mut fl = FileList::new(test_registry());
@@ -948,13 +901,11 @@ mod tests {
         assert_eq!(fl.len(), 1);
         // b.pngが残っている
         assert_eq!(fl.current().unwrap().file_name, "b.png");
-
-        cleanup(&dir);
     }
 
     #[test]
     fn navigate_marks() {
-        let dir = std::env::temp_dir().join("gv_test_fl_navmark");
+        let dir = crate::test_helpers::TempDir::new("fl_navmark");
         create_test_files(&dir, &["a.png", "b.png", "c.png", "d.png"]);
 
         let mut fl = FileList::new(test_registry());
@@ -977,13 +928,11 @@ mod tests {
         // 前のマーク
         assert!(fl.navigate_prev_mark());
         assert_eq!(fl.current_index(), Some(3));
-
-        cleanup(&dir);
     }
 
     #[test]
     fn sorted_navigate_forward_backward() {
-        let dir = std::env::temp_dir().join("gv_test_fl_sortnav");
+        let dir = crate::test_helpers::TempDir::new("fl_sortnav");
         // 自然順: a.png, b.png, c.png
         // サイズ順は同じ (全てdummy 5バイト) なので名前順で確認
         create_test_files(&dir, &["c.png", "a.png", "b.png"]);
@@ -1008,13 +957,11 @@ mod tests {
         // 自然順で前→ c.png
         assert!(fl.sorted_navigate(-1, SortOrder::Natural));
         assert_eq!(fl.current().unwrap().file_name, "c.png");
-
-        cleanup(&dir);
     }
 
     #[test]
     fn navigate_marks_none_marked() {
-        let dir = std::env::temp_dir().join("gv_test_fl_navmark_none");
+        let dir = crate::test_helpers::TempDir::new("fl_navmark_none");
         create_test_files(&dir, &["a.png", "b.png"]);
 
         let mut fl = FileList::new(test_registry());
@@ -1024,13 +971,11 @@ mod tests {
         // マークなし → 移動しない
         assert!(!fl.navigate_next_mark());
         assert!(!fl.navigate_prev_mark());
-
-        cleanup(&dir);
     }
 
     #[test]
     fn populate_single_creates_one_entry() {
-        let dir = std::env::temp_dir().join("gv_test_fl_single");
+        let dir = crate::test_helpers::TempDir::new("fl_single");
         create_test_files(&dir, &["target.png", "other.png", "another.jpg"]);
 
         let mut fl = FileList::new(test_registry());
@@ -1040,26 +985,6 @@ mod tests {
         assert_eq!(fl.len(), 1);
         assert_eq!(fl.current_index(), Some(0));
         assert_eq!(fl.current().unwrap().file_name, "target.png");
-
-        cleanup(&dir);
-    }
-
-    /// テスト用のアーカイブエントリFileInfoを作成するヘルパー
-    fn make_archive_file_info(archive: &str, entry: &str, file_name: &str) -> FileInfo {
-        FileInfo {
-            path: std::path::PathBuf::from(format!("/tmp/{file_name}")),
-            file_name: file_name.to_string(),
-            file_size: 100,
-            modified: std::time::SystemTime::UNIX_EPOCH,
-            marked: false,
-            load_failed: false,
-            source: FileSource::ArchiveEntry {
-                archive: std::path::PathBuf::from(archive),
-                entry: entry.to_string(),
-                on_demand: false,
-                entry_index: None,
-            },
-        }
     }
 
     #[test]
@@ -1137,7 +1062,7 @@ mod tests {
 
     #[test]
     fn shuffle_all_preserves_elements_and_position() {
-        let dir = std::env::temp_dir().join("gv_test_fl_shuffle_all");
+        let dir = crate::test_helpers::TempDir::new("fl_shuffle_all");
         create_test_files(&dir, &["a.png", "b.png", "c.png", "d.png", "e.png"]);
 
         let mut fl = FileList::new(test_registry());
@@ -1153,8 +1078,6 @@ mod tests {
 
         // 現在位置がc.pngを指している
         assert_eq!(fl.current().unwrap().file_name, "c.png");
-
-        cleanup(&dir);
     }
 
     #[test]
@@ -1224,7 +1147,7 @@ mod tests {
 
     #[test]
     fn sorted_navigate_single_element() {
-        let dir = std::env::temp_dir().join("gv_test_fl_sortnav_single");
+        let dir = crate::test_helpers::TempDir::new("fl_sortnav_single");
         create_test_files(&dir, &["only.png"]);
 
         let mut fl = FileList::new(test_registry());
@@ -1234,8 +1157,6 @@ mod tests {
         // 1要素のリストでは移動先 = 自分なのでfalse
         assert!(!fl.sorted_navigate(1, SortOrder::Natural));
         assert!(!fl.sorted_navigate(-1, SortOrder::Natural));
-
-        cleanup(&dir);
     }
 
     // --- フォルダナビゲーション: マルチグループ境界テスト ---
@@ -1356,21 +1277,6 @@ mod tests {
         assert!(!fl.navigate_relative(1));
     }
 
-    /// テスト用の PendingContainer FileInfo を作成するヘルパー
-    fn make_pending_container_info(container_path: &str) -> FileInfo {
-        FileInfo {
-            path: std::path::PathBuf::from(container_path),
-            file_name: container_path.to_string(),
-            file_size: 0,
-            modified: std::time::SystemTime::UNIX_EPOCH,
-            marked: false,
-            load_failed: false,
-            source: FileSource::PendingContainer {
-                container_path: std::path::PathBuf::from(container_path),
-            },
-        }
-    }
-
     #[test]
     fn expand_container_at_forward_places_current_at_first() {
         let registry = test_registry();
@@ -1456,38 +1362,6 @@ mod tests {
         assert_eq!(fl.current_index(), Some(4));
     }
 
-    /// テスト用に任意の `FileSource` から `FileInfo` を生成するヘルパー。
-    /// 論理パス順を確認したいテスト用なので、`path` (実ファイルパス) は適当な代表値を指定する。
-    fn make_file_info_with_source(
-        source: FileSource,
-        size: u64,
-        modified: std::time::SystemTime,
-    ) -> FileInfo {
-        let path = match &source {
-            FileSource::File(p) => p.clone(),
-            FileSource::ArchiveEntry { archive, entry, .. } => archive.join(entry),
-            FileSource::PdfPage {
-                pdf_path,
-                page_index,
-            } => pdf_path.with_file_name(format!("page{page_index}.png")),
-            FileSource::PendingContainer { container_path } => container_path.clone(),
-        };
-        let file_name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("")
-            .to_string();
-        FileInfo {
-            path,
-            file_name,
-            file_size: size,
-            modified,
-            marked: false,
-            load_failed: false,
-            source,
-        }
-    }
-
     #[test]
     fn sort_logical_path_orders_mixed_sources() {
         // 通常ファイル (フォルダ違い・サブフォルダ違い)、アーカイブエントリ、PDF ページが混在しても
@@ -1515,6 +1389,7 @@ mod tests {
                 archive: PathBuf::from("/folder_b/archive.zip"),
                 entry: "inner.png".to_string(),
                 on_demand: false,
+                temp_path: None,
                 entry_index: None,
             },
             100,

@@ -21,7 +21,6 @@ use crossbeam_channel::{Receiver, Sender};
 use rayon::prelude::*;
 
 use crate::archive::ArchiveManager;
-use crate::editing::EditingSession;
 use crate::extension_registry::ExtensionRegistry;
 use crate::file_info::FileSource;
 use crate::file_list::{FileList, NavigationDirection, SortOrder};
@@ -44,11 +43,10 @@ pub struct Document {
     // アーカイブ対応
     archive_manager: Arc<ArchiveManager>,
     archive_temp_dirs: Vec<PathBuf>,
-    current_containers: Vec<PathBuf>,
     /// ZIPファイルのバッファキャッシュ (オンデマンド取得用、先読みスレッドと共有)
     zip_buffers: Arc<RwLock<HashMap<PathBuf, ZipBuffer>>>,
-    /// 編集セッション (編集中のみSome)
-    editing_session: Option<EditingSession>,
+    /// 表示中の画像へ編集を適用したか
+    edited: bool,
     /// 永続フィルタ設定
     persistent_filter: PersistentFilter,
     /// バックグラウンド展開の受信チャネル
@@ -90,9 +88,8 @@ impl Document {
             prefetch_coord: PrefetchCoordinator::new(),
             archive_manager: Arc::new(archive_manager),
             archive_temp_dirs: Vec::new(),
-            current_containers: Vec::new(),
             zip_buffers: Arc::new(RwLock::new(HashMap::new())),
-            editing_session: None,
+            edited: false,
             persistent_filter: PersistentFilter::new(),
             expand_rx: None,
             expand_generation: 0,
@@ -132,11 +129,9 @@ impl Document {
 
     /// 先読みレスポンスを処理する (キャッシュ格納 + current_image更新)
     pub fn process_prefetch_responses(&mut self) {
-        let events = self.prefetch_coord.process_responses(
-            self.file_list.current_index(),
-            self.current_image.is_some(),
-            &self.persistent_filter,
-        );
+        let events = self
+            .prefetch_coord
+            .process_responses(self.file_list.current_index(), self.current_image.is_some());
         for event in events {
             match event {
                 PrefetchEvent::CurrentImageReady(image) => {
@@ -156,7 +151,7 @@ impl Document {
             return;
         };
         self.prefetch_coord
-            .reschedule(center, self.file_list.files());
+            .reschedule(center, self.file_list.files(), &self.persistent_filter);
     }
 
     /// キャッシュを無効化する (フォルダ切替、再読み込み時)
@@ -185,12 +180,10 @@ impl Document {
             return self.open_archive(&path);
         }
 
-        // 通常ファイル: アーカイブtempがあればクリーンアップ
-        self.cleanup_archive_temp();
+        self.reset_document_state();
 
         // 親フォルダの画像を列挙
         if let Some(folder) = path.parent() {
-            self.invalidate_cache();
             self.file_list.populate_from_folder(folder)?;
             self.file_list.set_current_by_path(&path);
             let _ = self.event_sender.send(DocumentEvent::FileListChanged);
@@ -204,8 +197,7 @@ impl Document {
     /// クリップボード貼り付けなど、tempディレクトリ内の単一ファイルを開く場合に使用
     pub fn open_single(&mut self, path: &Path) -> Result<()> {
         let path = Self::canonicalize(path)?;
-        self.cleanup_archive_temp();
-        self.invalidate_cache();
+        self.reset_document_state();
         self.file_list.populate_single(&path)?;
         let _ = self.event_sender.send(DocumentEvent::FileListChanged);
         self.load_current();
@@ -229,16 +221,18 @@ impl Document {
         self.open_containers(&[pdf_path.to_path_buf()])
     }
 
-    /// ドキュメント状態を初期化する (open_containers / open_multiple の共通前処理)
+    /// 新しい一覧の開始時に、旧一覧の展開・進捗・画像・編集状態を全て破棄する。
     fn reset_document_state(&mut self) {
+        self.cancel_expansion();
+        self.expand_rx = None;
+        self.expand_generation += 1;
         self.cleanup_archive_temp();
         self.invalidate_cache();
         self.file_list.clear();
         self.container_states.clear();
         self.pending_navigation_intent = None;
-        self.cancel_expansion(); // 旧世代 rayon ジョブをキュー先頭で停止させる
-        self.expand_rx = None; // 旧バックグラウンド展開を破棄
-        self.expand_generation += 1;
+        self.current_image = None;
+        self.edited = false;
     }
 
     /// 複数コンテナ (アーカイブ/PDF混在) をまとめて開く
@@ -451,7 +445,6 @@ impl Document {
                     )
                 });
             let info = crate::file_info::FileInfo {
-                path: path.clone(),
                 source: FileSource::PendingContainer {
                     container_path: path.clone(),
                 },
@@ -464,7 +457,6 @@ impl Document {
             self.file_list.push(info);
             self.container_states
                 .insert(path.clone(), ContainerState::Pending);
-            self.current_containers.push(path.clone());
         }
 
         errors
@@ -484,7 +476,6 @@ impl Document {
                 }
                 self.container_states
                     .insert(path.clone(), ContainerState::Expanded);
-                self.current_containers.push(path);
             }
             ContainerResult::Zip {
                 path,
@@ -500,7 +491,6 @@ impl Document {
                     .insert(path.clone(), buffer);
                 self.container_states
                     .insert(path.clone(), ContainerState::Expanded);
-                self.current_containers.push(path);
             }
             ContainerResult::TempExtracted {
                 path,
@@ -513,7 +503,6 @@ impl Document {
                 self.archive_temp_dirs.push(temp_dir);
                 self.container_states
                     .insert(path.clone(), ContainerState::Expanded);
-                self.current_containers.push(path);
             }
         }
         for info in file_entries {
@@ -532,14 +521,15 @@ impl Document {
                 let pdf_file_size = std::fs::metadata(path).map_or(0, |m| m.len());
                 for i in 0..*page_count {
                     entries.push(crate::file_info::FileInfo {
-                        path: path.clone(),
                         source: FileSource::PdfPage {
                             pdf_path: path.clone(),
                             page_index: i,
                         },
                         file_name: format!("Page {:03}", i + 1),
                         file_size: pdf_file_size,
-                        modified: std::time::SystemTime::now(),
+                        modified: std::fs::metadata(path)
+                            .and_then(|metadata| metadata.modified())
+                            .unwrap_or(std::time::SystemTime::UNIX_EPOCH),
                         marked: false,
                         load_failed: false,
                     });
@@ -552,16 +542,16 @@ impl Document {
             } => {
                 for entry in archive_entries {
                     entries.push(crate::file_info::FileInfo {
-                        path: path.clone(),
                         source: FileSource::ArchiveEntry {
                             archive: path.clone(),
                             entry: entry.entry_name.clone(),
                             on_demand: true,
+                            temp_path: None,
                             entry_index: Some(entry.entry_index),
                         },
                         file_name: entry.file_name.clone(),
                         file_size: entry.file_size,
-                        modified: std::time::SystemTime::now(),
+                        modified: entry.modified,
                         marked: false,
                         load_failed: false,
                     });
@@ -572,14 +562,16 @@ impl Document {
                 entries: temp_entries,
                 ..
             } => {
-                for (temp_path, entry_name) in temp_entries {
+                for (temp_path, entry_name, modified) in temp_entries {
                     if let Ok(mut info) = crate::file_info::FileInfo::from_path(temp_path) {
                         info.source = FileSource::ArchiveEntry {
                             archive: path.clone(),
                             entry: entry_name.clone(),
                             on_demand: false,
+                            temp_path: Some(temp_path.clone()),
                             entry_index: None,
                         };
+                        info.modified = *modified;
                         info.file_name = crate::archive::extract_filename(entry_name).to_string();
                         entries.push(info);
                     }
@@ -908,8 +900,11 @@ impl Document {
 
         self.file_list.clear_failed();
         if let Some(center) = self.file_list.current_index() {
-            self.prefetch_coord
-                .invalidate_and_reschedule(center, self.file_list.files());
+            self.prefetch_coord.invalidate_and_reschedule(
+                center,
+                self.file_list.files(),
+                &self.persistent_filter,
+            );
         } else {
             self.prefetch_coord.invalidate();
         }
@@ -918,9 +913,7 @@ impl Document {
 
     /// PDFファイルかどうか判定する
     fn is_pdf(path: &Path) -> bool {
-        path.extension()
-            .and_then(|e| e.to_str())
-            .is_some_and(|e| e.eq_ignore_ascii_case("pdf"))
+        ExtensionRegistry::is_pdf_path(path)
     }
 
     /// アーカイブ用tempディレクトリとZIPバッファをクリーンアップする
@@ -930,7 +923,6 @@ impl Document {
             // 削除失敗は無視する (ユニークdir名なので次回openに影響しない)
             let _ = std::fs::remove_dir_all(&temp_dir);
         }
-        self.current_containers.clear();
         self.zip_buffers
             .write()
             .expect("zip_buffers lock poisoned")
@@ -984,6 +976,7 @@ impl Document {
     ///
     /// 読取・デコードの失敗は失敗マークと`DocumentEvent::Error`で通知する。
     fn load_current(&mut self) {
+        self.edited = false;
         let Some(index) = self.file_list.current_index() else {
             self.current_image = None;
             return;
@@ -1027,24 +1020,15 @@ impl Document {
 
         // 2. キャッシュミス → 同期デコード (フォールバック)
         let current = self.file_list.current().expect("current_index was Some");
-        let path = current.path.clone();
         let source = current.source.clone();
 
-        let decode_result = if let FileSource::PdfPage {
-            pdf_path,
-            page_index,
-        } = &source
-        {
-            // PDFページ: STAデッドロック回避のためMTAスレッドで実行
-            crate::pdf_renderer::render_pdf_page_safe(pdf_path, *page_index)
-        } else {
-            // 通常ファイル/アーカイブエントリ: read_file_data → decode
-            // 読取失敗もデコード失敗と同じ経路で通知する (呼出元の多くは戻り値を使わないため)
-            let current = self.file_list.current().expect("current_index was Some");
-            let filename_hint = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            self.read_file_data(current)
-                .and_then(|data| self.decoder.decode(&data, filename_hint))
-        };
+        let decode_result = crate::image::decode_source(
+            &source,
+            &self.decoder,
+            &self.archive_manager,
+            &self.zip_buffers,
+            true,
+        );
 
         match decode_result {
             Ok(image) => {
@@ -1057,7 +1041,7 @@ impl Document {
                 self.current_image = None;
                 // 同期デコード失敗時はfailedマーク (ナビゲーション時にスキップ対象)
                 self.file_list.mark_failed(index);
-                let msg = format!("{}: {}", path.display(), e);
+                let msg = format!("{}: {}", source.display_path(), e);
                 let _ = self.event_sender.send(DocumentEvent::Error(msg));
             }
         }
@@ -1095,52 +1079,34 @@ impl Document {
 
     /// FileInfoからファイルデータを取得する (オンデマンドアーカイブ対応)
     fn read_file_data(&self, info: &crate::file_info::FileInfo) -> Result<Vec<u8>> {
-        match &info.source {
-            FileSource::ArchiveEntry {
-                archive,
-                entry,
-                on_demand: true,
-                entry_index,
-            } => {
-                // キャッシュされたZIPバッファから取得 (Stored最適化付き)
-                let buffers = self.zip_buffers.read().expect("zip_buffers lock poisoned");
-                if let Some(buffer) = buffers.get(archive) {
-                    if let Some(idx) = entry_index {
-                        crate::archive::ArchiveManager::read_zip_entry_from_buffer_at(
-                            buffer.as_ref(),
-                            *idx,
-                        )
-                    } else {
-                        crate::archive::zip::ZipHandler::read_entry_from_buffer(
-                            buffer.as_ref(),
-                            entry,
-                        )
-                    }
-                } else {
-                    // キャッシュミス (通常発生しない): ファイルから直接取得
-                    drop(buffers);
-                    if let Some(idx) = entry_index {
-                        crate::archive::ArchiveManager::read_zip_entry_at(archive, *idx)
-                    } else {
-                        self.archive_manager.read_entry(archive, entry)
-                    }
-                }
-            }
-            FileSource::PendingContainer { .. } => {
-                anyhow::bail!("未展開コンテナからは取得できない")
-            }
-            _ => std::fs::read(&info.path)
-                .with_context(|| format!("ファイル読み込み失敗: {}", info.path.display())),
-        }
+        info.source
+            .read_bytes(&self.archive_manager, &self.zip_buffers)
     }
 
-    /// 現在のファイルのデータを取得する (app.rsのファイル操作用)
+    /// 現在のファイルのデータを取得する (appモジュールのファイル操作用)
+    #[cfg(test)]
     pub fn read_file_data_current(&self) -> Result<Vec<u8>> {
         let current = self
             .file_list
             .current()
             .ok_or_else(|| anyhow::anyhow!("ファイルが選択されていない"))?;
         self.read_file_data(current)
+    }
+
+    /// 複製用にソースの内容を保存する。表示へ適用したフィルタは含めない。
+    pub fn copy_source_to(&self, source: &FileSource, destination: &Path) -> Result<()> {
+        match source {
+            FileSource::File(path)
+            | FileSource::ArchiveEntry {
+                on_demand: false,
+                temp_path: Some(path),
+                ..
+            } => crate::shell::file_operations::copy_atomic(path, destination),
+            _ => crate::shell::file_operations::write_atomic(
+                destination,
+                &source.read_bytes(&self.archive_manager, &self.zip_buffers)?,
+            ),
+        }
     }
 
     /// 現在のデコード済み画像への参照
@@ -1150,12 +1116,18 @@ impl Document {
 
     /// 現在のファイルパス
     pub fn current_path(&self) -> Option<&Path> {
-        self.file_list.current().map(|f| f.path.as_path())
+        self.file_list.current().and_then(|f| f.source.file_path())
     }
 
     /// ファイルリストへの参照
     pub fn file_list(&self) -> &FileList {
         &self.file_list
+    }
+
+    /// 実形式で用意しにくい展開済みソースを受入テストの混在一覧へ加える。
+    #[cfg(test)]
+    pub(crate) fn append_test_file(&mut self, info: crate::file_info::FileInfo) {
+        self.file_list.push(info);
     }
 
     /// パスがコンテナ (アーカイブ・PDF・ブックマーク) か判定する
@@ -1275,6 +1247,14 @@ impl Document {
         }
     }
 
+    /// 操作に成功した行だけを一覧とマークから除く。
+    pub fn remove_indices_from_list(&mut self, indices: &[usize]) {
+        for &index in indices.iter().rev() {
+            self.file_list.remove_at(index);
+        }
+        self.after_list_change();
+    }
+
     /// マーク済みファイルをリストから削除する
     pub fn remove_marked_from_list(&mut self) {
         if self.file_list.marked_count() == 0 {
@@ -1282,29 +1262,6 @@ impl Document {
         }
         self.file_list.remove_marked();
         self.after_list_change();
-    }
-
-    /// マーク済みファイルのパスを移動先ディレクトリに更新する
-    pub fn update_marked_paths(&mut self, dest_dir: &Path) -> Result<()> {
-        self.file_list.update_marked_paths(dest_dir)?;
-        self.after_list_change();
-        Ok(())
-    }
-
-    /// 現在のファイルをリスト内でリネーム (同一フォルダ内の移動後)
-    /// 先読みキャッシュを無効化し、リスト内の位置はそのまま維持する
-    pub fn rename_current_in_list(&mut self, new_path: &Path) -> Result<()> {
-        let index = self
-            .file_list
-            .current_index()
-            .ok_or_else(|| anyhow::anyhow!("ファイルが選択されていない"))?;
-        self.file_list.update_file_at(index, new_path)?;
-        self.invalidate_cache();
-        let _ = self.event_sender.send(DocumentEvent::FileListChanged);
-        if self.file_list.len() > 0 {
-            self.load_current();
-        }
-        Ok(())
     }
 
     /// リスト変更後の共通処理 (キャッシュ無効化+再読込+イベント送信)
@@ -1319,6 +1276,7 @@ impl Document {
             self.load_current();
         } else {
             self.current_image = None;
+            self.edited = false;
             let _ = self.event_sender.send(DocumentEvent::ImageReady);
         }
     }
@@ -1331,10 +1289,7 @@ impl Document {
 
     /// ファイルリストをクリアする
     pub fn close_all(&mut self) {
-        self.cleanup_archive_temp();
-        self.invalidate_cache();
-        self.file_list.clear();
-        self.current_image = None;
+        self.reset_document_state();
         let _ = self.event_sender.send(DocumentEvent::FileListChanged);
         let _ = self.event_sender.send(DocumentEvent::ImageReady);
     }
@@ -1393,9 +1348,7 @@ impl Document {
             }
         } else {
             // 通常ファイルのみ
-            self.cleanup_archive_temp();
-            self.invalidate_cache();
-            self.file_list.clear();
+            self.reset_document_state();
 
             for source in &data.entries {
                 if let FileSource::File(path) = source
@@ -1439,12 +1392,8 @@ impl Document {
         }
 
         let data = self.read_file_data(current)?;
-        let filename_hint = current
-            .path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("");
-        self.decoder.metadata(&data, filename_hint)
+        self.decoder
+            .metadata(&data, &current.source.filename_hint())
     }
 
     /// 指定インデックスの画像がキャッシュ済みか判定する
@@ -1454,34 +1403,11 @@ impl Document {
             || (self.file_list.current_index() == Some(index) && self.current_image.is_some())
     }
 
-    // --- 編集セッション ---
+    // --- 編集状態 ---
 
     /// 未保存の編集があるかどうか
     pub fn has_unsaved_edit(&self) -> bool {
-        self.editing_session
-            .as_ref()
-            .is_some_and(EditingSession::has_unsaved_changes)
-    }
-
-    /// 編集セッションを開始する (まだ開始していない場合)
-    /// 現在の画像をバックアップとして保持する
-    fn ensure_editing_session(&mut self) {
-        if self.editing_session.is_some() {
-            return;
-        }
-        if let Some(img) = &self.current_image {
-            let backup = DecodedImage {
-                data: img.data.clone(),
-                width: img.width,
-                height: img.height,
-            };
-            self.editing_session = Some(EditingSession::new(backup));
-        }
-    }
-
-    /// 編集セッションを破棄する (未保存の変更を破棄する)
-    pub fn discard_editing_session(&mut self) {
-        self.editing_session = None;
+        self.edited
     }
 
     /// 永続フィルタへの参照
@@ -1502,11 +1428,8 @@ impl Document {
 
     /// current_imageを編集結果で置き換える
     pub fn apply_edit(&mut self, new_image: DecodedImage) {
-        self.ensure_editing_session();
         self.current_image = Some(new_image);
-        if let Some(session) = &mut self.editing_session {
-            session.mark_modified();
-        }
+        self.edited = true;
         let _ = self.event_sender.send(DocumentEvent::ImageReady);
     }
 }
@@ -1520,27 +1443,10 @@ impl Drop for Document {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_helpers::{create_1x1_white_png, setup_test_dir};
     use std::io::Write;
 
-    use crate::test_helpers::{create_1x1_white_png, test_document};
-
-    /// テスト用の一時ディレクトリにダミー画像を配置する
-    fn setup_test_dir(name: &str, count: usize) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("gv_test_document_{name}"));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let png_data = create_1x1_white_png();
-        for i in 0..count {
-            let path = dir.join(format!("image_{i:03}.png"));
-            let mut f = std::fs::File::create(&path).unwrap();
-            f.write_all(&png_data).unwrap();
-        }
-        dir
-    }
-
-    fn cleanup_test_dir(dir: &Path) {
-        let _ = std::fs::remove_dir_all(dir);
-    }
+    use crate::test_helpers::test_document;
 
     #[test]
     fn new_initial_state() {
@@ -1575,7 +1481,6 @@ mod tests {
 
         assert_eq!(doc.file_list().len(), 3);
         assert_eq!(doc.file_list().current_index(), Some(0));
-        cleanup_test_dir(&dir);
     }
 
     #[test]
@@ -1589,7 +1494,6 @@ mod tests {
         assert_eq!(doc.file_list().current_index(), Some(2));
         doc.navigate_relative(-1);
         assert_eq!(doc.file_list().current_index(), Some(1));
-        cleanup_test_dir(&dir);
     }
 
     #[test]
@@ -1602,7 +1506,6 @@ mod tests {
         assert_eq!(doc.file_list().current_index(), Some(4));
         doc.navigate_first();
         assert_eq!(doc.file_list().current_index(), Some(0));
-        cleanup_test_dir(&dir);
     }
 
     #[test]
@@ -1613,7 +1516,6 @@ mod tests {
 
         doc.navigate_to(3);
         assert_eq!(doc.file_list().current_index(), Some(3));
-        cleanup_test_dir(&dir);
     }
 
     #[test]
@@ -1632,7 +1534,6 @@ mod tests {
         doc.invert_all_marks(); // toggle all marks (0 marked -> 0, 1, 2 marked; 0 is unmarked)
         let marked = doc.file_list().marked_count();
         assert!(marked > 0 && marked < 3); // should have some marked and some unmarked
-        cleanup_test_dir(&dir);
     }
 
     #[test]
@@ -1643,17 +1544,6 @@ mod tests {
         assert!(!Document::is_pdf(Path::new("test.pdf.txt")));
     }
 
-    #[test]
-    fn cancel_expansion_atomic_flag() {
-        let (_doc, _rx) = test_document();
-        let flag = Arc::new(AtomicBool::new(false));
-        let flag_clone = Arc::clone(&flag);
-        assert!(!flag_clone.load(Ordering::Relaxed));
-
-        flag.store(true, Ordering::Relaxed);
-        assert!(flag_clone.load(Ordering::Relaxed));
-    }
-
     /// 通常ファイル・ZIP内画像・先読み (キャッシュ取出) のいずれでも向きを一度だけ適用し、
     /// 再読込や往復移動で回転が累積しない
     #[test]
@@ -1661,11 +1551,7 @@ mod tests {
         use crate::test_helpers::{
             asymmetric_rgba, encode_with_exif, exif_with_orientation, expected_oriented,
         };
-        let dir = std::env::temp_dir().join(format!(
-            "gv_test_document_orientation_{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = crate::test_helpers::TempDir::new("document_orientation");
         std::fs::create_dir_all(&dir).unwrap();
         let src = asymmetric_rgba(3, 2);
         let orientations = [6u16, 5];
@@ -1737,6 +1623,259 @@ mod tests {
 
         drop(doc);
         drop(zip_doc);
-        cleanup_test_dir(&dir);
+    }
+    #[test]
+    fn new_list_entrances_cancel_old_expansion_and_edit() {
+        let dir = setup_test_dir("reset_entrances", 2);
+        let image = dir.join("image_000.png");
+        let archive = dir.join("images.zip");
+        let mut writer = ::zip::ZipWriter::new(std::fs::File::create(&archive).unwrap());
+        writer
+            .start_file("inside.png", ::zip::write::SimpleFileOptions::default())
+            .unwrap();
+        writer.write_all(&create_1x1_white_png()).unwrap();
+        writer.finish().unwrap();
+        for entrance in 0..7 {
+            let (mut doc, _rx) = test_document();
+            doc.open_single(&image).unwrap();
+            doc.apply_edit(crate::image::DecodedImage {
+                data: vec![0, 0, 0, 255],
+                width: 1,
+                height: 1,
+            });
+            let old = dir.join("old.zip");
+            let other_old = dir.join("other_old.zip");
+            let flag = Arc::new(AtomicBool::new(false));
+            doc.expansion_cancel = Some(Arc::clone(&flag));
+            let (sender, receiver) = crossbeam_channel::unbounded();
+            doc.expand_rx = Some(receiver);
+            doc.container_states
+                .insert(old.clone(), ContainerState::InFlight);
+            doc.container_states
+                .insert(other_old.clone(), ContainerState::InFlight);
+            doc.pending_navigation_intent = Some((old.clone(), NavigationDirection::Forward));
+            let generation = doc.expand_generation;
+            assert_eq!(doc.expand_progress(), Some((0, 2)));
+            match entrance {
+                0 => doc.open(&image).unwrap(),
+                1 => doc.open_single(&image).unwrap(),
+                2 => doc.close_all(),
+                3 => doc
+                    .load_bookmark_data(crate::bookmark::BookmarkData {
+                        entries: vec![FileSource::File(image.clone())],
+                        index: 0,
+                    })
+                    .unwrap(),
+                4 => doc
+                    .open_multiple(&[image.clone(), dir.join("image_001.png")])
+                    .unwrap(),
+                5 => doc.open_containers(std::slice::from_ref(&archive)).unwrap(),
+                _ => doc.open_folder(&dir).unwrap(),
+            }
+            assert!(flag.load(Ordering::Relaxed));
+            assert!(doc.expand_generation > generation);
+            assert!(!doc.container_states.contains_key(&old));
+            assert!(!doc.container_states.contains_key(&other_old));
+            if entrance <= 3 {
+                assert!(doc.expand_progress().is_none());
+                assert!(doc.expand_rx.is_none());
+            }
+            assert!(doc.pending_navigation_intent.is_none());
+            assert!(!doc.has_unsaved_edit());
+            assert!(
+                sender
+                    .send(ContainerExpandEvent::AllDone { generation })
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn successful_move_removes_only_target_rows_and_marks() {
+        let dir = setup_test_dir("moved_rows", 3);
+        let (mut doc, _rx) = test_document();
+        doc.open_folder(&dir).unwrap();
+        doc.file_list.mark_at(0);
+        doc.file_list.mark_at(2);
+        std::fs::rename(dir.join("image_000.png"), dir.join("moved.png")).unwrap();
+        doc.remove_indices_from_list(&[0]);
+        assert_eq!(doc.file_list().len(), 2);
+        assert_eq!(doc.file_list().marked_count(), 1);
+        assert_eq!(doc.file_list().files()[1].file_name, "image_002.png");
+        doc.navigate_to(1);
+        std::fs::rename(dir.join("image_002.png"), dir.join("moved2.png")).unwrap();
+        doc.remove_current_from_list();
+        assert_eq!(doc.file_list().len(), 1);
+        assert_eq!(doc.file_list().marked_count(), 0);
+    }
+
+    #[test]
+    fn container_metadata_uses_original_timestamps() {
+        let dir = setup_test_dir("metadata", 1);
+        let path = dir.join("original.pdf");
+        std::fs::write(&path, crate::test_helpers::minimal_pdf()).unwrap();
+        let expected =
+            std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_600_000_000);
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(expected)
+            .unwrap();
+        let pdf = Document::build_container_entries(&ContainerResult::Pdf {
+            path: path.clone(),
+            page_count: 1,
+        });
+        assert_eq!(
+            pdf[0].modified,
+            std::fs::metadata(&path).unwrap().modified().unwrap()
+        );
+        let image = dir.join("image_000.png");
+        let extracted = Document::build_container_entries(&ContainerResult::TempExtracted {
+            path: path.clone(),
+            temp_dir: dir.path().to_path_buf(),
+            entries: vec![(image, "inside.png".into(), expected)],
+        });
+        assert_eq!(extracted[0].modified, expected);
+        let zipped = Document::build_container_entries(&ContainerResult::Zip {
+            path,
+            buffer: ZipBuffer::Memory(Vec::new()),
+            entries: vec![crate::archive::ArchiveImageEntry {
+                entry_name: "inside.png".into(),
+                file_name: "inside.png".into(),
+                file_size: 4,
+                entry_index: 0,
+                modified: expected,
+            }],
+        });
+        assert_eq!(zipped[0].modified, expected);
+    }
+
+    #[test]
+    fn zip_header_timestamp_reaches_list_metadata() {
+        let dir = setup_test_dir("zip_header_timestamp", 0);
+        let path = dir.join("timestamp.zip");
+        let time = ::zip::DateTime::from_date_and_time(2020, 9, 13, 12, 26, 40).unwrap();
+        let mut writer = ::zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+        writer
+            .start_file(
+                "inside.png",
+                ::zip::write::SimpleFileOptions::default().last_modified_time(time),
+            )
+            .unwrap();
+        writer.write_all(&create_1x1_white_png()).unwrap();
+        writer.finish().unwrap();
+        let expected =
+            std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_600_000_000);
+        let registry = Arc::new(ExtensionRegistry::new());
+        let manager = ArchiveManager::new(registry);
+        let entries = manager
+            .list_images_from_buffer(&std::fs::read(&path).unwrap(), &path)
+            .unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].modified, expected);
+        let (mut doc, _rx) = test_document();
+        doc.open(&path).unwrap();
+        assert!(doc.current_image().is_some());
+        assert_eq!(doc.file_list().len(), 1);
+        assert_eq!(doc.file_list().current().unwrap().modified, expected);
+    }
+
+    #[test]
+    fn changed_filter_discards_old_worker_result_before_displaying_new_generation() {
+        use crate::persistent_filter::FilterOperation;
+        use std::sync::atomic::AtomicUsize;
+        use std::time::Duration;
+
+        struct GatedDecoder {
+            started: Sender<usize>,
+            release: Receiver<()>,
+            worker_calls: AtomicUsize,
+        }
+        impl crate::image::ImageDecoder for GatedDecoder {
+            fn can_decode(&self, _data: &[u8], _hint: &str) -> bool {
+                true
+            }
+            fn decode(&self, _data: &[u8], _hint: &str) -> Result<DecodedImage> {
+                if std::thread::current().name() == Some("prefetch-worker") {
+                    let call = self.worker_calls.fetch_add(1, Ordering::Relaxed);
+                    self.started.send(call)?;
+                    self.release.recv_timeout(Duration::from_secs(5))?;
+                }
+                Ok(DecodedImage {
+                    data: vec![10, 20, 30, 255],
+                    width: 1,
+                    height: 1,
+                })
+            }
+            fn metadata(&self, _data: &[u8], _hint: &str) -> Result<crate::image::ImageMetadata> {
+                anyhow::bail!("試験ではメタデータを取得しない")
+            }
+        }
+
+        let dir = setup_test_dir("filtered_worker_generation", 2);
+        let (started_tx, started_rx) = crossbeam_channel::unbounded();
+        let (release_tx, release_rx) = crossbeam_channel::unbounded();
+        let (notified_tx, notified_rx) = crossbeam_channel::unbounded();
+        let (event_tx, event_rx) = crossbeam_channel::unbounded();
+        let decoder = Arc::new(DecoderChain::new(vec![Box::new(GatedDecoder {
+            started: started_tx,
+            release: release_rx,
+            worker_calls: AtomicUsize::new(0),
+        })]));
+        let registry = Arc::new(ExtensionRegistry::new());
+        let manager = ArchiveManager::new(Arc::clone(&registry));
+        let mut doc = Document::new(event_tx, decoder, registry, manager, SortOrder::default());
+        doc.start_prefetch(
+            Arc::new(move || {
+                notified_tx.send(()).expect("試験の通知受信口");
+            }),
+            1024,
+            4,
+        )
+        .unwrap();
+        doc.persistent_filter_mut().toggle_enabled();
+        doc.persistent_filter_mut()
+            .add_operation(FilterOperation::InvertColors);
+        doc.open_folder(&dir).unwrap();
+        assert_eq!(doc.current_image().unwrap().data, vec![245, 235, 225, 255]);
+        assert_eq!(started_rx.recv_timeout(Duration::from_secs(5)).unwrap(), 0);
+        let old_generation = doc.prefetch_coord.generation().unwrap();
+
+        // 旧要求のデコードを止めたまま、製品の設定変更処理で世代を進める。
+        doc.persistent_filter_mut().toggle_enabled();
+        doc.on_persistent_filter_changed();
+        assert!(doc.prefetch_coord.generation().unwrap() > old_generation);
+        assert_eq!(doc.current_image().unwrap().data, vec![10, 20, 30, 255]);
+
+        // 先読み対象を表示待ちにする。旧応答が採用されれば反転画像が表示される状態。
+        assert!(doc.file_list.navigate_to(1));
+        doc.current_image = None;
+        for _ in event_rx.try_iter() {}
+        release_tx.send(()).unwrap();
+        notified_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(started_rx.recv_timeout(Duration::from_secs(5)).unwrap(), 1);
+        // 新世代をゲートで止めているので、ここでは旧世代の実ワーカー応答だけを処理する。
+        doc.process_prefetch_responses();
+        assert!(
+            doc.current_image().is_none(),
+            "旧フィルタの画像を表示しない"
+        );
+        assert!(
+            !event_rx
+                .try_iter()
+                .any(|event| matches!(event, DocumentEvent::ImageReady))
+        );
+
+        release_tx.send(()).unwrap();
+        notified_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        doc.process_prefetch_responses();
+        assert_eq!(doc.file_list().current_index(), Some(1));
+        assert_eq!(doc.current_image().unwrap().data, vec![10, 20, 30, 255]);
+        assert!(
+            event_rx
+                .try_iter()
+                .any(|event| matches!(event, DocumentEvent::ImageReady))
+        );
     }
 }

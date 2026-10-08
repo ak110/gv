@@ -4,9 +4,11 @@
 //! フィルタ設定変更時はキャッシュを全無効化して再描画する。
 
 use crate::filter;
+use crate::filter_spec::FilterKind;
 use crate::image::DecodedImage;
+use crate::selection::PixelRect;
 
-/// 永続フィルタの操作種別
+/// 通常編集と永続フィルターで共有する操作
 #[derive(Debug, Clone)]
 pub enum FilterOperation {
     FlipHorizontal,
@@ -15,6 +17,7 @@ pub enum FilterOperation {
     Rotate90CW,
     Rotate90CCW,
     // 色変換
+    Fill { red: u8, green: u8, blue: u8 },
     Levels { low: u8, high: u8 },
     Gamma { value: f64 },
     BrightnessContrast { brightness: i32, contrast: i32 },
@@ -25,6 +28,7 @@ pub enum FilterOperation {
     BlurStrong,
     Sharpen,
     SharpenStrong,
+    Mosaic { size: u32 },
     GaussianBlur { radius: f64 },
     UnsharpMask { radius: f64 },
     MedianFilter,
@@ -34,6 +38,7 @@ pub enum FilterOperation {
 }
 
 /// 永続フィルタ設定
+#[derive(Clone)]
 pub struct PersistentFilter {
     /// フィルタの有効/無効
     enabled: bool,
@@ -66,12 +71,8 @@ impl PersistentFilter {
         &self.operations
     }
 
-    /// 指定したバリアントと同じ種別の操作が含まれるか判定
-    pub fn has_operation(&self, probe: &FilterOperation) -> bool {
-        let target = std::mem::discriminant(probe);
-        self.operations
-            .iter()
-            .any(|op| std::mem::discriminant(op) == target)
+    pub fn has_operation(&self, kind: FilterKind) -> bool {
+        self.operations.iter().any(|op| op.kind() == kind)
     }
 
     /// フィルタ操作を追加する
@@ -82,24 +83,15 @@ impl PersistentFilter {
 
     /// 指定バリアントと同じ種別の操作を全て除去する
     /// 除去した場合trueを返す
-    pub fn remove_operation_type(&mut self, probe: &FilterOperation) -> bool {
-        let target = std::mem::discriminant(probe);
+    pub fn remove_operation_type(&mut self, kind: FilterKind) -> bool {
         let before = self.operations.len();
-        self.operations
-            .retain(|op| std::mem::discriminant(op) != target);
+        self.operations.retain(|op| op.kind() != kind);
         if self.operations.len() == before {
             false
         } else {
             self.generation += 1;
             true
         }
-    }
-
-    /// 全操作をクリアする
-    #[allow(dead_code)] // 将来のUI操作で使用予定
-    pub fn clear_operations(&mut self) {
-        self.operations.clear();
-        self.generation += 1;
     }
 
     /// フィルタが有効な場合、画像にフィルタを適用して返す
@@ -116,7 +108,7 @@ impl PersistentFilter {
         };
 
         for op in &self.operations {
-            result = apply_operation(&result, op);
+            result = apply_operation(&result, op, None);
         }
 
         Some(result)
@@ -124,48 +116,51 @@ impl PersistentFilter {
 }
 
 /// 単一のフィルタ操作を適用する
-fn apply_operation(image: &DecodedImage, op: &FilterOperation) -> DecodedImage {
+pub(crate) fn apply_operation(
+    image: &DecodedImage,
+    op: &FilterOperation,
+    selection: Option<&PixelRect>,
+) -> DecodedImage {
     match op {
         FilterOperation::FlipHorizontal => filter::transform::flip_horizontal(image),
         FilterOperation::FlipVertical => filter::transform::flip_vertical(image),
         FilterOperation::Rotate180 => filter::transform::rotate_180(image),
         FilterOperation::Rotate90CW => filter::transform::rotate_90(image),
         FilterOperation::Rotate90CCW => filter::transform::rotate_270(image),
-        FilterOperation::Levels { low, high } => {
-            filter::brightness::levels(image, None, *low, *high)
+        FilterOperation::Fill { red, green, blue } => {
+            filter::color::fill(image, selection, *red, *green, *blue)
         }
-        FilterOperation::Gamma { value } => filter::brightness::gamma(image, None, *value),
+        FilterOperation::Levels { low, high } => {
+            filter::brightness::levels(image, selection, *low, *high)
+        }
+        FilterOperation::Gamma { value } => filter::brightness::gamma(image, selection, *value),
         FilterOperation::BrightnessContrast {
             brightness,
             contrast,
-        } => filter::brightness::brightness_contrast(image, None, *brightness, *contrast),
-        FilterOperation::GrayscaleSimple => filter::color::grayscale_simple(image, None),
-        FilterOperation::GrayscaleStrict => filter::color::grayscale_strict(image, None),
-        FilterOperation::Blur => filter::blur::blur(image, None),
-        FilterOperation::BlurStrong => filter::blur::blur_strong(image, None),
-        FilterOperation::Sharpen => filter::sharpen::sharpen(image, None),
-        FilterOperation::SharpenStrong => filter::sharpen::sharpen_strong(image, None),
+        } => filter::brightness::brightness_contrast(image, selection, *brightness, *contrast),
+        FilterOperation::GrayscaleSimple => filter::color::grayscale_simple(image, selection),
+        FilterOperation::GrayscaleStrict => filter::color::grayscale_strict(image, selection),
+        FilterOperation::Blur => filter::blur::blur(image, selection),
+        FilterOperation::BlurStrong => filter::blur::blur_strong(image, selection),
+        FilterOperation::Sharpen => filter::sharpen::sharpen(image, selection),
+        FilterOperation::SharpenStrong => filter::sharpen::sharpen_strong(image, selection),
+        FilterOperation::Mosaic { size } => filter::blur::mosaic(image, selection, *size),
         FilterOperation::GaussianBlur { radius } => {
-            filter::blur::gaussian_blur(image, None, *radius)
+            filter::blur::gaussian_blur(image, selection, *radius)
         }
-        FilterOperation::UnsharpMask { radius } => filter::blur::unsharp_mask(image, None, *radius),
-        FilterOperation::MedianFilter => filter::blur::median_filter(image, None),
-        FilterOperation::InvertColors => filter::color::invert_colors(image, None),
-        FilterOperation::ApplyAlpha => filter::color::apply_alpha(image, None),
+        FilterOperation::UnsharpMask { radius } => {
+            filter::blur::unsharp_mask(image, selection, *radius)
+        }
+        FilterOperation::MedianFilter => filter::blur::median_filter(image, selection),
+        FilterOperation::InvertColors => filter::color::invert_colors(image, selection),
+        FilterOperation::ApplyAlpha => filter::color::apply_alpha(image, selection),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn test_image() -> DecodedImage {
-        DecodedImage {
-            data: vec![100, 150, 200, 255],
-            width: 1,
-            height: 1,
-        }
-    }
+    use crate::test_helpers::persistent_filter_image as test_image;
 
     #[test]
     fn disabled_returns_none() {
@@ -202,17 +197,19 @@ mod tests {
     }
 
     #[test]
-    fn clear_operations_empties_list_and_increments_generation() {
+    fn removing_a_kind_removes_all_its_parameters_and_preserves_other_operations() {
         let mut pf = PersistentFilter::new();
         pf.toggle_enabled(); // gen=1
-        pf.add_operation(FilterOperation::Blur); // gen=2
-        pf.add_operation(FilterOperation::Sharpen); // gen=3
-        assert_eq!(pf.operations().len(), 2);
-
-        pf.clear_operations(); // gen=4
-        assert!(pf.operations().is_empty());
-        // 有効だが操作なし → None
-        assert!(pf.apply(&test_image()).is_none());
+        pf.add_operation(FilterOperation::Gamma { value: 1.0 });
+        pf.add_operation(FilterOperation::Gamma { value: 2.0 });
+        pf.add_operation(FilterOperation::InvertColors);
+        assert!(pf.has_operation(FilterKind::Gamma));
+        assert!(pf.remove_operation_type(FilterKind::Gamma));
+        assert!(!pf.has_operation(FilterKind::Gamma));
+        assert_eq!(pf.operations().len(), 1);
+        assert!(!pf.remove_operation_type(FilterKind::Gamma));
+        let result = pf.apply(&test_image()).unwrap();
+        assert_eq!(result.data[0], 155);
     }
 
     #[test]

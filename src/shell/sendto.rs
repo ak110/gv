@@ -24,7 +24,7 @@ pub fn register() -> Result<()> {
         let _ = std::fs::remove_file(&old_lnk);
     }
     let lnk_path = sendto_dir.join(LNK_NAME);
-    let exe = std::env::current_exe().context("exe パス取得失敗")?;
+    let exe = crate::paths::exe_path()?;
 
     unsafe {
         // IShellLink COMオブジェクト作成

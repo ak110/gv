@@ -1,65 +1,67 @@
 #[cfg(test)]
-mod benchmark;
+pub(crate) mod benchmark;
+mod bookmark;
+mod dispatch;
+mod display;
+pub(crate) use dispatch::WindowState;
+mod export;
 mod file_ops;
 mod image_edit;
+mod info;
+mod mark;
+mod mouse;
 mod navigation;
+mod open;
 mod panel;
 mod slideshow;
 mod system;
+#[cfg(test)]
+pub(crate) mod test_support;
+#[cfg(test)]
+mod tests;
 
 use std::collections::HashSet;
-use std::os::windows::process::CommandExt as _;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use crossbeam_channel::Receiver;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::{InvalidateRect, UpdateWindow, ValidateRect};
 use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
 use windows::Win32::UI::Controls::*;
-use windows::Win32::UI::Input::KeyboardAndMouse::GetKeyState;
-use windows::Win32::UI::Shell::{DragAcceptFiles, DragFinish, DragQueryFileW, HDROP};
+use windows::Win32::UI::Shell::{DragAcceptFiles, HDROP};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
+use crate::action::Action;
 use crate::archive::ArchiveManager;
 use crate::config::Config;
 use crate::document::{Document, DocumentEvent};
 use crate::extension_registry::ExtensionRegistry;
-use crate::image::{DecodedImage, DecoderChain, StandardDecoder};
-use crate::persistent_filter::FilterOperation;
+use crate::image::{DecoderChain, StandardDecoder};
 use crate::render::D2DRenderer;
 use crate::render::d2d_renderer::DrawOutcome;
-use crate::render::layout::DisplayMode;
-use crate::selection::{HandleKind, HitTestResult, PixelRect, Selection};
+use crate::selection::Selection;
 use crate::susie::SusieManager;
 use crate::ui::cursor_hider::{CursorHider, TIMER_ID_CURSOR_HIDE};
 use crate::ui::file_list_panel::FileListPanel;
 use crate::ui::font::MonospaceFont;
 use crate::ui::fullscreen::FullscreenState;
-use crate::ui::info_dialog;
-use crate::ui::key_config::{
-    Action, InputChord, KeyConfig, Modifiers, MouseButton, WheelDirection,
-};
+use crate::ui::key_config::{InputChord, KeyConfig, MouseButton, WheelDirection};
 use crate::ui::menu;
 use crate::ui::window;
 
 /// DocumentEventをUIスレッドに通知するためのカスタムメッセージ
 const WM_DOCUMENT_EVENT: u32 = WM_APP + 1;
 
-/// スライドショー用タイマーID
-const TIMER_ID_SLIDESHOW: usize = 2;
+use export::ExportFormat;
+use slideshow::TIMER_ID_SLIDESHOW;
 
 /// 描画資源の失効から自動で再描画を要求する連続回数の上限
 ///
 /// 再作成した直後に再び失効する環境で、再描画要求が無制限に続くことを防ぐ。
 /// 上限到達後は利用者の次の操作による再描画で再試行する。
 const MAX_RENDER_RECOVERY_ATTEMPTS: u32 = 3;
-
-/// 修飾キーVKコード
-const VK_CONTROL: i32 = 0x11;
-const VK_SHIFT: i32 = 0x10;
-const VK_MENU: i32 = 0x12; // Alt
 
 /// メインウィンドウ (View 層)
 ///
@@ -71,6 +73,7 @@ const VK_MENU: i32 = 0x12; // Alt
 /// - エラーは `show_error_title` でタイトルバーに表示する (詳細は AGENTS.md エラー方針)
 pub(crate) struct AppWindow {
     pub(crate) hwnd: HWND,
+    effects: std::cell::RefCell<std::collections::VecDeque<dispatch::UiEffect>>,
     pub(crate) document: Document,
     pub(crate) event_receiver: Receiver<DocumentEvent>,
     pub(crate) renderer: D2DRenderer,
@@ -79,7 +82,8 @@ pub(crate) struct AppWindow {
     pub(crate) always_on_top: bool,
     pub(crate) keep_titlebar_in_fullscreen: bool,
     pub(crate) key_config: KeyConfig,
-    // メニューバー
+    pub(crate) susie_plugin_dir: Option<PathBuf>,
+    // メニューバー。menu_visibleはフルスクリーン解除後の表示希望を保持する。
     pub(crate) menu: HMENU,
     pub(crate) menu_visible: bool,
     // ファイルリストパネル
@@ -116,7 +120,7 @@ pub(crate) struct AppWindow {
 
 impl AppWindow {
     /// AppWindowを作成しウィンドウを表示する
-    pub fn create(config: Config, initial_files: &[PathBuf]) -> Result<Box<Self>> {
+    pub fn create(config: Config, initial_files: &[PathBuf]) -> Result<Box<WindowState>> {
         Self::create_with_visibility(config, initial_files, true)
     }
 
@@ -124,7 +128,7 @@ impl AppWindow {
     ///
     /// 描画・イベント処理・タイトルバーはウィンドウを表示しなくても実際のWin32/Direct2Dで動作する。
     #[cfg(test)]
-    pub(crate) fn create_hidden_for_test() -> Box<Self> {
+    pub(crate) fn create_hidden_for_test() -> Box<WindowState> {
         Self::create_with_visibility(Config::default(), &[], false)
             .expect("hidden AppWindow creation failed")
     }
@@ -133,7 +137,7 @@ impl AppWindow {
         config: Config,
         initial_files: &[PathBuf],
         visible: bool,
-    ) -> Result<Box<Self>> {
+    ) -> Result<Box<WindowState>> {
         let class_name = windows::core::w!("gv_main");
 
         // アイコンをリソースからロード (リソースID 1)
@@ -176,9 +180,7 @@ impl AppWindow {
 
         // 拡張子レジストリ + Susieプラグイン + デコーダチェーン + アーカイブマネージャの初期化
         let mut registry = ExtensionRegistry::new();
-        let spi_dir = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.join(&config.susie.plugin_dir)));
+        let spi_dir = crate::paths::susie_plugin_dir(&config.susie.plugin_dir).ok();
         let susie_manager = spi_dir
             .as_deref()
             .map(SusieManager::discover)
@@ -214,13 +216,11 @@ impl AppWindow {
         let base_image_size = config.prefetch.base_image_size();
 
         // キーバインド設定の読み込み
-        let key_config_path = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.join("ぐらびゅ.keys.toml")));
+        let key_config_path = crate::paths::key_config_path().ok();
         let key_config = KeyConfig::load(key_config_path.as_deref());
 
         // メニューバー構築 (初期状態は非表示)
-        let menu_handle = menu::build_menu_bar();
+        let menu_handle = menu::build_menu_bar(&key_config);
 
         // ファイルリストパネル作成 (初期状態は非表示)
         let file_list_panel = FileListPanel::create(hwnd);
@@ -236,8 +236,9 @@ impl AppWindow {
             );
         }
 
-        let mut app = Box::new(Self {
+        let app = Self {
             hwnd,
+            effects: std::cell::RefCell::default(),
             document,
             event_receiver: receiver,
             renderer,
@@ -246,6 +247,7 @@ impl AppWindow {
             always_on_top,
             keep_titlebar_in_fullscreen,
             key_config,
+            susie_plugin_dir: spi_dir,
             menu: menu_handle,
             menu_visible: true,
             file_list_panel,
@@ -263,67 +265,70 @@ impl AppWindow {
             pasted_images: file_ops::PastedImageFiles::new(std::env::temp_dir()),
             #[cfg(test)]
             redraw_request_count: std::cell::Cell::new(0),
-        });
+        };
+        let state = Box::new(WindowState::new(app));
 
         // GWLP_USERDATAにポインタを格納 (WndProcからアクセスするため)
-        window::set_window_data(hwnd, std::ptr::from_mut(&mut *app));
-
-        // 先読みエンジン起動
-        // 通知コールバック: ワーカースレッドからPostMessageWでUIスレッドを起こす
-        let hwnd_raw = hwnd.0 as isize;
-        let notify: std::sync::Arc<dyn Fn() + Send + Sync> = std::sync::Arc::new(move || unsafe {
-            let _ = PostMessageW(
-                Some(HWND(hwnd_raw as *mut _)),
-                WM_DOCUMENT_EVENT,
-                WPARAM(0),
-                LPARAM(0),
-            );
-        });
-        let cache_budget = Self::get_cache_budget();
-        if let Err(e) = app
-            .document
-            .start_prefetch(notify, cache_budget, base_image_size)
-        {
-            app.show_error_title(&format!("先読みエンジンの起動に失敗しました: {e}"));
-        }
-
-        // 設定でalways_on_topが有効な場合、ウィンドウに反映
-        if always_on_top {
-            unsafe {
-                let _ = SetWindowPos(
-                    hwnd,
-                    Some(HWND_TOPMOST),
-                    0,
-                    0,
-                    0,
-                    0,
-                    SWP_NOMOVE | SWP_NOSIZE,
-                );
+        window::set_window_data(hwnd, std::ptr::from_ref(&*state).cast_mut());
+        state.with_app(|app| {
+            // 先読みエンジン起動
+            // 通知コールバック: ワーカースレッドからPostMessageWでUIスレッドを起こす
+            let hwnd_raw = hwnd.0 as isize;
+            let notify: std::sync::Arc<dyn Fn() + Send + Sync> =
+                std::sync::Arc::new(move || unsafe {
+                    let _ = PostMessageW(
+                        Some(HWND(hwnd_raw as *mut _)),
+                        WM_DOCUMENT_EVENT,
+                        WPARAM(0),
+                        LPARAM(0),
+                    );
+                });
+            let cache_budget = Self::get_cache_budget();
+            if let Err(e) = app
+                .document
+                .start_prefetch(notify, cache_budget, base_image_size)
+            {
+                app.show_error_title(&format!("先読みエンジンの起動に失敗しました: {e:#}"));
             }
-        }
 
-        // 初期ファイルがあれば開く
-        if initial_files.is_empty() {
-            // ファイル未指定起動: バージョン入りタイトルを反映
-            app.update_title();
-        } else {
-            let result = if initial_files.len() > 1 {
-                // 複数パス: フォルダ・コンテナ・画像・ブックマークの混在をフラットに展開
-                app.document.open_multiple(initial_files)
-            } else if initial_files[0].is_dir() {
-                app.document.open_folder(&initial_files[0])
+            // 設定でalways_on_topが有効な場合、ウィンドウに反映
+            if always_on_top {
+                unsafe {
+                    let _ = SetWindowPos(
+                        hwnd,
+                        Some(HWND_TOPMOST),
+                        0,
+                        0,
+                        0,
+                        0,
+                        SWP_NOMOVE | SWP_NOSIZE,
+                    );
+                }
+            }
+
+            // 初期ファイルがあれば開く
+            if initial_files.is_empty() {
+                // ファイル未指定起動: バージョン入りタイトルを反映
+                app.update_title();
             } else {
-                app.document.open(&initial_files[0])
-            };
-            if let Err(e) = result {
-                app.show_error_title(&format!("ファイルを開けませんでした: {e}"));
+                let result = if initial_files.len() > 1 {
+                    // 複数パス: フォルダ・コンテナ・画像・ブックマークの混在をフラットに展開
+                    app.document.open_multiple(initial_files)
+                } else if initial_files[0].is_dir() {
+                    app.document.open_folder(&initial_files[0])
+                } else {
+                    app.document.open(&initial_files[0])
+                };
+                if let Err(e) = result {
+                    app.show_error_title(&format!("ファイルを開けませんでした: {e:#}"));
+                }
+                app.process_document_events();
             }
-            app.process_document_events();
-        }
-
+        });
         // メニューバーをデフォルト表示
+        let menu_handle = state.borrow().menu;
         unsafe {
-            let _ = SetMenu(hwnd, Some(app.menu));
+            let _ = SetMenu(hwnd, Some(menu_handle));
         }
 
         if visible {
@@ -333,7 +338,7 @@ impl AppWindow {
             }
         }
 
-        Ok(app)
+        Ok(state)
     }
 
     /// 空きメモリの50%をキャッシュ予算として返す
@@ -402,9 +407,10 @@ impl AppWindow {
         };
 
         let wide = crate::util::to_wide(title.trim_end_matches('\0'));
-        unsafe {
-            let _ = SetWindowTextW(self.hwnd, windows::core::PCWSTR(wide.as_ptr()));
-        }
+        let hwnd = self.hwnd;
+        self.defer_ui(move || unsafe {
+            let _ = SetWindowTextW(hwnd, windows::core::PCWSTR(wide.as_ptr()));
+        });
     }
 
     /// タイトルバーにエラーメッセージを表示する
@@ -463,17 +469,6 @@ impl AppWindow {
         }
     }
 
-    /// 現在の修飾キー状態を取得
-    fn current_modifiers() -> Modifiers {
-        unsafe {
-            Modifiers {
-                ctrl: GetKeyState(VK_CONTROL) < 0,
-                shift: GetKeyState(VK_SHIFT) < 0,
-                alt: GetKeyState(VK_MENU) < 0,
-            }
-        }
-    }
-
     /// 再描画をリクエスト
     fn invalidate(&self) {
         #[cfg(test)]
@@ -484,264 +479,187 @@ impl AppWindow {
         }
     }
 
-    /// 現在の画像サイズを返す (zoom操作用)
-    fn current_image_size(&self) -> Option<(u32, u32)> {
-        self.document
-            .current_image()
-            .map(|img| (img.width, img.height))
-    }
-
-    /// クライアント領域のサイズを返す
-    fn client_size(&self) -> (f32, f32) {
-        let (w, h) = window::get_client_size(self.hwnd);
-        (w as f32, h as f32)
-    }
-
-    /// 常に手前に表示をトグル
-    fn toggle_always_on_top(&mut self) {
-        self.always_on_top = !self.always_on_top;
-        // フルスクリーン中は復帰時に反映されるので今は何もしない
-        if !self.fullscreen.is_fullscreen() {
-            let z_order = if self.always_on_top {
-                HWND_TOPMOST
-            } else {
-                HWND_NOTOPMOST
-            };
-            unsafe {
-                let _ = SetWindowPos(
-                    self.hwnd,
-                    Some(z_order),
-                    0,
-                    0,
-                    0,
-                    0,
-                    SWP_NOMOVE | SWP_NOSIZE,
-                );
-            }
-        }
-    }
-
-    /// フルスクリーンをトグル
-    fn toggle_fullscreen(&mut self) {
-        let entering = !self.fullscreen.is_fullscreen();
-
-        // フルスクリーン開始前にパネル表示状態を保存
-        let panel_was_visible = self.file_list_panel.is_visible();
-
-        self.fullscreen.toggle(
-            self.hwnd,
-            self.always_on_top,
-            self.keep_titlebar_in_fullscreen,
-        );
-
-        if entering {
-            // フルスクリーン開始: メニュー・パネルを非表示 (フラグは保持)
-            unsafe {
-                let _ = SetMenu(self.hwnd, None);
-            }
-            if panel_was_visible {
-                self.file_list_panel.hide_preserve_state();
-            }
-        } else {
-            // フルスクリーン解除: カーソル復帰、メニュー・パネルを復元
-            self.cursor_hider.force_show(self.hwnd);
-            if self.menu_visible {
-                unsafe {
-                    let _ = SetMenu(self.hwnd, Some(self.menu));
-                }
-            }
-            if self.file_list_panel.is_visible() {
-                self.file_list_panel.show();
-            }
-        }
-    }
-
-    /// 最大化トグル (左ダブルクリック)
-    fn toggle_maximize(&self) {
-        unsafe {
-            let mut placement = WINDOWPLACEMENT {
-                length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
-                ..Default::default()
-            };
-            let _ = GetWindowPlacement(self.hwnd, std::ptr::from_mut(&mut placement));
-            if placement.showCmd == SW_MAXIMIZE.0 as u32 {
-                let _ = ShowWindow(self.hwnd, SW_RESTORE);
-            } else {
-                let _ = ShowWindow(self.hwnd, SW_MAXIMIZE);
-            }
-        }
-    }
-
     // --- WndProc ---
 
     extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-        if let Some(app) = window::get_window_data::<Self>(hwnd) {
-            match msg {
-                WM_PAINT => {
-                    app.on_paint();
-                    return LRESULT(0);
-                }
-                WM_SIZE => {
-                    let mut width = (lparam.0 & 0xFFFF) as u32;
-                    let mut height = ((lparam.0 >> 16) & 0xFFFF) as u32;
-                    // パネルのtoggleからSendMessageW (WM_SIZE, 0, 0) で呼ばれる場合
-                    if width == 0 && height == 0 {
-                        let (w, h) = window::get_client_size(hwnd);
-                        width = w;
-                        height = h;
-                    }
-                    app.on_size(width, height);
-                    return LRESULT(0);
-                }
-                WM_KEYDOWN | WM_SYSKEYDOWN => {
-                    // Escキー: ドラッグ操作中は選択をキャンセル (key_configより優先)
-                    if wparam.0 as u16 == 0x1B && app.selection.is_dragging() {
-                        app.selection.deselect();
-                        unsafe {
-                            windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture()
-                                .unwrap_or_default();
-                        }
-                        app.invalidate();
-                        app.update_title();
-                        return LRESULT(0);
-                    }
-
-                    let chord = InputChord::Key {
-                        vk: wparam.0 as u16,
-                        modifiers: Self::current_modifiers(),
-                    };
-                    if let Some(action) = app.key_config.lookup(chord) {
-                        app.execute_action(action);
-                        return LRESULT(0);
-                    }
-                    // SYSKEYDOWNは未処理時にDefWindowProcへ渡す必要あり
-                    if msg == WM_SYSKEYDOWN {
-                        // fall through to DefWindowProcW
-                    } else {
-                        return LRESULT(0);
-                    }
-                }
-                WM_MOUSEWHEEL => {
-                    let delta = ((wparam.0 >> 16) & 0xFFFF) as i16;
-                    let direction = if delta > 0 {
-                        WheelDirection::Up
-                    } else {
-                        WheelDirection::Down
-                    };
-                    let chord = InputChord::Wheel {
-                        direction,
-                        modifiers: Self::current_modifiers(),
-                    };
-                    if let Some(action) = app.key_config.lookup(chord) {
-                        app.execute_action(action);
-                        // 同期再描画でフレームスキップ防止
-                        unsafe {
-                            let _ = UpdateWindow(app.hwnd);
-                        }
-                    }
-                    return LRESULT(0);
-                }
-                WM_LBUTTONDOWN => {
-                    app.on_lbutton_down(lparam);
-                    return LRESULT(0);
-                }
-                WM_LBUTTONUP => {
-                    app.on_lbutton_up();
-                    return LRESULT(0);
-                }
-                WM_LBUTTONDBLCLK => {
-                    let chord = InputChord::Mouse {
-                        button: MouseButton::LeftDoubleClick,
-                    };
-                    if let Some(action) = app.key_config.lookup(chord) {
-                        app.execute_action(action);
-                    }
-                    return LRESULT(0);
-                }
-                WM_MBUTTONUP => {
-                    let chord = InputChord::Mouse {
-                        button: MouseButton::MiddleClick,
-                    };
-                    if let Some(action) = app.key_config.lookup(chord) {
-                        app.execute_action(action);
-                    }
-                    return LRESULT(0);
-                }
-                WM_MOUSEMOVE => {
-                    if app.fullscreen.is_fullscreen() {
-                        app.cursor_hider.on_mouse_move(hwnd);
-                    }
-                    app.on_mouse_move(lparam);
-                    return LRESULT(0);
-                }
-                WM_SETCURSOR => {
-                    // 選択状態に応じてカーソルを変更
-                    if app.on_set_cursor() {
-                        return LRESULT(1);
-                    }
-                }
-                WM_TIMER => {
-                    if wparam.0 == TIMER_ID_CURSOR_HIDE {
-                        app.cursor_hider.on_timer(hwnd);
-                        return LRESULT(0);
-                    }
-                    if wparam.0 == TIMER_ID_SLIDESHOW {
-                        app.on_slideshow_timer();
-                        return LRESULT(0);
-                    }
-                }
-                WM_INITMENUPOPUP => {
-                    // wParam = 開こうとしているポップアップメニューのHMENU
-                    let popup = HMENU(wparam.0 as *mut _);
-                    app.update_menu_checks(popup);
-                }
-                WM_COMMAND => {
-                    let notify_code = ((wparam.0 as u32) >> 16) & 0xFFFF;
-                    let control_id = (wparam.0 as u32) & 0xFFFF;
-                    let control_hwnd = HWND(lparam.0 as *mut _);
-
-                    // メニュー項目 (notify_code == 0 かつコントロールなし)
-                    if notify_code == 0 && control_hwnd.0.is_null() {
-                        if let Some(action) = menu::menu_id_to_action(control_id as u16) {
-                            app.execute_action(action);
-                        }
-                        return LRESULT(0);
-                    }
-
-                    return LRESULT(0);
-                }
-                WM_NOTIFY => {
-                    // SAFETY: WM_NOTIFY の lparam は OS が有効な NMHDR へのポインタを保証する
-                    let nmhdr = unsafe { &*(lparam.0 as *const NMHDR) };
-                    if nmhdr.hwndFrom == app.file_list_panel.listview_hwnd() {
-                        return app.handle_file_list_notify(nmhdr, lparam);
-                    }
-                    return LRESULT(0);
-                }
-                WM_DROPFILES => {
-                    app.on_drop_files(HDROP(wparam.0 as *mut _));
-                    return LRESULT(0);
-                }
-                WM_ERASEBKGND => {
-                    // Direct2Dが背景を描画するのでちらつき防止
-                    return LRESULT(1);
-                }
-                WM_DESTROY => {
-                    // main はメッセージループ後に process::exit するため Drop に頼らずここで回収する
-                    app.pasted_images.remove_all();
-                    // ポインタをクリアしてダングリング参照を防止
-                    window::set_window_data::<Self>(hwnd, std::ptr::null_mut());
-                    unsafe { PostQuitMessage(0) };
-                    return LRESULT(0);
-                }
-                msg if msg == WM_DOCUMENT_EVENT => {
-                    app.process_document_events();
-                    return LRESULT(0);
-                }
-                _ => {}
-            }
+        // SAFETY: create_with_visibilityが登録したBox<WindowState>は、メッセージループと
+        // 同期コールバックの終了まで生存する。WM_DESTROYで登録を解除する。
+        // 共有参照だけを生成し、AppWindowの排他的アクセスはRefCellが管理する。
+        let state = unsafe {
+            crate::ui::dialog::get_window_data::<WindowState>(hwnd).map(|ptr| ptr.as_ref())
+        };
+        if let Some(state) = state
+            && let Some(result) = state.dispatch(msg, wparam, lparam)
+        {
+            return result;
         }
         unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+    }
+
+    fn handle_message(
+        &mut self,
+        hwnd: HWND,
+        msg: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> Option<LRESULT> {
+        let app = self;
+        match msg {
+            WM_PAINT => {
+                app.on_paint();
+                return Some(LRESULT(0));
+            }
+            WM_SIZE => {
+                let width = (lparam.0 & 0xFFFF) as u32;
+                let height = ((lparam.0 >> 16) & 0xFFFF) as u32;
+                app.on_size(width, height);
+                return Some(LRESULT(0));
+            }
+            WM_KEYDOWN | WM_SYSKEYDOWN => {
+                // Escキー: ドラッグ操作中は選択をキャンセル (key_configより優先)
+                if wparam.0 as u16 == 0x1B && app.selection.is_dragging() {
+                    app.selection.deselect();
+                    unsafe {
+                        windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture()
+                            .unwrap_or_default();
+                    }
+                    app.invalidate();
+                    app.update_title();
+                    return Some(LRESULT(0));
+                }
+
+                let chord = InputChord::Key {
+                    vk: wparam.0 as u16,
+                    modifiers: Self::current_modifiers(),
+                };
+                if let Some(action) = app.key_config.lookup(chord) {
+                    app.execute_action(action);
+                    return Some(LRESULT(0));
+                }
+                // SYSKEYDOWNは未処理時にDefWindowProcへ渡す必要あり
+                if msg == WM_SYSKEYDOWN {
+                    // fall through to DefWindowProcW
+                } else {
+                    return Some(LRESULT(0));
+                }
+            }
+            WM_MOUSEWHEEL => {
+                let delta = ((wparam.0 >> 16) & 0xFFFF) as i16;
+                let direction = if delta > 0 {
+                    WheelDirection::Up
+                } else {
+                    WheelDirection::Down
+                };
+                let chord = InputChord::Wheel {
+                    direction,
+                    modifiers: Self::current_modifiers(),
+                };
+                if let Some(action) = app.key_config.lookup(chord) {
+                    app.execute_action(action);
+                    // 同期再描画でフレームスキップ防止
+                    let hwnd = app.hwnd;
+                    app.defer_ui(move || unsafe {
+                        let _ = UpdateWindow(hwnd);
+                    });
+                }
+                return Some(LRESULT(0));
+            }
+            WM_LBUTTONDOWN => {
+                app.on_lbutton_down(lparam);
+                return Some(LRESULT(0));
+            }
+            WM_LBUTTONUP => {
+                app.on_lbutton_up();
+                return Some(LRESULT(0));
+            }
+            WM_LBUTTONDBLCLK => {
+                let chord = InputChord::Mouse {
+                    button: MouseButton::LeftDoubleClick,
+                };
+                if let Some(action) = app.key_config.lookup(chord) {
+                    app.execute_action(action);
+                }
+                return Some(LRESULT(0));
+            }
+            WM_MBUTTONUP => {
+                let chord = InputChord::Mouse {
+                    button: MouseButton::MiddleClick,
+                };
+                if let Some(action) = app.key_config.lookup(chord) {
+                    app.execute_action(action);
+                }
+                return Some(LRESULT(0));
+            }
+            WM_MOUSEMOVE => {
+                if app.fullscreen.is_fullscreen() {
+                    app.cursor_hider.on_mouse_move(hwnd);
+                }
+                app.on_mouse_move(lparam);
+                return Some(LRESULT(0));
+            }
+            WM_SETCURSOR => {
+                // 選択状態に応じてカーソルを変更
+                if app.on_set_cursor() {
+                    return Some(LRESULT(1));
+                }
+            }
+            WM_TIMER => {
+                if wparam.0 == TIMER_ID_CURSOR_HIDE {
+                    app.cursor_hider.on_timer(hwnd);
+                    return Some(LRESULT(0));
+                }
+                if wparam.0 == TIMER_ID_SLIDESHOW {
+                    app.on_slideshow_timer();
+                    return Some(LRESULT(0));
+                }
+            }
+            WM_INITMENUPOPUP => {
+                // wParam = 開こうとしているポップアップメニューのHMENU
+                let popup = HMENU(wparam.0 as *mut _);
+                app.update_menu_checks(popup);
+            }
+            WM_COMMAND => {
+                let notify_code = ((wparam.0 as u32) >> 16) & 0xFFFF;
+                let control_id = (wparam.0 as u32) & 0xFFFF;
+                let control_hwnd = HWND(lparam.0 as *mut _);
+
+                // メニュー項目 (notify_code == 0 かつコントロールなし)
+                if notify_code == 0 && control_hwnd.0.is_null() {
+                    if let Some(action) = menu::menu_id_to_action(control_id as u16) {
+                        app.execute_action(action);
+                    }
+                    return Some(LRESULT(0));
+                }
+
+                return Some(LRESULT(0));
+            }
+            WM_NOTIFY => {
+                // SAFETY: WM_NOTIFY の lparam は OS が有効な NMHDR へのポインタを保証する
+                let (source, code) = unsafe {
+                    let header = &*(lparam.0 as *const NMHDR);
+                    (header.hwndFrom, header.code)
+                };
+                if source == app.file_list_panel.listview_hwnd() {
+                    return Some(app.handle_file_list_notify(code, lparam));
+                }
+                return Some(LRESULT(0));
+            }
+            WM_DROPFILES => {
+                app.on_drop_files(HDROP(wparam.0 as *mut _));
+                return Some(LRESULT(0));
+            }
+            WM_ERASEBKGND => {
+                // Direct2Dが背景を描画するのでちらつき防止
+                return Some(LRESULT(1));
+            }
+            msg if msg == WM_DOCUMENT_EVENT => {
+                app.process_document_events();
+                return Some(LRESULT(0));
+            }
+            _ => {}
+        }
+
+        None
     }
 
     fn on_paint(&mut self) {
@@ -789,11 +707,12 @@ impl AppWindow {
         }
     }
 
-    fn on_size(&mut self, width: u32, height: u32) {
+    pub(super) fn on_size(&mut self, width: u32, height: u32) {
         if width > 0 && height > 0 {
             // ファイルリストパネルのリサイズ
             let panel_width = self.file_list_panel.panel_width() as u32;
-            self.file_list_panel.resize(height as i32);
+            let panel = self.file_list_panel.clone();
+            self.defer_ui(move || panel.resize(height as i32));
 
             // D2Dレンダーターゲットは全体サイズでリサイズ
             if let Err(e) = self.renderer.resize(width, height) {
@@ -804,264 +723,6 @@ impl AppWindow {
             self.renderer.set_draw_offset(panel_width as f32);
 
             self.invalidate();
-        }
-    }
-
-    /// パラメータなしフィルタの共通パターン (選択範囲対応)
-    fn apply_simple_filter(&mut self, f: fn(&DecodedImage, Option<&PixelRect>) -> DecodedImage) {
-        if let Some(img) = self.document.current_image() {
-            let sel = self.selection.current_rect();
-            let result = f(img, sel.as_ref());
-            self.document.apply_edit(result);
-            self.process_document_events();
-        }
-    }
-
-    /// 画像全体に適用する変形操作の共通パターン (選択解除付き)
-    fn apply_transform(&mut self, f: fn(&DecodedImage) -> DecodedImage) {
-        if let Some(img) = self.document.current_image() {
-            let result = f(img);
-            self.selection.deselect();
-            self.document.apply_edit(result);
-            self.process_document_events();
-        }
-    }
-
-    /// 永続フィルタのトグル (既存なら削除、なければ追加)
-    fn toggle_persistent_filter(&mut self, op: crate::persistent_filter::FilterOperation) {
-        let pf = self.document.persistent_filter_mut();
-        if !pf.remove_operation_type(&op) {
-            pf.add_operation(op);
-        }
-        self.document.on_persistent_filter_changed();
-        self.process_document_events();
-    }
-
-    /// パラメータ付き永続フィルタのトグル (既存なら削除してtrue、なければfalse)
-    fn remove_persistent_filter_if_exists(
-        &mut self,
-        probe: &crate::persistent_filter::FilterOperation,
-    ) -> bool {
-        let pf = self.document.persistent_filter_mut();
-        if pf.remove_operation_type(probe) {
-            self.document.on_persistent_filter_changed();
-            self.process_document_events();
-            true
-        } else {
-            false
-        }
-    }
-
-    // === アクションハンドラ (execute_action から呼び出される個別メソッド) ===
-
-    // マーク状態の変更は DocumentEvent を発行せず、現在位置も動かさないため、
-    // 以下の各アクションはタイトルバーとファイルリスト表示を明示的に更新する
-    // (update_title の呼び出しを除くと、タイトルバーのマーク表示が実状態から乖離する)。
-    fn action_mark_set(&mut self) {
-        self.document.mark_current();
-        self.update_title();
-        if self.file_list_panel.is_visible()
-            && let Some(idx) = self.document.file_list().current_index()
-        {
-            self.file_list_panel.update_item(idx);
-        }
-    }
-
-    fn action_mark_unset(&mut self) {
-        self.document.unmark_current();
-        self.update_title();
-        if self.file_list_panel.is_visible()
-            && let Some(idx) = self.document.file_list().current_index()
-        {
-            self.file_list_panel.update_item(idx);
-        }
-    }
-
-    fn action_mark_invert_all(&mut self) {
-        self.document.invert_all_marks();
-        self.update_title();
-        self.sync_file_list_panel();
-    }
-
-    fn action_mark_invert_to_here(&mut self) {
-        self.document.invert_marks_to_here();
-        self.update_title();
-        self.sync_file_list_panel();
-    }
-
-    fn action_open_file(&mut self) {
-        if !self.guard_unsaved_edit() {
-            return;
-        }
-        self.selection.deselect();
-        let initial_dir = self
-            .document
-            .current_source()
-            .and_then(|s| s.parent_dir())
-            .map(Path::to_path_buf);
-        self.prepare_modal_dialog();
-        let dialog_result = crate::file_ops::open_file_dialog(self.hwnd, initial_dir.as_deref());
-        self.finish_modal_dialog();
-        let Some(path) = self.take_success("ファイル選択ダイアログの表示", dialog_result)
-        else {
-            return;
-        };
-        match self.document.open(&path) {
-            Ok(()) => self.file_operation_directory.reset(),
-            Err(e) => self.show_error_title(&format!("ファイルを開けませんでした: {e}")),
-        }
-        self.process_document_events();
-    }
-
-    fn action_open_folder(&mut self) {
-        if !self.guard_unsaved_edit() {
-            return;
-        }
-        self.selection.deselect();
-        let initial_dir = self
-            .document
-            .current_source()
-            .and_then(|s| s.parent_dir())
-            .map(Path::to_path_buf);
-        self.prepare_modal_dialog();
-        let dialog_result = crate::file_ops::open_folder_dialog(self.hwnd, initial_dir.as_deref());
-        self.finish_modal_dialog();
-        let Some(path) = self.take_success("フォルダ選択ダイアログの表示", dialog_result)
-        else {
-            return;
-        };
-        match self.document.open_folder(&path) {
-            Ok(()) => self.file_operation_directory.reset(),
-            Err(e) => self.show_error_title(&format!("フォルダを開けませんでした: {e}")),
-        }
-        self.process_document_events();
-    }
-
-    fn action_new_window(&mut self) {
-        // 引数なしで空のウィンドウを起動
-        let result = std::env::current_exe()
-            .context("実行ファイルのパスを取得できませんでした")
-            .and_then(|exe| {
-                std::process::Command::new(&exe)
-                    .spawn()
-                    .map(|_| ())
-                    .context("プロセスを起動できませんでした")
-            });
-        if let Err(e) = result {
-            self.show_error_title(&format!("新規ウィンドウの起動に失敗しました: {e:#}"));
-        }
-    }
-
-    fn action_close_all(&mut self) {
-        if !self.guard_unsaved_edit() {
-            return;
-        }
-        self.selection.deselect();
-        self.document.close_all();
-        self.file_operation_directory.reset();
-        self.process_document_events();
-        self.update_title();
-    }
-
-    fn open_in_explorer_select(&mut self, path: &Path) {
-        let arg = format!("/select,{}", path.display());
-        if let Err(e) = std::process::Command::new("explorer.exe")
-            .raw_arg(&arg)
-            .spawn()
-        {
-            self.show_error_title(&format!("エクスプローラの起動に失敗しました: {e}"));
-        }
-    }
-
-    fn open_in_explorer(&mut self, path: &Path) {
-        if let Err(e) = std::process::Command::new("explorer.exe").arg(path).spawn() {
-            self.show_error_title(&format!("エクスプローラの起動に失敗しました: {e}"));
-        }
-    }
-
-    fn action_open_containing_folder(&mut self) {
-        if let Some(source) = self.document.current_source() {
-            let target = match source {
-                crate::file_info::FileSource::ArchiveEntry { archive, .. } => archive.clone(),
-                crate::file_info::FileSource::PdfPage { pdf_path, .. } => pdf_path.clone(),
-                crate::file_info::FileSource::PendingContainer { container_path } => {
-                    container_path.clone()
-                }
-                crate::file_info::FileSource::File(path) => path.clone(),
-            };
-            self.open_in_explorer_select(&target);
-        }
-    }
-
-    fn action_bookmark_load(&mut self) {
-        if !self.guard_unsaved_edit() {
-            return;
-        }
-        self.selection.deselect();
-        // is_archive クロージャは旧形式 (.gvb) のパース時にのみ使われる。
-        // self.document の共有借用のみなので、後続の load_bookmark_data の可変借用と競合しない。
-        self.prepare_modal_dialog();
-        let result = {
-            let is_archive = |p: &std::path::Path| self.document.is_archive_path(p);
-            crate::bookmark::load_bookmark(self.hwnd, is_archive)
-        };
-        self.finish_modal_dialog();
-        match result {
-            Ok(Some((data, path))) => {
-                match self.document.load_bookmark_data(data) {
-                    Ok(()) => {
-                        self.file_operation_directory.reset();
-                        // 読み込み成功時のみ前回名キャッシュを更新する。
-                        // 反映後のファイルリスト先頭からコンテナ識別キーを取得し、
-                        // 選択パスのファイル名部分とペアで保持する。
-                        if let (Some(key), Some(file_name)) = (
-                            self.document
-                                .file_list()
-                                .files()
-                                .first()
-                                .and_then(|f| f.source.bookmark_container_key()),
-                            path.file_name()
-                                .and_then(|n| n.to_str())
-                                .map(str::to_string),
-                        ) {
-                            self.last_bookmark = Some((key, file_name));
-                        }
-                    }
-                    Err(e) => {
-                        self.show_error_title(&format!(
-                            "ブックマークの読み込みに失敗しました: {e}"
-                        ));
-                    }
-                }
-                self.process_document_events();
-            }
-            Ok(None) => {} // キャンセル
-            Err(e) => self.show_error_title(&format!("ブックマーク読み込み失敗: {e}")),
-        }
-    }
-
-    fn action_toggle_file_list(&mut self) {
-        self.file_list_panel.toggle();
-        // パネルが表示状態になったら全同期 (非表示中の変更を反映)
-        if self.file_list_panel.is_visible() {
-            let doc = &self.document;
-            let len = doc.file_list().len();
-            self.file_list_panel.update(len);
-            if let Some(idx) = doc.file_list().current_index() {
-                self.file_list_panel.set_selection(idx);
-            }
-            // cached_indicesも同期
-            self.cached_indices.clear();
-            for i in 0..len {
-                if self.document.is_cached(i) {
-                    self.cached_indices.insert(i);
-                }
-            }
-        }
-        // toggle内でWM_SIZEが送られてon_sizeが呼ばれる
-        // 同期再描画でちらつきを防止
-        unsafe {
-            let _ = UpdateWindow(self.hwnd);
         }
     }
 
@@ -1091,59 +752,20 @@ impl AppWindow {
             Action::NavigateLast => self.navigate_with_guard(Document::navigate_last),
 
             // --- 表示モード ---
-            Action::DisplayAutoShrink => {
-                self.renderer.layout_mut().mode = DisplayMode::AutoShrink;
-                self.invalidate();
-            }
-            Action::DisplayAutoFit => {
-                self.renderer.layout_mut().mode = DisplayMode::AutoFit;
-                self.invalidate();
-            }
-            Action::ZoomIn => {
-                if let Some((iw, ih)) = self.current_image_size() {
-                    let (ww, wh) = self.client_size();
-                    self.renderer.layout_mut().zoom_in(iw, ih, ww, wh);
-                    self.invalidate();
-                }
-            }
-            Action::ZoomOut => {
-                if let Some((iw, ih)) = self.current_image_size() {
-                    let (ww, wh) = self.client_size();
-                    self.renderer.layout_mut().zoom_out(iw, ih, ww, wh);
-                    self.invalidate();
-                }
-            }
-            Action::ZoomReset => {
-                self.renderer.layout_mut().zoom_reset();
-                self.invalidate();
-            }
-            Action::ToggleMargin => {
-                self.renderer.layout_mut().toggle_margin();
-                self.invalidate();
-            }
-            Action::CycleAlphaBackground => {
-                self.renderer.cycle_alpha_background();
-                self.invalidate();
-            }
+            Action::DisplayAutoShrink => self.action_display_auto_shrink(),
+            Action::DisplayAutoFit => self.action_display_auto_fit(),
+            Action::ZoomIn => self.action_zoom_in(),
+            Action::ZoomOut => self.action_zoom_out(),
+            Action::ZoomReset => self.action_zoom_reset(),
+            Action::ToggleMargin => self.action_toggle_margin(),
+            Action::CycleAlphaBackground => self.action_cycle_alpha_background(),
 
             // --- ウィンドウ ---
-            Action::ToggleFullscreen => {
-                self.toggle_fullscreen();
-            }
-            Action::Minimize => unsafe {
-                let _ = ShowWindow(self.hwnd, SW_MINIMIZE);
-            },
-            Action::ToggleMaximize => {
-                if !self.fullscreen.is_fullscreen() {
-                    self.toggle_maximize();
-                }
-            }
-            Action::ToggleAlwaysOnTop => {
-                self.toggle_always_on_top();
-            }
-            Action::ToggleCursorHide => {
-                self.cursor_hider.toggle_enabled(self.hwnd);
-            }
+            Action::ToggleFullscreen => self.toggle_fullscreen(),
+            Action::Minimize => self.action_minimize(),
+            Action::ToggleMaximize => self.action_toggle_maximize(),
+            Action::ToggleAlwaysOnTop => self.toggle_always_on_top(),
+            Action::ToggleCursorHide => self.action_toggle_cursor_hide(),
 
             // --- マーク操作 ---
             Action::MarkSet => self.action_mark_set(),
@@ -1152,14 +774,8 @@ impl AppWindow {
             Action::MarkInvertToHere => self.action_mark_invert_to_here(),
             Action::NavigatePrevMark => self.navigate_with_guard(Document::navigate_prev_mark),
             Action::NavigateNextMark => self.navigate_with_guard(Document::navigate_next_mark),
-            Action::RemoveFromList => {
-                self.document.remove_current_from_list();
-                self.process_document_events();
-            }
-            Action::MarkedRemoveFromList => {
-                self.document.remove_marked_from_list();
-                self.process_document_events();
-            }
+            Action::RemoveFromList => self.action_remove_from_list(),
+            Action::MarkedRemoveFromList => self.action_marked_remove_from_list(),
 
             // --- フォルダナビゲーション ---
             Action::NavigatePrevFolder => self.navigate_with_guard(Document::navigate_prev_folder),
@@ -1177,25 +793,8 @@ impl AppWindow {
             Action::Reload => self.navigate_with_guard(Document::reload),
 
             // --- クリップボード ---
-            Action::CopyImage => {
-                if let Some(image) = self.document.current_image() {
-                    let target = crate::filter::transform::output_image(
-                        image,
-                        self.selection.current_rect(),
-                    );
-                    if let Err(e) = crate::clipboard::copy_image_to_clipboard(self.hwnd, &target) {
-                        self.show_error_title(&format!("画像のコピーに失敗しました: {e}"));
-                    }
-                }
-            }
-            Action::CopyFileName => {
-                if let Some(source) = self.document.current_source()
-                    && let Err(e) =
-                        crate::clipboard::copy_text_to_clipboard(self.hwnd, &source.display_path())
-                {
-                    self.show_error_title(&format!("ファイル名のコピーに失敗しました: {e}"));
-                }
-            }
+            Action::CopyImage => self.action_copy_image(),
+            Action::CopyFileName => self.action_copy_file_name(),
             Action::MarkedCopyNames => self.action_marked_copy_names(),
             Action::PasteImage => self.action_paste_image(),
 
@@ -1212,238 +811,48 @@ impl AppWindow {
             Action::OpenBookmarkFolder => self.action_open_bookmark_folder(),
             Action::OpenSpiFolder => self.action_open_spi_folder(),
             Action::OpenTempFolder => self.action_open_temp_folder(),
-            Action::ShowImageInfo => {
-                self.show_image_info();
-            }
+            Action::ShowImageInfo => self.show_image_info(),
 
             // --- 編集 ---
-            Action::DeselectSelection => {
-                self.selection.deselect();
-                self.invalidate();
-                self.update_title();
-            }
-            Action::Crop => {
-                if let Some(sel_rect) = self.selection.current_rect()
-                    && let Some(img) = self.document.current_image()
-                {
-                    let cropped = crate::filter::transform::crop(img, &sel_rect);
-                    self.selection.deselect();
-                    self.document.apply_edit(cropped);
-                    self.process_document_events();
-                    self.update_title();
-                }
-            }
-            Action::FlipHorizontal => {
-                self.apply_transform(crate::filter::transform::flip_horizontal);
-            }
-            Action::FlipVertical => {
-                self.apply_transform(crate::filter::transform::flip_vertical);
-            }
-            Action::Rotate180 => {
-                self.apply_transform(crate::filter::transform::rotate_180);
-            }
-            Action::Rotate90CW => {
-                self.apply_transform(crate::filter::transform::rotate_90);
-            }
-            Action::Rotate90CCW => {
-                self.apply_transform(crate::filter::transform::rotate_270);
-            }
+            Action::DeselectSelection => self.action_deselect_selection(),
+            Action::Crop => self.action_crop(),
             Action::RotateArbitrary => self.action_rotate_arbitrary(),
             Action::Resize => self.action_resize(),
 
-            // --- フィルタ (パラメータあり) ---
-            Action::Fill => self.action_fill(),
-            Action::Levels => self.action_levels(),
-            Action::Gamma => self.action_gamma(),
-            Action::BrightnessContrast => self.action_brightness_contrast(),
-            Action::Mosaic => self.action_mosaic(),
-            Action::GaussianBlur => self.action_gaussian_blur(),
-            Action::UnsharpMask => self.action_unsharp_mask(),
-
-            // --- フィルタ (パラメータなし) ---
-            Action::InvertColors => self.apply_simple_filter(crate::filter::color::invert_colors),
-            Action::GrayscaleSimple => {
-                self.apply_simple_filter(crate::filter::color::grayscale_simple);
-            }
-            Action::GrayscaleStrict => {
-                self.apply_simple_filter(crate::filter::color::grayscale_strict);
-            }
-            Action::ApplyAlpha => self.apply_simple_filter(crate::filter::color::apply_alpha),
-            Action::Blur => self.apply_simple_filter(crate::filter::blur::blur),
-            Action::BlurStrong => self.apply_simple_filter(crate::filter::blur::blur_strong),
-            Action::Sharpen => self.apply_simple_filter(crate::filter::sharpen::sharpen),
-            Action::SharpenStrong => {
-                self.apply_simple_filter(crate::filter::sharpen::sharpen_strong);
-            }
-            Action::MedianFilter => self.apply_simple_filter(crate::filter::blur::median_filter),
-
-            // --- 永続フィルタ ---
-            Action::PFilterToggle => {
-                self.document.persistent_filter_mut().toggle_enabled();
-                self.document.on_persistent_filter_changed();
-                self.process_document_events();
-            }
-            Action::PFilterFlipH => {
-                self.toggle_persistent_filter(FilterOperation::FlipHorizontal);
-            }
-            Action::PFilterFlipV => {
-                self.toggle_persistent_filter(FilterOperation::FlipVertical);
-            }
-            Action::PFilterRotate180 => {
-                self.toggle_persistent_filter(FilterOperation::Rotate180);
-            }
-            Action::PFilterRotate90CW => {
-                self.toggle_persistent_filter(FilterOperation::Rotate90CW);
-            }
-            Action::PFilterRotate90CCW => {
-                self.toggle_persistent_filter(FilterOperation::Rotate90CCW);
-            }
-            Action::PFilterLevels => self.action_pfilter_levels(),
-            Action::PFilterGamma => self.action_pfilter_gamma(),
-            Action::PFilterBrightnessContrast => self.action_pfilter_brightness_contrast(),
-            Action::PFilterGrayscaleSimple => {
-                self.toggle_persistent_filter(FilterOperation::GrayscaleSimple);
-            }
-            Action::PFilterGrayscaleStrict => {
-                self.toggle_persistent_filter(FilterOperation::GrayscaleStrict);
-            }
-            Action::PFilterBlur => self.toggle_persistent_filter(FilterOperation::Blur),
-            Action::PFilterBlurStrong => {
-                self.toggle_persistent_filter(FilterOperation::BlurStrong);
-            }
-            Action::PFilterSharpen => self.toggle_persistent_filter(FilterOperation::Sharpen),
-            Action::PFilterSharpenStrong => {
-                self.toggle_persistent_filter(FilterOperation::SharpenStrong);
-            }
-            Action::PFilterGaussianBlur => self.action_pfilter_gaussian_blur(),
-            Action::PFilterUnsharpMask => self.action_pfilter_unsharp_mask(),
-            Action::PFilterMedianFilter => {
-                self.toggle_persistent_filter(FilterOperation::MedianFilter);
-            }
-            Action::PFilterInvertColors => {
-                self.toggle_persistent_filter(FilterOperation::InvertColors);
-            }
-            Action::PFilterApplyAlpha => {
-                self.toggle_persistent_filter(FilterOperation::ApplyAlpha);
-            }
+            Action::PFilterToggle => self.action_p_filter_toggle(),
 
             // --- ブックマーク ---
-            Action::BookmarkSave => {
-                // 未展開コンテナがあれば全て同期展開 (ブックマークは完全な状態で保存する)
-                if self.document.file_list().has_pending() {
-                    self.document.expand_all_pending_sync();
-                    self.process_document_events();
-                }
-                let idx = self.document.file_list().current_index();
-                let first_source = self
-                    .document
-                    .file_list()
-                    .files()
-                    .first()
-                    .map(|f| f.source.clone());
-                // 現在のコンテナ識別キーが前回キャッシュと一致する場合のみ前回ファイル名を流用する。
-                // 不一致 (別コンテナへ切り替えた直後など) では `None` を渡し、
-                // ヘルパー側で代表ステムベースの初期名に戻す。
-                let current_key = first_source
-                    .as_ref()
-                    .and_then(crate::file_info::FileSource::bookmark_container_key);
-                let previous_name = self.last_bookmark.as_ref().and_then(|(key, name)| {
-                    (current_key.as_ref() == Some(key)).then_some(name.as_str())
-                });
-                let initial_name =
-                    crate::bookmark::build_initial_save_name(previous_name, first_source.as_ref());
-                self.prepare_modal_dialog();
-                let bookmark_result = crate::bookmark::save_bookmark(
-                    self.hwnd,
-                    self.document.file_list(),
-                    idx,
-                    &initial_name,
-                );
-                self.finish_modal_dialog();
-                match bookmark_result {
-                    Ok(Some(saved_path)) => {
-                        // 保存成功時のみキャッシュを更新する。コンテナ識別キーは現在の先頭ソースから取得する。
-                        if let (Some(key), Some(file_name)) = (
-                            current_key,
-                            saved_path
-                                .file_name()
-                                .and_then(|n| n.to_str())
-                                .map(str::to_string),
-                        ) {
-                            self.last_bookmark = Some((key, file_name));
-                        }
-                    }
-                    Ok(None) => {} // キャンセル: キャッシュは維持
-                    Err(e) => {
-                        self.show_error_title(&format!("ブックマークの保存に失敗しました: {e}"));
-                    }
-                }
-            }
+            Action::BookmarkSave => self.action_bookmark_save(),
             Action::BookmarkLoad => self.action_bookmark_load(),
             // --- ページ指定ナビゲーション ---
-            Action::NavigateToPage => {
-                if !self.guard_unsaved_edit() {
-                    return;
-                }
-                self.carry_over_selection();
-                self.navigate_to_page_dialog();
-            }
+            Action::NavigateToPage => self.action_navigate_to_page(),
 
             // --- ソートナビゲーション ---
             Action::SortNavigateBack => self.navigate_with_guard(Document::sort_navigate_back),
-            Action::SortNavigateForward => {
-                self.navigate_with_guard(Document::sort_navigate_forward);
-            }
+            Action::SortNavigateForward => self.action_sort_navigate_forward(),
 
             // --- シャッフル ---
-            Action::ShuffleAll => {
-                self.document.shuffle_all();
-                self.process_document_events();
-            }
-            Action::ShuffleGroups => {
-                self.document.shuffle_groups();
-                self.process_document_events();
-            }
+            Action::ShuffleAll => self.action_shuffle_all(),
+            Action::ShuffleGroups => self.action_shuffle_groups(),
 
             // --- メニューバー ---
-            Action::ToggleMenuBar => {
-                // フルスクリーン中はメニューを常に非表示にしているため、
-                // 表示状態だけが切り替わらないよう無視する
-                if !self.fullscreen.is_fullscreen() {
-                    self.menu_visible = !self.menu_visible;
-                    unsafe {
-                        if self.menu_visible {
-                            let _ = SetMenu(self.hwnd, Some(self.menu));
-                        } else {
-                            let _ = SetMenu(self.hwnd, None);
-                        }
-                    }
-                }
-            }
+            Action::ToggleMenuBar => self.action_toggle_menu_bar(),
 
             // --- ファイルリスト ---
             Action::ToggleFileList => self.action_toggle_file_list(),
 
             // --- ヘルプ ---
-            Action::ShowHelp => {
-                self.show_help();
-            }
+            Action::ShowHelp => self.show_help(),
 
             // --- アップデート ---
-            Action::CheckUpdate => {
-                self.check_for_update();
-            }
+            Action::CheckUpdate => self.check_for_update(),
 
             // --- ホームページ ---
             Action::OpenHomepage => self.action_open_homepage(),
 
             // --- シェル統合 ---
-            Action::RegisterShell => {
-                self.action_register_shell();
-            }
-            Action::UnregisterShell => {
-                self.action_unregister_shell();
-            }
+            Action::RegisterShell => self.action_register_shell(),
+            Action::UnregisterShell => self.action_unregister_shell(),
 
             // --- スライドショー ---
             Action::SlideshowToggle => self.toggle_slideshow(),
@@ -1451,882 +860,8 @@ impl AppWindow {
             Action::SlideshowSlower => self.adjust_slideshow_interval(500),
 
             // --- 終了 ---
-            Action::Exit => unsafe {
-                let _ = DestroyWindow(self.hwnd);
-            },
+            Action::Exit => self.action_exit(),
+            _ => self.action_filter_for_action(action),
         }
-    }
-
-    /// 画像を指定フォーマットで保存する
-    fn export_image(&mut self, format: ExportFormat) {
-        // ダイアログ前後で self への可変借用を要求するため、
-        // 画像の借用スコープはダイアログ前で閉じておく。
-        if self.document.current_image().is_none() {
-            return;
-        }
-        let (default_stem, source_dir) = self.document.current_source().map_or_else(
-            || ("image".to_string(), None),
-            |s| (s.default_save_stem(), s.parent_dir().map(Path::to_path_buf)),
-        );
-        let initial_dir = self.file_operation_directory.initial(source_dir.as_deref());
-        let default_name = format!("{default_stem}.{}", format.extension());
-
-        self.prepare_modal_dialog();
-        let dialog_result = crate::file_ops::save_file_dialog(
-            self.hwnd,
-            crate::file_ops::SaveFileDialogParams {
-                default_name: &default_name,
-                filter_name: format.filter_name(),
-                filter_ext: format.filter_spec(),
-                default_ext: format.extension(),
-                initial_dir: initial_dir.as_deref(),
-                ..Default::default()
-            },
-        );
-        self.finish_modal_dialog();
-        let Some(save_path) = self.take_success("保存ダイアログの表示", dialog_result)
-        else {
-            return;
-        };
-        let result = self.write_current_image(format, &save_path);
-        if self.take_success("画像の出力", result.map(Some)).is_some() {
-            self.file_operation_directory.remember_file(&save_path);
-        }
-    }
-
-    /// 表示中の画像 (選択範囲があればその範囲) を指定形式でファイルへ保存する
-    fn write_current_image(&self, format: ExportFormat, path: &Path) -> Result<()> {
-        let img = self
-            .document
-            .current_image()
-            .context("出力する画像がありません")?;
-        let target = crate::filter::transform::output_image(img, self.selection.current_rect());
-        write_image_to_path(target.width, target.height, &target.data, format, path)
-    }
-
-    /// 数値を3桁カンマ区切りでフォーマットする
-    fn format_with_commas(n: u64) -> String {
-        let s = n.to_string();
-        let mut result = String::with_capacity(s.len() + s.len() / 3);
-        for (i, c) in s.chars().enumerate() {
-            if i > 0 && (s.len() - i).is_multiple_of(3) {
-                result.push(',');
-            }
-            result.push(c);
-        }
-        result
-    }
-
-    /// 画像情報を表示する
-    fn show_image_info(&mut self) {
-        let Some(info_lines) = self.build_image_info() else {
-            return;
-        };
-        let text = info_lines.join(
-            "
-
-",
-        );
-        let font = self.monospace_font.hfont();
-        self.prepare_modal_dialog();
-        let result = info_dialog::show_info_dialog(self.hwnd, "画像情報", &text, font);
-        self.finish_modal_dialog();
-        self.take_success("画像情報ダイアログの表示", result.map(Some));
-    }
-
-    /// 画像情報の表示行を組み立てる。メタデータ取得の失敗はタイトルバーへ通知し、取得済みの基本情報は返す
-    fn build_image_info(&mut self) -> Option<Vec<String>> {
-        let source = self.document.current_source()?;
-        let file_info = self.document.file_list().current()?;
-
-        let mut info_lines = Vec::new();
-        info_lines.push(format!("パス: {}", source.display_path()));
-        info_lines.push(format!(
-            "ファイルサイズ: {} KiB",
-            Self::format_with_commas(file_info.file_size / 1024)
-        ));
-
-        if let Some(img) = self.document.current_image() {
-            info_lines.push(format!("画像サイズ: {} x {}", img.width, img.height));
-        }
-
-        // メタデータ取得 (デコーダ経由)
-        match self.document.current_metadata() {
-            Ok(metadata) => {
-                info_lines.push(format!("フォーマット: {}", metadata.format));
-                for comment in &metadata.comments {
-                    info_lines.push(comment.clone());
-                }
-                // EXIF情報
-                if !metadata.exif.is_empty() {
-                    info_lines.push(String::new());
-                    info_lines.push("--- EXIF ---".to_string());
-                    for (key, value) in &metadata.exif {
-                        info_lines.push(format!("{key}: {value}"));
-                    }
-                }
-            }
-            Err(e) => {
-                let msg = format!("メタデータの取得に失敗しました: {e:#}");
-                info_lines.push(msg.clone());
-                self.show_error_title(&msg);
-            }
-        }
-        Some(info_lines)
-    }
-
-    /// ヘルプを表示する
-    fn show_help(&mut self) {
-        let text = "\
-ぐらびゅ - Windows用画像ビューアー
-
-【主要キーバインド】
-← / →              前後の画像に移動
-ホイール上/下       前後の画像に移動
-PageUp / PageDown   5ページ移動
-Ctrl+PageUp/Down    50ページ移動
-Ctrl+Home / End     最初 / 最後へ
-Ctrl+ホイール       拡大 / 縮小
-Num /               自動縮小表示
-Num *               自動縮小・拡大表示
-A                   α背景切替
-Alt+Enter           全画面表示
-Esc                 メニューバー表示/非表示
-F4                  ファイルリスト表示/非表示
-Tab / Shift+Tab     ソート順で前後移動
-Delete              マーク設定
-F1                  このヘルプ
-
-【対応フォーマット】
-画像: JPEG, PNG, GIF, BMP, WebP
-ドキュメント: PDF
-アーカイブ: ZIP/cbz, RAR/cbr, 7z
-Susieプラグイン (.sph/.spi) で拡張可能";
-
-        let font = self.monospace_font.hfont();
-        self.prepare_modal_dialog();
-        let result = info_dialog::show_info_dialog(self.hwnd, "ぐらびゅ ヘルプ", text, font);
-        self.finish_modal_dialog();
-        self.take_success("ヘルプの表示", result.map(Some));
-    }
-
-    /// マウス左ボタン押下: 選択ドラッグ開始
-    fn on_lbutton_down(&mut self, lparam: LPARAM) {
-        self.begin_user_operation();
-        let Some(draw_rect) = self.renderer.last_draw_rect().copied() else {
-            return;
-        };
-        let Some(img) = self.document.current_image() else {
-            return;
-        };
-
-        let sx = (lparam.0 & 0xFFFF) as i16 as f32;
-        let sy = ((lparam.0 >> 16) & 0xFFFF) as i16 as f32;
-
-        self.selection
-            .on_mouse_down(sx, sy, &draw_rect, img.width, img.height);
-
-        if self.selection.is_dragging() {
-            // マウスキャプチャ (ウィンドウ外でもドラッグイベントを受け取る)
-            unsafe {
-                windows::Win32::UI::Input::KeyboardAndMouse::SetCapture(self.hwnd);
-            }
-            self.invalidate();
-            self.update_title();
-        }
-    }
-
-    /// マウス移動: ドラッグ中の矩形更新
-    fn on_mouse_move(&mut self, lparam: LPARAM) {
-        if !self.selection.is_dragging() {
-            return;
-        }
-        let Some(draw_rect) = self.renderer.last_draw_rect().copied() else {
-            return;
-        };
-        let Some(img) = self.document.current_image() else {
-            return;
-        };
-
-        let sx = (lparam.0 & 0xFFFF) as i16 as f32;
-        let sy = ((lparam.0 >> 16) & 0xFFFF) as i16 as f32;
-
-        self.selection
-            .on_mouse_move(sx, sy, &draw_rect, img.width, img.height);
-        self.invalidate();
-        self.update_title();
-    }
-
-    /// マウス左ボタンリリース: ドラッグ終了
-    fn on_lbutton_up(&mut self) {
-        if !self.selection.is_dragging() {
-            return;
-        }
-        let Some(img) = self.document.current_image() else {
-            return;
-        };
-
-        unsafe {
-            windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture().unwrap_or_default();
-        }
-        self.selection.on_mouse_up(img.width, img.height);
-        self.invalidate();
-        self.update_title();
-    }
-
-    /// WM_SETCURSOR: 選択ハンドル上でカーソルを変更
-    /// trueを返した場合はDefWindowProcを呼ばない
-    fn on_set_cursor(&self) -> bool {
-        if !self.selection.is_selected() {
-            return false;
-        }
-        let Some(draw_rect) = self.renderer.last_draw_rect() else {
-            return false;
-        };
-        let Some(img) = self.document.current_image() else {
-            return false;
-        };
-
-        // 現在のマウス位置を取得
-        let mut pt = windows::Win32::Foundation::POINT::default();
-        unsafe {
-            let _ =
-                windows::Win32::UI::WindowsAndMessaging::GetCursorPos(std::ptr::from_mut(&mut pt));
-            let _ = windows::Win32::Graphics::Gdi::ScreenToClient(
-                self.hwnd,
-                std::ptr::from_mut(&mut pt),
-            );
-        }
-        let sx = pt.x as f32;
-        let sy = pt.y as f32;
-
-        let hit = self
-            .selection
-            .hit_test_at(sx, sy, draw_rect, img.width, img.height);
-        let cursor_id = match hit {
-            HitTestResult::Handle(HandleKind::TopLeft | HandleKind::BottomRight) => {
-                Some(IDC_SIZENWSE)
-            }
-            HitTestResult::Handle(HandleKind::TopRight | HandleKind::BottomLeft) => {
-                Some(IDC_SIZENESW)
-            }
-            HitTestResult::Handle(HandleKind::Top | HandleKind::Bottom) => Some(IDC_SIZENS),
-            HitTestResult::Handle(HandleKind::Left | HandleKind::Right) => Some(IDC_SIZEWE),
-            HitTestResult::Inside => Some(IDC_SIZEALL),
-            _ => None,
-        };
-
-        if let Some(id) = cursor_id {
-            unsafe {
-                let _ = SetCursor(LoadCursorW(None, id).ok());
-            }
-            return true;
-        }
-
-        false
-    }
-
-    /// 未保存の編集がある場合は破棄して続行する
-    fn guard_unsaved_edit(&mut self) -> bool {
-        if self.document.has_unsaved_edit() {
-            self.document.discard_editing_session();
-            self.selection.deselect();
-        }
-        true
-    }
-
-    fn on_drop_files(&mut self, hdrop: HDROP) {
-        self.begin_user_operation();
-        if !self.guard_unsaved_edit() {
-            unsafe { DragFinish(hdrop) };
-            return;
-        }
-        self.selection.deselect();
-
-        // ドロップされた全ファイルを収集
-        let file_count = unsafe { DragQueryFileW(hdrop, 0xFFFFFFFF, None) } as usize;
-        let mut paths = Vec::new();
-        let mut buf = [0u16; 1024];
-        for i in 0..file_count {
-            let len = unsafe { DragQueryFileW(hdrop, i as u32, Some(&mut buf)) } as usize;
-            if len > 0 {
-                let path_str = String::from_utf16_lossy(&buf[..len]);
-                paths.push(std::path::PathBuf::from(path_str));
-            }
-        }
-        unsafe { DragFinish(hdrop) };
-
-        if paths.is_empty() {
-            return;
-        }
-
-        let result = if paths.len() > 1 {
-            // 複数パス: フォルダ・コンテナ・画像の混在をすべてフラットに展開
-            self.document.open_multiple(&paths)
-        } else if paths[0].is_dir() {
-            self.document.open_folder(&paths[0])
-        } else {
-            self.document.open(&paths[0])
-        };
-
-        match result {
-            Ok(()) => self.file_operation_directory.reset(),
-            Err(e) => {
-                self.show_error_title(&format!("ドロップされたファイルを開けませんでした: {e}"));
-            }
-        }
-
-        self.process_document_events();
-    }
-}
-
-/// 画像保存フォーマット。各バリアントが拡張子・フィルタ表示・`image::ImageFormat`
-/// を一元管理する。`Action::Export*` から `export_image` に渡される。
-#[derive(Copy, Clone)]
-enum ExportFormat {
-    Png,
-    Jpg,
-    Bmp,
-}
-
-impl ExportFormat {
-    fn extension(self) -> &'static str {
-        match self {
-            Self::Png => "png",
-            Self::Jpg => "jpg",
-            Self::Bmp => "bmp",
-        }
-    }
-
-    fn filter_name(self) -> &'static str {
-        match self {
-            Self::Png => "PNG画像",
-            Self::Jpg => "JPEG画像",
-            Self::Bmp => "BMP画像",
-        }
-    }
-
-    fn filter_spec(self) -> &'static str {
-        match self {
-            Self::Png => "*.png",
-            Self::Jpg => "*.jpg",
-            Self::Bmp => "*.bmp",
-        }
-    }
-
-    fn image_format(self) -> image::ImageFormat {
-        match self {
-            Self::Png => image::ImageFormat::Png,
-            Self::Jpg => image::ImageFormat::Jpeg,
-            Self::Bmp => image::ImageFormat::Bmp,
-        }
-    }
-}
-
-/// RGBA バッファを指定パスへ指定フォーマットで保存する。
-///
-/// `image::ImageBuffer<Rgba<u8>, _>` を直接エンコードすると、JPEG エンコーダ
-/// が RGBA を受け付けず色型エラーで失敗する。`DynamicImage` を経由することで `image`
-/// crate 側が必要な色変換 (RGBA→RGB 等) を自動で行う。フォーマットを引数で明示する
-/// ため、保存先パスの拡張子有無に依存しない。
-fn write_image_to_path(
-    width: u32,
-    height: u32,
-    rgba: &[u8],
-    format: ExportFormat,
-    path: &Path,
-) -> Result<()> {
-    let img_buf = image::RgbaImage::from_raw(width, height, rgba.to_vec())
-        .ok_or_else(|| anyhow::anyhow!("画像バッファの作成に失敗しました"))?;
-    let dynamic = image::DynamicImage::ImageRgba8(img_buf);
-    crate::file_ops::save_atomic(path, |file| {
-        dynamic
-            .write_to(file, format.image_format())
-            .context("画像の保存に失敗しました")
-    })
-}
-
-/// 試験用: 表示しないAppWindowと、その補助操作
-#[cfg(test)]
-pub(crate) mod test_support {
-    use super::*;
-
-    /// 表示しないAppWindow。破棄時にウィンドウを閉じる (WM_DESTROYの後始末を通す)
-    pub(crate) struct TestApp(pub(crate) Box<AppWindow>);
-
-    impl TestApp {
-        pub(crate) fn new() -> Self {
-            Self(AppWindow::create_hidden_for_test())
-        }
-
-        /// ウィンドウを閉じる。WM_DESTROYでポインタが外れた後にAppWindowを解放する
-        pub(crate) fn destroy(self) {
-            drop(self);
-        }
-
-        /// ウィンドウを閉じ、本体と同じくAppWindowを解放せずに残す
-        ///
-        /// 本体はメッセージループの後に`process::exit`で終わり、AppWindowを解放しない。
-        /// PDFを描画した後に、ウィンドウ破棄済みのD2DRendererを解放すると、
-        /// テストプロセスの終了時に終了コードが2170になる。測定では本体と同じ終了経路にそろえる。
-        pub(crate) fn close_without_release(self) {
-            let this = std::mem::ManuallyDrop::new(self);
-            unsafe {
-                let _ = DestroyWindow(this.0.hwnd);
-            }
-        }
-
-        pub(crate) fn title(&self) -> String {
-            let mut buf = [0u16; 1024];
-            let len = unsafe { GetWindowTextW(self.0.hwnd, &mut buf) };
-            String::from_utf16_lossy(&buf[..len as usize])
-        }
-
-        /// 描画を1回処理し、その処理が再描画を要求したかを返す
-        pub(crate) fn paint_and_check_redraw(&mut self) -> bool {
-            let before = self.0.redraw_request_count.get();
-            self.0.on_paint();
-            self.0.redraw_request_count.get() != before
-        }
-
-        /// 画像ファイルを単独で開き、表示まで処理する
-        pub(crate) fn open_image_file(&mut self, path: &Path) {
-            self.0.document.open_single(path).unwrap();
-            self.0.process_document_events();
-            assert!(self.0.document.current_image().is_some());
-        }
-
-        /// 画像座標の2点をドラッグして選択範囲を設定する (描画済みであること)
-        pub(crate) fn drag_select(&mut self, from: (i32, i32), to: (i32, i32)) {
-            let rect = *self.0.renderer.last_draw_rect().expect("drawn");
-            let img = self.0.document.current_image().expect("image");
-            let (w, h) = (img.width, img.height);
-            // 画素の中心を指す (画素の端では整数化で隣の画素や画像外へずれるため)
-            let lparam = |p: (i32, i32)| {
-                let sx = rect.x + (p.0 as f32 + 0.5) / w as f32 * rect.width;
-                let sy = rect.y + (p.1 as f32 + 0.5) / h as f32 * rect.height;
-                LPARAM(((sy as isize) << 16) | (sx as isize & 0xFFFF))
-            };
-            self.0.on_lbutton_down(lparam(from));
-            self.0.on_mouse_move(lparam(to));
-            self.0.on_lbutton_up();
-        }
-    }
-
-    impl Drop for TestApp {
-        fn drop(&mut self) {
-            unsafe {
-                let _ = DestroyWindow(self.0.hwnd);
-            }
-        }
-    }
-
-    impl std::ops::Deref for TestApp {
-        type Target = AppWindow;
-        fn deref(&self) -> &AppWindow {
-            &self.0
-        }
-    }
-
-    impl std::ops::DerefMut for TestApp {
-        fn deref_mut(&mut self) -> &mut AppWindow {
-            &mut self.0
-        }
-    }
-
-    /// テスト間で衝突しない一時フォルダを作成する
-    pub(crate) fn unique_temp_dir(stem: &str) -> PathBuf {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_nanos());
-        let dir =
-            std::env::temp_dir().join(format!("gv_test_{stem}_{}_{nanos}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
-
-    /// 画像データをPNGとして保存する
-    pub(crate) fn write_png(path: &Path, image: &DecodedImage) {
-        write_image_to_path(
-            image.width,
-            image.height,
-            &image.data,
-            ExportFormat::Png,
-            path,
-        )
-        .unwrap();
-    }
-
-    /// 単色の画像
-    pub(crate) fn solid_image(width: u32, height: u32, rgba: [u8; 4]) -> DecodedImage {
-        DecodedImage {
-            data: rgba.repeat((width * height) as usize),
-            width,
-            height,
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::test_support::{TestApp, solid_image, unique_temp_dir, write_png};
-    use super::*;
-    use std::fs;
-
-    /// 失効前後で比べる閲覧状態
-    #[derive(Debug, PartialEq)]
-    struct ViewState {
-        image: Vec<u8>,
-        size: (u32, u32),
-        edited: bool,
-        selection: Option<(i32, i32, i32, i32)>,
-        mode: DisplayMode,
-        draw_rect: Option<(f32, f32, f32, f32)>,
-        panel_visible: bool,
-    }
-
-    fn view_state(app: &AppWindow) -> ViewState {
-        let img = app.document.current_image().expect("image");
-        ViewState {
-            image: img.data.clone(),
-            size: (img.width, img.height),
-            edited: app.document.has_unsaved_edit(),
-            selection: app
-                .selection
-                .current_rect()
-                .map(|r| (r.x, r.y, r.width, r.height)),
-            mode: app.renderer.layout().mode,
-            draw_rect: app
-                .renderer
-                .last_draw_rect()
-                .map(|r| (r.x, r.y, r.width, r.height)),
-            panel_visible: app.file_list_panel.is_visible(),
-        }
-    }
-
-    /// 拡大・パネル表示・編集・選択のある状態で失効しても、開き直さずに同じ状態で描画を再開する
-    #[test]
-    fn paint_recovers_after_target_loss_keeping_state() {
-        let dir = unique_temp_dir("paint_recover");
-        let path = dir.join("image.png");
-        write_png(&path, &solid_image(40, 30, [10, 200, 30, 128]));
-        let mut app = TestApp::new();
-        app.open_image_file(&path);
-        app.execute_action(Action::ToggleFileList);
-        app.execute_action(Action::ZoomIn);
-        app.execute_action(Action::FlipHorizontal);
-        app.on_paint();
-        app.drag_select((5, 5), (20, 15));
-        app.on_paint();
-        let before = view_state(&app);
-        assert!(before.edited && before.panel_visible && before.selection.is_some());
-
-        app.renderer.simulate_target_loss_on_next_draw();
-        assert!(app.paint_and_check_redraw(), "loss must request a redraw");
-        assert!(app.renderer.target_snapshot().is_none());
-
-        assert!(!app.paint_and_check_redraw());
-        assert!(app.renderer.target_snapshot().is_some());
-        assert_eq!(view_state(&app), before);
-        assert!(!app.title().contains("エラー"), "{}", app.title());
-
-        app.destroy();
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    /// ターゲットの再作成失敗と連続した失効は通知して自動の再描画要求を止め、
-    /// 次のリサイズで再試行して成功したら描画エラーの表示を解除する
-    #[test]
-    fn paint_reports_recreate_failure_without_endless_redraw() {
-        let dir = unique_temp_dir("paint_fail");
-        let path = dir.join("image.png");
-        write_png(&path, &solid_image(8, 8, [0, 0, 0, 255]));
-        let mut app = TestApp::new();
-        app.open_image_file(&path);
-        app.on_paint();
-
-        // 再作成の失敗: 通知し、再描画を要求しない
-        app.renderer.simulate_target_loss_on_next_draw();
-        assert!(app.paint_and_check_redraw());
-        app.renderer.fail_next_target_creation();
-        assert!(!app.paint_and_check_redraw());
-        assert!(
-            app.title().contains("描画に失敗しました"),
-            "{}",
-            app.title()
-        );
-
-        // 次のリサイズで再試行して成功し、描画エラーの表示を解除する
-        let (w, h) = window::get_client_size(app.hwnd);
-        let before = app.redraw_request_count.get();
-        app.on_size(w, h);
-        assert_ne!(app.redraw_request_count.get(), before);
-        assert!(!app.paint_and_check_redraw());
-        assert!(app.renderer.target_snapshot().is_some());
-        assert!(!app.title().contains("エラー"), "{}", app.title());
-
-        // 連続した失効: 上限回数までは再描画を要求し、超えたら通知して止める
-        for _ in 0..MAX_RENDER_RECOVERY_ATTEMPTS {
-            app.renderer.simulate_target_loss_on_next_draw();
-            assert!(app.paint_and_check_redraw());
-        }
-        app.renderer.simulate_target_loss_on_next_draw();
-        assert!(!app.paint_and_check_redraw());
-        assert!(
-            app.title().contains("描画を復旧できませんでした"),
-            "{}",
-            app.title()
-        );
-
-        app.destroy();
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    /// 失敗は操作名と原因をタイトルバーへ表示し、同じ処理のリスト・選択更新で消えない。
-    /// 利用者の次の操作の開始で解除する
-    #[test]
-    fn operation_failure_is_shown_and_survives_title_update() {
-        let dir = unique_temp_dir("op_fail");
-        let path = dir.join("image.png");
-        write_png(&path, &solid_image(4, 4, [0, 0, 0, 255]));
-        let mut app = TestApp::new();
-        app.open_image_file(&path);
-
-        let result: Result<Option<()>> = Err(anyhow::anyhow!("アクセスが拒否されました"));
-        assert_eq!(app.take_success("ファイルの移動", result), None);
-        let title = app.title();
-        assert!(title.contains("ファイルの移動に失敗しました"), "{title}");
-        assert!(title.contains("アクセスが拒否されました"), "{title}");
-
-        // 同じ処理内のリスト更新・選択更新
-        app.document.reload();
-        app.process_document_events();
-        assert_eq!(app.title(), title);
-
-        app.begin_user_operation();
-        assert!(!app.title().contains("エラー"), "{}", app.title());
-
-        app.destroy();
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    /// 開いた後に読めなくなったファイルへの移動は、原因とパスを表示する
-    #[test]
-    fn document_read_failure_is_shown() {
-        let dir = unique_temp_dir("read_fail");
-        let first = dir.join("a.png");
-        let second = dir.join("b.png");
-        write_png(&first, &solid_image(4, 4, [0, 0, 0, 255]));
-        write_png(&second, &solid_image(4, 4, [255, 0, 0, 255]));
-        let mut app = TestApp::new();
-        app.document.open(&first).unwrap();
-        app.process_document_events();
-        fs::remove_file(&second).unwrap();
-
-        app.execute_action(Action::NavigateForward);
-        let title = app.title();
-        assert!(title.contains("エラー"), "{title}");
-        assert!(title.contains("b.png"), "{title}");
-
-        app.destroy();
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    /// キャンセル・中止・成功は失敗として通知せず、成功時だけ値を返す
-    #[test]
-    fn cancel_and_success_are_not_reported_as_failure() {
-        let mut app = TestApp::new();
-        let normal = app.title();
-
-        assert_eq!(
-            app.take_success::<PathBuf>("保存ダイアログの表示", Ok(None)),
-            None
-        );
-        let aborted: Result<bool> = Ok(false);
-        assert_eq!(
-            app.take_success("ファイルの削除", aborted.map(|done| done.then_some(()))),
-            None
-        );
-        assert_eq!(app.title(), normal);
-
-        let dest = PathBuf::from("dest");
-        assert_eq!(
-            app.take_success("保存ダイアログの表示", Ok(Some(dest.clone()))),
-            Some(dest)
-        );
-        let done: Result<bool> = Ok(true);
-        assert_eq!(
-            app.take_success("ファイルの削除", done.map(|done| done.then_some(()))),
-            Some(())
-        );
-        assert_eq!(app.title(), normal);
-
-        app.destroy();
-    }
-
-    /// 向きを補正した画像は、画面の向きと座標でトリミング・出力され、元ファイルは変わらない
-    #[test]
-    fn oriented_image_is_exported_as_displayed() {
-        use crate::test_helpers::{
-            asymmetric_rgba, encode_with_exif, exif_with_orientation, expected_oriented,
-        };
-        let dir = unique_temp_dir("oriented_export");
-        let src = asymmetric_rgba(4, 3);
-        let original = encode_with_exif(
-            &src,
-            image::ImageFormat::Png,
-            Some(exif_with_orientation(6)),
-        );
-        let path = dir.join("photo.png");
-        fs::write(&path, &original).unwrap();
-        let displayed = expected_oriented(&src, 6); // 3x4
-
-        let mut app = TestApp::new();
-        app.open_image_file(&path);
-        app.on_paint();
-
-        // 全体の出力 (PNG・BMPは可逆のため画素を、JPEGは寸法を比べる)
-        for (format, name, lossless) in [
-            (ExportFormat::Png, "out.png", true),
-            (ExportFormat::Bmp, "out.bmp", true),
-            (ExportFormat::Jpg, "out.jpg", false),
-        ] {
-            let out = dir.join(name);
-            app.write_current_image(format, &out).unwrap();
-            let written = image::open(&out).unwrap().into_rgba8();
-            assert_eq!(written.dimensions(), (3, 4), "{name}");
-            if lossless {
-                assert_eq!(written.as_raw(), displayed.as_raw(), "{name}");
-            }
-        }
-
-        // 画面座標での選択範囲の出力とトリミング
-        app.drag_select((0, 1), (2, 3));
-        let sel = app.selection.current_rect().expect("selected");
-        let expected_crop = image::imageops::crop_imm(
-            &displayed,
-            sel.x as u32,
-            sel.y as u32,
-            sel.width as u32,
-            sel.height as u32,
-        )
-        .to_image();
-        let out = dir.join("selection.png");
-        app.write_current_image(ExportFormat::Png, &out).unwrap();
-        assert_eq!(image::open(&out).unwrap().into_rgba8(), expected_crop);
-        app.execute_action(Action::Crop);
-        let cropped = app.document.current_image().unwrap();
-        assert_eq!((cropped.width, cropped.height), expected_crop.dimensions());
-        assert_eq!(&cropped.data, expected_crop.as_raw());
-
-        assert_eq!(fs::read(&path).unwrap(), original);
-        app.destroy();
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    /// 出力先がロックされていても元の画像ファイルと編集状態を保ち、解除後は保存できる。
-    #[test]
-    fn image_export_failure_keeps_existing_file_and_can_retry() {
-        use std::os::windows::fs::OpenOptionsExt as _;
-        let dir = unique_temp_dir("export_preserve");
-        let path = dir.join("保存画像.png");
-        write_png(&path, &solid_image(4, 3, [10, 20, 30, 255]));
-        let before = fs::read(&path).unwrap();
-        let mut app = TestApp::new();
-        app.open_image_file(&path);
-        app.execute_action(Action::InvertColors);
-        let edited = app.document.current_image().unwrap().data.clone();
-        let locked = fs::OpenOptions::new()
-            .read(true)
-            .share_mode(0)
-            .open(&path)
-            .unwrap();
-        let result = app.write_current_image(ExportFormat::Png, &path).map(Some);
-        assert!(app.take_success("画像の出力", result).is_none());
-        assert!(app.title().contains("画像の出力に失敗しました"));
-        drop(locked);
-        assert_eq!(fs::read(&path).unwrap(), before);
-        assert_eq!(app.document.current_image().unwrap().data, edited);
-        assert!(app.document.has_unsaved_edit());
-
-        app.write_current_image(ExportFormat::Png, &path).unwrap();
-        assert_eq!(image::open(&path).unwrap().into_rgba8().into_raw(), edited);
-        app.destroy();
-        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    /// テスト間で衝突しない一時パスを生成する。
-    /// プロセス ID とナノ秒で並列実行に対する競合を避ける。
-    fn unique_temp_path(stem: &str) -> PathBuf {
-        let pid = std::process::id();
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_nanos());
-        std::env::temp_dir().join(format!("gv_test_{stem}_{pid}_{nanos}"))
-    }
-
-    fn white_pixel() -> (u32, u32, Vec<u8>) {
-        (1, 1, vec![255, 255, 255, 255])
-    }
-
-    /// 拡張子なしパスでも PNG として保存できる (本バグ修正の回帰テスト)。
-    /// 修正前は `image::RgbaImage::save()` がパスから形式を推定できず
-    /// "The image format could not be determined" で失敗していた。
-    #[test]
-    fn write_png_with_extensionless_path_succeeds() {
-        let (w, h, rgba) = white_pixel();
-        let path = unique_temp_path("png_no_ext");
-        let result = write_image_to_path(w, h, &rgba, ExportFormat::Png, &path);
-        assert!(
-            result.is_ok(),
-            "extensionless path should succeed: {result:?}"
-        );
-        let bytes = fs::read(&path).unwrap();
-        assert_eq!(
-            &bytes[..8],
-            &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]
-        );
-        let _ = fs::remove_file(&path);
-    }
-
-    /// `.txt` のような不一致拡張子でも、指定したフォーマットでバイト列が書かれる
-    /// (形式指定による挙動保証)。同時に `DynamicImage` 経由
-    /// による RGBA→RGB 自動変換が JPEG エンコーダで動くことを検証する。
-    #[test]
-    fn write_jpg_with_txt_extension_writes_jpeg_bytes() {
-        let (w, h, rgba) = white_pixel();
-        let path = unique_temp_path("mismatch.txt");
-        let result = write_image_to_path(w, h, &rgba, ExportFormat::Jpg, &path);
-        assert!(
-            result.is_ok(),
-            "txt extension with Jpg format should succeed: {result:?}"
-        );
-        let bytes = fs::read(&path).unwrap();
-        assert_eq!(&bytes[..2], &[0xFF, 0xD8]); // JPEG SOI マーカー
-        let _ = fs::remove_file(&path);
-    }
-
-    /// BMP も拡張子なしパスで成功すること。
-    #[test]
-    fn write_bmp_with_extensionless_path_succeeds() {
-        let (w, h, rgba) = white_pixel();
-        let path = unique_temp_path("bmp_no_ext");
-        let result = write_image_to_path(w, h, &rgba, ExportFormat::Bmp, &path);
-        assert!(
-            result.is_ok(),
-            "bmp extensionless should succeed: {result:?}"
-        );
-        let bytes = fs::read(&path).unwrap();
-        assert_eq!(&bytes[..2], b"BM");
-        let _ = fs::remove_file(&path);
-    }
-
-    /// `ExportFormat` の各バリアントが期待どおりの拡張子を返すこと。
-    #[test]
-    fn export_format_returns_expected_extensions() {
-        assert_eq!(ExportFormat::Png.extension(), "png");
-        assert_eq!(ExportFormat::Jpg.extension(), "jpg");
-        assert_eq!(ExportFormat::Bmp.extension(), "bmp");
     }
 }

@@ -64,7 +64,7 @@ impl PrefetchCoordinator {
 
     /// 現在位置を中心にキャッシュ範囲を再計算し先読みを再スケジュールする（世代進行1回）。
     /// ナビゲーション後に呼ぶ。
-    pub fn reschedule(&mut self, center: usize, files: &[FileInfo]) {
+    pub fn reschedule(&mut self, center: usize, files: &[FileInfo], filter: &PersistentFilter) {
         let Some(engine) = &mut self.engine else {
             return;
         };
@@ -79,13 +79,19 @@ impl PrefetchCoordinator {
             self.cache_backward,
             center,
             files,
+            filter,
         );
     }
 
     /// キャッシュ全クリア + 先読み再スケジュールを1回の世代進行で行う。
     /// invalidate() + reschedule() のペア呼び出しでは世代が2回進行するが、
     /// このメソッドは1回のみ進行するため、ループ内で呼んでもN回で済む。
-    pub fn invalidate_and_reschedule(&mut self, center: usize, files: &[FileInfo]) {
+    pub fn invalidate_and_reschedule(
+        &mut self,
+        center: usize,
+        files: &[FileInfo],
+        filter: &PersistentFilter,
+    ) {
         let Some(engine) = &mut self.engine else {
             self.cache.clear();
             return;
@@ -101,6 +107,7 @@ impl PrefetchCoordinator {
             self.cache_backward,
             center,
             files,
+            filter,
         );
     }
 
@@ -110,7 +117,6 @@ impl PrefetchCoordinator {
         &mut self,
         current_index: Option<usize>,
         has_current_image: bool,
-        persistent_filter: &PersistentFilter,
     ) -> Vec<PrefetchEvent> {
         let Some(engine) = &self.engine else {
             return Vec::new();
@@ -129,8 +135,6 @@ impl PrefetchCoordinator {
                     if generation != current_gen {
                         continue;
                     }
-                    // 永続フィルタを先読み結果にも適用
-                    let image = persistent_filter.apply(&image).unwrap_or(image);
                     // 現在表示すべきページでまだ画像がない場合、即表示
                     let is_current = current_index == Some(index) && !has_current_image;
                     if is_current {
@@ -174,13 +178,6 @@ impl PrefetchCoordinator {
     pub fn generation(&self) -> Option<u64> {
         self.engine.as_ref().map(PrefetchEngine::generation)
     }
-
-    /// キャッシュ範囲 (forward, backward) を返す (テスト用)
-    #[cfg(test)]
-    #[allow(dead_code)]
-    pub fn cache_range(&self) -> (usize, usize) {
-        (self.cache_forward, self.cache_backward)
-    }
 }
 
 /// 距離ベースの交互読み込みでリクエストを送信する
@@ -191,6 +188,7 @@ fn send_prefetch_requests(
     cache_backward: usize,
     center: usize,
     files: &[FileInfo],
+    filter: &PersistentFilter,
 ) {
     let len = files.len();
     let max_dist = cache_forward.max(cache_backward);
@@ -199,11 +197,11 @@ fn send_prefetch_requests(
         // 前方（次のページ）
         let fwd = center + dist;
         if dist <= cache_forward && fwd < len {
-            request_file_if_needed(engine, cache, fwd, files);
+            request_file_if_needed(engine, cache, fwd, files, filter);
         }
         // 後方（前のページ）
         if dist <= cache_backward && dist <= center {
-            request_file_if_needed(engine, cache, center - dist, files);
+            request_file_if_needed(engine, cache, center - dist, files, filter);
         }
     }
 }
@@ -214,6 +212,7 @@ fn request_file_if_needed(
     cache: &PageCache,
     idx: usize,
     files: &[FileInfo],
+    filter: &PersistentFilter,
 ) {
     // 未展開コンテナは先読み対象外
     if matches!(files[idx].source, FileSource::PendingContainer { .. }) {
@@ -223,42 +222,19 @@ fn request_file_if_needed(
         return;
     }
 
-    let pdf_page = match &files[idx].source {
-        FileSource::PdfPage {
-            pdf_path,
-            page_index,
-        } => Some((pdf_path.clone(), *page_index)),
-        _ => None,
-    };
-    let archive_entry = match &files[idx].source {
-        FileSource::ArchiveEntry {
-            archive,
-            entry,
-            on_demand: true,
-            entry_index,
-        } => Some((archive.clone(), entry.clone(), *entry_index)),
-        _ => None,
-    };
-    engine.request_load(idx, files[idx].path.clone(), pdf_page, archive_entry);
+    engine.request_load(idx, files[idx].source.clone(), filter.clone());
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn make_image(size: usize) -> DecodedImage {
-        DecodedImage {
-            data: vec![0u8; size],
-            width: 1,
-            height: 1,
-        }
-    }
+    use crate::test_helpers::cache_image as make_image;
 
     #[test]
     fn invalidate_and_reschedule_advances_generation_once() {
         // エンジンなしの場合でもパニックしないこと
         let mut coord = PrefetchCoordinator::new();
-        coord.invalidate_and_reschedule(0, &[]);
+        coord.invalidate_and_reschedule(0, &[], &PersistentFilter::new());
         assert!(coord.generation().is_none());
     }
 

@@ -63,22 +63,16 @@ pub(super) fn process_single_container(
         }
     } else {
         // RAR/7z/Susie: temp展開
-        // システムクロックが UNIX epoch より前にずれていても処理を継続するため、
-        // duration_since のエラーは ZERO にフォールバック (一意性は process_id + path が担保)
-        let temp_dir = std::env::temp_dir().join(format!(
-            "gv_archive_{}_{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or(std::time::Duration::ZERO)
-                .as_millis()
-        ));
-        if let Err(e) = std::fs::create_dir_all(&temp_dir) {
-            return ContainerResult::Error {
-                path: path.to_path_buf(),
-                error: format!("一時ディレクトリ作成失敗: {e}"),
+        let temp_dir =
+            match crate::temp_cleanup::create_temp_dir(crate::temp_cleanup::TempPurpose::Archive) {
+                Ok(dir) => dir,
+                Err(e) => {
+                    return ContainerResult::Error {
+                        path: path.to_path_buf(),
+                        error: format!("一時ディレクトリ作成失敗: {e}"),
+                    };
+                }
             };
-        }
         match archive_manager.extract_images(path, &temp_dir) {
             Ok(entries) => {
                 if entries.is_empty() {

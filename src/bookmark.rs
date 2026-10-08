@@ -10,6 +10,15 @@ use windows::Win32::Foundation::HWND;
 
 use crate::file_info::FileSource;
 
+pub const BOOKMARK_EXTENSION: &str = ".gvbm";
+pub const OLD_BOOKMARK_EXTENSION: &str = ".gv3bm";
+pub const LEGACY_BOOKMARK_EXTENSION: &str = ".gvb";
+pub const BOOKMARK_EXTENSIONS: &[&str] = &[
+    BOOKMARK_EXTENSION,
+    OLD_BOOKMARK_EXTENSION,
+    LEGACY_BOOKMARK_EXTENSION,
+];
+
 /// ブックマークデータ
 pub struct BookmarkData {
     pub entries: Vec<FileSource>,
@@ -19,18 +28,15 @@ pub struct BookmarkData {
 /// パスがブックマーク拡張子 (.gvbm / .gv3bm / .gvb) を持つか判定する
 pub fn is_bookmark_file(path: &Path) -> bool {
     path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
-        e.eq_ignore_ascii_case("gvbm")
-            || e.eq_ignore_ascii_case("gv3bm")
-            || e.eq_ignore_ascii_case("gvb")
+        BOOKMARK_EXTENSIONS
+            .iter()
+            .any(|extension| e.eq_ignore_ascii_case(extension.trim_start_matches('.')))
     })
 }
 
 /// ブックマークフォルダのパスを返す (exeと同じディレクトリの"bookmarks")
 pub fn bookmark_dir() -> PathBuf {
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.join("bookmarks")))
-        .unwrap_or_else(|| PathBuf::from("bookmarks"))
+    crate::paths::bookmark_dir()
 }
 
 /// ブックマーク保存ダイアログの初期名 (`.gvbm` 拡張子付き) を組み立てる
@@ -59,9 +65,9 @@ pub fn build_initial_save_name(
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or(std::time::Duration::ZERO)
                     .as_secs();
-                format!("bookmark_{now}.gvbm")
+                format!("bookmark_{now}{BOOKMARK_EXTENSION}")
             },
-            |stem| format!("{stem}.gvbm"),
+            |stem| format!("{stem}{BOOKMARK_EXTENSION}"),
         )
 }
 
@@ -71,7 +77,7 @@ pub fn build_initial_save_name(
 /// ユーザーが保存を完了したパスを `Ok(Some(path))`、キャンセル時は `Ok(None)` で返す。
 pub fn save_bookmark(
     hwnd: HWND,
-    file_list: &crate::file_list::FileList,
+    entries: &[FileSource],
     current_index: Option<usize>,
     initial_name: &str,
 ) -> Result<Option<PathBuf>> {
@@ -83,13 +89,13 @@ pub fn save_bookmark(
         );
     }
 
-    let save_path = crate::file_ops::save_file_dialog(
+    let save_path = crate::ui::file_dialog::save_file_dialog(
         hwnd,
-        crate::file_ops::SaveFileDialogParams {
+        crate::ui::file_dialog::SaveFileDialogParams {
             default_name: initial_name,
             filter_name: "ぐらびゅブックマーク",
-            filter_ext: "*.gvbm",
-            default_ext: "gvbm",
+            filter_ext: &format!("*{BOOKMARK_EXTENSION}"),
+            default_ext: BOOKMARK_EXTENSION.trim_start_matches('.'),
             initial_dir: Some(&dir),
             ..Default::default()
         },
@@ -103,8 +109,8 @@ pub fn save_bookmark(
     content.push_str("# gv3 bookmark v1\n");
     let _ = writeln!(content, "# index: {}", current_index.unwrap_or(0));
 
-    for file in file_list.files() {
-        match &file.source {
+    for source in entries {
+        match source {
             FileSource::File(path) => {
                 let _ = writeln!(content, "file\t{}", path.display());
             }
@@ -124,28 +130,10 @@ pub fn save_bookmark(
         }
     }
 
-    crate::file_ops::write_atomic(&save_path, content.as_bytes())
+    crate::shell::file_operations::write_atomic(&save_path, content.as_bytes())
         .with_context(|| format!("ブックマーク保存失敗: {}", save_path.display()))?;
 
     Ok(Some(save_path))
-}
-
-/// ダイアログでブックマークを選択して読み込む
-///
-/// `is_archive` は旧形式 (`.gvb`) のパス文字列からアーカイブを検出するために使う。
-/// 新形式 (`.gvbm` / `.gv3bm`) では型情報がタブ区切りで明示されているため使われない。
-///
-/// 戻り値はブックマークデータと選択パスの組。キャンセル時は `Ok(None)`。
-pub fn load_bookmark(
-    hwnd: HWND,
-    is_archive: impl Fn(&Path) -> bool,
-) -> Result<Option<(BookmarkData, PathBuf)>> {
-    let path = crate::file_ops::open_bookmark_dialog(hwnd)?;
-    let Some(path) = path else {
-        return Ok(None);
-    };
-    let data = load_bookmark_from_path(&path, &is_archive)?;
-    Ok(Some((data, path)))
 }
 
 /// 指定パスからブックマークを読み込む (CLI 引数・シェル関連付け経由用)
@@ -199,7 +187,8 @@ fn parse_bookmark(content: &str) -> BookmarkData {
                 entries.push(FileSource::ArchiveEntry {
                     archive: PathBuf::from(archive_path),
                     entry: entry.to_string(),
-                    on_demand: false,  // 復元時にopen_containersで再判定
+                    on_demand: false, // 復元時にopen_containersで再判定
+                    temp_path: None,
                     entry_index: None, // 復元時はインデックス不明、open後の再構築でSomeになる
                 });
             }

@@ -41,17 +41,7 @@ pub fn apply_alpha(image: &DecodedImage, region: Option<&PixelRect>) -> DecodedI
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn test_image() -> DecodedImage {
-        DecodedImage {
-            data: vec![
-                100, 150, 200, 255, // pixel (0,0)
-                50, 100, 150, 128, // pixel (1,0)
-            ],
-            width: 2,
-            height: 1,
-        }
-    }
+    use crate::test_helpers::color_filter_image as test_image;
 
     #[test]
     fn invert_colors_basic() {

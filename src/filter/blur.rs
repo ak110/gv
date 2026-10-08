@@ -184,18 +184,8 @@ pub fn unsharp_mask(image: &DecodedImage, region: Option<&PixelRect>, radius: f6
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn uniform_image(w: u32, h: u32, value: u8) -> DecodedImage {
-        let data = vec![[value, value, value, 255u8]; (w * h) as usize]
-            .into_iter()
-            .flatten()
-            .collect();
-        DecodedImage {
-            data,
-            width: w,
-            height: h,
-        }
-    }
+    use crate::test_helpers::checker_image;
+    use crate::test_helpers::uniform_image;
 
     #[test]
     fn blur_uniform_unchanged() {
@@ -232,26 +222,6 @@ mod tests {
         let result = blur(&img, None);
         // alpha チャネルは変更されない
         assert_eq!(result.data[3], 128);
-    }
-
-    /// チェッカーパターン画像を生成 (偶数座標=c1, 奇数座標=c2)
-    fn checker_image(w: u32, h: u32, c1: u8, c2: u8) -> DecodedImage {
-        let mut data = vec![0u8; (w * h * 4) as usize];
-        for y in 0..h {
-            for x in 0..w {
-                let offset = ((y * w + x) * 4) as usize;
-                let v = if (x + y) % 2 == 0 { c1 } else { c2 };
-                data[offset] = v;
-                data[offset + 1] = v;
-                data[offset + 2] = v;
-                data[offset + 3] = 255;
-            }
-        }
-        DecodedImage {
-            data,
-            width: w,
-            height: h,
-        }
     }
 
     // --- gaussian_blur テスト ---

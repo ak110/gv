@@ -3,7 +3,7 @@
 //! - HKCU\Software\Classes\*\shell\gv — 全ファイル対象
 //! - HKCU\Software\Classes\Directory\shell\gv — フォルダ対象
 
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use windows::Win32::System::Registry::*;
 
 /// 全ファイル対象のメニューキー
@@ -40,7 +40,7 @@ pub fn register() -> Result<()> {
     let _ = super::association::delete_key_tree(HKEY_CURRENT_USER, OLD_FILE_MENU_KEY);
     let _ = super::association::delete_key_tree(HKEY_CURRENT_USER, OLD_DIR_MENU_KEY);
 
-    let exe = std::env::current_exe().context("exe パス取得失敗")?;
+    let exe = crate::paths::exe_path()?;
     let exe_str = exe.to_string_lossy();
 
     register_menu_key(FILE_MENU_KEY, &exe_str)?;

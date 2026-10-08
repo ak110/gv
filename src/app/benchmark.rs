@@ -296,14 +296,18 @@ fn pump_messages() {
 }
 
 /// 対象位置の画像の描画が成功するまで待ち、成功したかを返す
-fn wait_until_drawn(app: &mut super::AppWindow, index: usize, deadline: Instant) -> bool {
+fn wait_until_drawn(app: &super::test_support::TestApp, index: usize, deadline: Instant) -> bool {
     loop {
         pump_messages();
-        app.process_document_events();
-        if app.document.file_list().current_index() == Some(index)
-            && app.document.current_image().is_some()
+        app.with_app(super::AppWindow::process_document_events);
+        let ready = {
+            let state = app.borrow();
+            state.document.file_list().current_index() == Some(index)
+                && state.document.current_image().is_some()
+        };
+        if ready
             && matches!(
-                app.paint(),
+                app.with_app(super::AppWindow::paint),
                 Ok(crate::render::d2d_renderer::DrawOutcome::Drawn)
             )
         {
@@ -317,11 +321,11 @@ fn wait_until_drawn(app: &mut super::AppWindow, index: usize, deadline: Instant)
 }
 
 /// 操作間隔の間もメッセージを処理して先読みを進める
-fn idle(app: &mut super::AppWindow, duration: Duration) {
+fn idle(app: &super::test_support::TestApp, duration: Duration) {
     let until = Instant::now() + duration;
     while Instant::now() < until {
         pump_messages();
-        app.process_document_events();
+        app.with_app(super::AppWindow::process_document_events);
         std::thread::sleep(Duration::from_millis(1));
     }
 }
@@ -394,8 +398,8 @@ fn process_memory() -> ProcessMemory {
 
 /// 1入力分の測定 (新しいウィンドウで初回表示・前方移動・逆方向移動を順に行う)
 fn measure_input(input: &str, path: &Path, round: u32, settings: &Settings) -> Vec<Trial> {
-    use crate::ui::key_config::Action;
-    let mut app = super::test_support::TestApp::new();
+    use crate::action::Action;
+    let app = super::test_support::TestApp::new();
     let timeout = Duration::from_millis(settings.timeout_ms);
     let interval = Duration::from_millis(settings.interval_ms);
     let mut trials = Vec::new();
@@ -414,8 +418,8 @@ fn measure_input(input: &str, path: &Path, round: u32, settings: &Settings) -> V
 
     // 初回表示 (ファイル指定起動・ドロップと同じ`Document::open`)
     let start = Instant::now();
-    let opened = app.document.open(path).is_ok();
-    let drawn = opened && wait_until_drawn(&mut app, 0, start + timeout);
+    let opened = app.with_app(|state| state.document.open(path).is_ok());
+    let drawn = opened && wait_until_drawn(&app, 0, start + timeout);
     record("initial", 0, 0, start, drawn, false);
     // 初回表示に失敗した入力は移動を測らない。失敗時もウィンドウの閉じ方は成功時と同じにする
     if drawn {
@@ -425,18 +429,23 @@ fn measure_input(input: &str, path: &Path, round: u32, settings: &Settings) -> V
             ("backward", Action::NavigateBack, settings.backward_steps),
         ] {
             for step in 1..=steps {
-                idle(&mut app, interval);
+                idle(&app, interval);
                 let target = if matches!(action, Action::NavigateForward) {
                     index + 1
                 } else {
                     index - 1
                 };
-                let cached = app.document.is_cached(target);
+                let cached = app.borrow().document.is_cached(target);
                 let start = Instant::now();
-                app.execute_action(action);
-                let drawn = wait_until_drawn(&mut app, target, start + timeout);
+                app.with_app(|state| state.execute_action(action));
+                let drawn = wait_until_drawn(&app, target, start + timeout);
                 record(scenario, step, target, start, drawn, cached);
-                index = app.document.file_list().current_index().unwrap_or(target);
+                index = app
+                    .borrow()
+                    .document
+                    .file_list()
+                    .current_index()
+                    .unwrap_or(target);
             }
         }
     }
@@ -447,21 +456,9 @@ fn measure_input(input: &str, path: &Path, round: u32, settings: &Settings) -> V
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_helpers::benchmark_trial as trial;
 
     const LARGE_IMAGE_MATERIAL: (u32, u32, usize) = (8192, 4096, 8);
-
-    fn trial(input: &str, scenario: &str, ms: f64, drawn: bool) -> Trial {
-        Trial {
-            input: input.to_string(),
-            scenario: scenario.to_string(),
-            round: 0,
-            step: 0,
-            index: 0,
-            ms,
-            drawn,
-            cached: false,
-        }
-    }
 
     /// 失敗・描画未完了の試行は中央値とp95から除き、件数を別に数える
     #[test]
@@ -499,7 +496,7 @@ mod tests {
     /// 初回表示に失敗した入力は失敗試行1件を返し、移動を測らずに戻る
     #[test]
     fn failed_initial_display_is_recorded() {
-        let dir = super::super::test_support::unique_temp_dir("bench-fail");
+        let dir = crate::test_helpers::TempDir::new("bench-fail");
         let settings = Settings {
             rounds: 1,
             forward_steps: 3,
@@ -511,7 +508,6 @@ mod tests {
         assert_eq!(trials.len(), 1);
         assert_eq!(trials[0].scenario, "initial");
         assert!(!trials[0].drawn);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// 表示時間の測定 (`mise run bench`で実行する)
@@ -526,9 +522,7 @@ mod tests {
             interval_ms: 150,
             timeout_ms: 10_000,
         };
-        let work = std::env::temp_dir().join(format!("gv_bench_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&work);
-        std::fs::create_dir_all(&work).unwrap();
+        let work = crate::test_helpers::TempDir::new("bench");
         let inputs = prepare_inputs(&work, width, height, count);
 
         let mut trials = Vec::new();
@@ -539,7 +533,7 @@ mod tests {
         }
 
         let probe = crate::app::test_support::TestApp::new();
-        let window_client_size = crate::ui::window::get_client_size(probe.hwnd);
+        let window_client_size = crate::ui::window::get_client_size(probe.hwnd());
         probe.destroy();
         let report = Report {
             environment: environment(),
@@ -565,7 +559,6 @@ mod tests {
             summary: summarize(&trials),
             trials,
         };
-        let _ = std::fs::remove_dir_all(&work);
 
         let out_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/gv-bench");
         std::fs::create_dir_all(&out_dir).unwrap();
@@ -645,7 +638,7 @@ mod tests {
 
         let (width, height, count) = LARGE_IMAGE_MATERIAL;
         let budget = 192 * 1024 * 1024;
-        let work = super::super::test_support::unique_temp_dir("large_memory");
+        let work = crate::test_helpers::TempDir::new("large_memory");
         let material_output = std::process::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--ignored",
@@ -653,7 +646,7 @@ mod tests {
                 "app::benchmark::tests::prepare_large_image_material",
                 "--nocapture",
             ])
-            .env("GV_BENCH_MATERIAL_DIR", &work)
+            .env("GV_BENCH_MATERIAL_DIR", work.path())
             .output()
             .unwrap();
         assert!(
@@ -668,18 +661,22 @@ mod tests {
             .expect("素材生成プロセスのメモリー記録がない");
         let material_process_memory = serde_json::from_str(material_json).unwrap();
 
-        let mut app = super::super::test_support::TestApp::new();
-        app.document
-            .start_prefetch(
-                std::sync::Arc::new(|| {}),
-                budget,
-                crate::config::Config::default().prefetch.base_image_size(),
-            )
-            .unwrap();
+        let app = super::super::test_support::TestApp::new();
+        app.with_app(|state| {
+            state
+                .document
+                .start_prefetch(
+                    std::sync::Arc::new(|| {}),
+                    budget,
+                    crate::config::Config::default().prefetch.base_image_size(),
+                )
+                .unwrap();
+        });
         let mut samples = vec![("before_open", process_memory())];
         let start = Instant::now();
-        app.document.open(&work.join("image_000.jpg")).unwrap();
-        let drawn = wait_until_drawn(&mut app, 0, start + Duration::from_secs(30));
+        app.with_app(|state| state.document.open(&work.join("image_000.jpg")))
+            .unwrap();
+        let drawn = wait_until_drawn(&app, 0, start + Duration::from_secs(30));
         let mut trials = vec![Trial {
             input: "large-jpeg-folder".to_string(),
             scenario: "initial".to_string(),
@@ -695,14 +692,14 @@ mod tests {
         let pause = Duration::from_secs(3);
         std::thread::sleep(pause);
         samples.push(("after_ui_pause", process_memory()));
-        app.process_document_events();
+        app.with_app(super::super::AppWindow::process_document_events);
         samples.push(("after_response_drain", process_memory()));
 
         for index in 1..count {
-            let cached = app.document.is_cached(index);
+            let cached = app.borrow().document.is_cached(index);
             let start = Instant::now();
-            app.execute_action(crate::ui::key_config::Action::NavigateForward);
-            let drawn = wait_until_drawn(&mut app, index, start + Duration::from_secs(30));
+            app.with_app(|state| state.execute_action(crate::action::Action::NavigateForward));
+            let drawn = wait_until_drawn(&app, index, start + Duration::from_secs(30));
             trials.push(Trial {
                 input: "large-jpeg-folder".to_string(),
                 scenario: "forward".to_string(),
@@ -717,7 +714,7 @@ mod tests {
         samples.push(("after_navigation", process_memory()));
         app.destroy();
         samples.push(("after_window_close", process_memory()));
-        std::fs::remove_dir_all(work).unwrap();
+        drop(work);
         let report = MemoryReport {
             environment: environment(),
             width,

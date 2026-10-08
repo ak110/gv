@@ -23,7 +23,7 @@ impl AsRef<[u8]> for ZipBuffer {
     }
 }
 
-/// DocumentからUIへの通知イベント (loader_threadから構築され、app.rsで受信される)
+/// Documentが構築し、appモジュールが受信するUI通知イベント
 #[derive(Debug)]
 pub enum DocumentEvent {
     /// 画像のデコード完了、再描画可能
@@ -50,7 +50,7 @@ pub(super) enum ContainerResult {
     TempExtracted {
         path: PathBuf,
         temp_dir: PathBuf,
-        entries: Vec<(PathBuf, String)>,
+        entries: Vec<crate::archive::ExtractedEntry>,
     },
     Error {
         path: PathBuf,

@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use anyhow::Result;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::file_list::SortOrder;
 use crate::render::d2d_renderer::AlphaBackground;
@@ -10,7 +10,7 @@ use crate::render::layout::DisplayMode;
 /// 設定ファイル上の表示モード (DisplayModeへの中間表現)
 /// Fixed(f32)はデータ付きバリアントのため、serde直接対応は不可。
 /// config側でfixed_scaleと組み合わせてDisplayModeに変換する。
-#[derive(Debug, Clone, Copy, PartialEq, Default, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DisplayModeConfig {
     Shrink,
@@ -22,7 +22,7 @@ pub enum DisplayModeConfig {
 }
 
 /// アプリケーション設定 (ぐらびゅ.toml)
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Config {
     pub display: DisplayConfig,
@@ -33,56 +33,50 @@ pub struct Config {
     pub slideshow: SlideshowConfig,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct DisplayConfig {
     /// 表示モード
-    #[serde(deserialize_with = "deserialize_display_mode_config")]
+    #[serde(deserialize_with = "deserialize_enum_or_default")]
     pub auto_scale: DisplayModeConfig,
     /// 固定倍率 (auto_scale = Fixed のとき使用)
     pub fixed_scale: f32,
     /// 余白量 (ピクセル)
     pub margin: f32,
     /// α背景
-    #[serde(deserialize_with = "deserialize_alpha_background")]
+    #[serde(deserialize_with = "deserialize_enum_or_default")]
     pub alpha_background: AlphaBackground,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct PrefetchConfig {
     pub cache_base_width: u32,
     pub cache_base_height: u32,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct ListConfig {
     /// デフォルトソート
-    #[serde(deserialize_with = "deserialize_sort_order")]
+    #[serde(deserialize_with = "deserialize_enum_or_default")]
     pub default_sort: SortOrder,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct WindowConfig {
-    pub remember_position: bool,
-    pub remember_size: bool,
     pub always_on_top: bool,
     pub keep_titlebar_in_fullscreen: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct SusieConfig {
     pub plugin_dir: String,
-    /// 画像プラグイン優先度 (上が高優先)
-    pub image_plugins: Vec<String>,
-    /// アーカイブプラグイン優先度
-    pub archive_plugins: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct SlideshowConfig {
     /// スライドショー間隔 (ミリ秒)
@@ -91,61 +85,44 @@ pub struct SlideshowConfig {
     pub repeat: bool,
 }
 
-// --- カスタムデシリアライザ (フィールド単位フォールバック + stderr警告) ---
+// --- 列挙値のフィールド単位フォールバック ---
 
-fn deserialize_display_mode_config<'de, D>(deserializer: D) -> Result<DisplayModeConfig, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let s = String::deserialize(deserializer)?;
-    match s.as_str() {
-        "shrink" => Ok(DisplayModeConfig::Shrink),
-        "fit" => Ok(DisplayModeConfig::Fit),
-        "enlarge" => Ok(DisplayModeConfig::Enlarge),
-        "original" => Ok(DisplayModeConfig::Original),
-        "fixed" => Ok(DisplayModeConfig::Fixed),
-        unknown => {
-            eprintln!("警告: auto_scale の値 '{unknown}' は無効。デフォルト (fit) を使用する。");
-            Ok(DisplayModeConfig::Fit)
-        }
-    }
+trait ConfigEnum: serde::de::DeserializeOwned + Serialize + Default {
+    const FIELD: &'static str;
 }
 
-fn deserialize_alpha_background<'de, D>(deserializer: D) -> Result<AlphaBackground, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let s = String::deserialize(deserializer)?;
-    match s.as_str() {
-        "white" => Ok(AlphaBackground::White),
-        "black" => Ok(AlphaBackground::Black),
-        "checker" => Ok(AlphaBackground::Checker),
-        unknown => {
-            eprintln!(
-                "警告: alpha_background の値 '{unknown}' は無効。デフォルト (checker) を使用する。"
-            );
-            Ok(AlphaBackground::Checker)
-        }
-    }
+impl ConfigEnum for DisplayModeConfig {
+    const FIELD: &'static str = "auto_scale";
 }
 
-fn deserialize_sort_order<'de, D>(deserializer: D) -> Result<SortOrder, D::Error>
+impl ConfigEnum for AlphaBackground {
+    const FIELD: &'static str = "alpha_background";
+}
+
+impl ConfigEnum for SortOrder {
+    const FIELD: &'static str = "default_sort";
+}
+
+fn deserialize_enum_or_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
 where
     D: serde::Deserializer<'de>,
+    T: ConfigEnum,
 {
-    let s = String::deserialize(deserializer)?;
-    match s.as_str() {
-        "name" => Ok(SortOrder::Name),
-        "name_nocase" => Ok(SortOrder::NameNoCase),
-        "size" => Ok(SortOrder::Size),
-        "date" => Ok(SortOrder::Date),
-        "natural" => Ok(SortOrder::Natural),
-        unknown => {
-            eprintln!(
-                "警告: default_sort の値 '{unknown}' は無効。デフォルト (natural) を使用する。"
-            );
-            Ok(SortOrder::default())
-        }
+    let value = String::deserialize(deserializer)?;
+    let input = serde::de::value::StrDeserializer::<serde::de::value::Error>::new(&value);
+    if let Ok(parsed) = T::deserialize(input) {
+        Ok(parsed)
+    } else {
+        let default = T::default();
+        let encoded = toml::Value::try_from(&default).map_err(serde::de::Error::custom)?;
+        eprintln!(
+            "警告: {} の値 '{value}' は無効。デフォルト ({}) を使用する。",
+            T::FIELD,
+            encoded
+                .as_str()
+                .ok_or_else(|| serde::de::Error::custom("列挙値は文字列で表す"))?
+        );
+        Ok(default)
     }
 }
 
@@ -175,8 +152,6 @@ impl Default for SusieConfig {
     fn default() -> Self {
         Self {
             plugin_dir: "spi".to_string(),
-            image_plugins: Vec::new(),
-            archive_plugins: Vec::new(),
         }
     }
 }
@@ -222,7 +197,7 @@ impl Config {
     /// exeディレクトリの `ぐらびゅ.toml` を読み込む。
     /// ファイルなし / パース失敗はデフォルトにフォールバック。
     pub fn load() -> Self {
-        let Some(config_path) = Self::config_path() else {
+        let Ok(config_path) = crate::paths::config_path() else {
             return Config::default();
         };
         match Self::load_from(&config_path) {
@@ -239,13 +214,6 @@ impl Config {
         let content = std::fs::read_to_string(path)?;
         let config: Config = toml::from_str(&content)?;
         Ok(config)
-    }
-
-    /// 設定ファイルのパスを返す (exeと同じディレクトリの ぐらびゅ.toml)
-    fn config_path() -> Option<std::path::PathBuf> {
-        std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.join("ぐらびゅ.toml")))
     }
 }
 
@@ -264,8 +232,6 @@ mod tests {
         assert_eq!(config.prefetch.cache_base_width, 1024);
         assert_eq!(config.prefetch.cache_base_height, 1536);
         assert_eq!(config.list.default_sort, SortOrder::Natural);
-        assert!(!config.window.remember_position);
-        assert!(!config.window.remember_size);
         assert!(!config.window.always_on_top);
         assert!(!config.window.keep_titlebar_in_fullscreen);
         assert_eq!(config.susie.plugin_dir, "spi");
@@ -288,15 +254,11 @@ cache_base_height = 600
 default_sort = "natural"
 
 [window]
-remember_position = false
-remember_size = false
 always_on_top = true
 keep_titlebar_in_fullscreen = true
 
 [susie]
 plugin_dir = "plugins"
-image_plugins = ["ifwebp.sph"]
-archive_plugins = ["axlha.sph"]
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         assert_eq!(config.display.auto_scale, DisplayModeConfig::Fit);
@@ -305,11 +267,9 @@ archive_plugins = ["axlha.sph"]
         assert_eq!(config.display.alpha_background, AlphaBackground::Black);
         assert_eq!(config.prefetch.cache_base_width, 800);
         assert_eq!(config.list.default_sort, SortOrder::Natural);
-        assert!(!config.window.remember_position);
         assert!(config.window.always_on_top);
         assert!(config.window.keep_titlebar_in_fullscreen);
         assert_eq!(config.susie.plugin_dir, "plugins");
-        assert_eq!(config.susie.image_plugins, vec!["ifwebp.sph"]);
     }
 
     #[test]
@@ -366,52 +326,64 @@ default_sort = "bogus"
 
     #[test]
     fn toml_default_matches_rust_default() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ぐらびゅ.default.toml");
-        let config = Config::load_from(&path).expect("ぐらびゅ.default.toml の読み込みに失敗");
-        let default = Config::default();
-
-        // display
-        assert_eq!(config.display.auto_scale, default.display.auto_scale);
-        assert_eq!(config.display.fixed_scale, default.display.fixed_scale);
-        assert_eq!(config.display.margin, default.display.margin);
+        let distributed: toml::Value =
+            toml::from_str(include_str!("../ぐらびゅ.default.toml")).unwrap();
+        let defaults = toml::Value::try_from(Config::default()).unwrap();
         assert_eq!(
-            config.display.alpha_background,
-            default.display.alpha_background
+            distributed, defaults,
+            "配布設定のキーと値はConfig::defaultと一致する"
         );
+    }
 
-        // prefetch
-        assert_eq!(
-            config.prefetch.cache_base_width,
-            default.prefetch.cache_base_width
+    #[test]
+    fn legacy_settings_ignore_removed_fields() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/legacy-config.toml");
+        let config = Config::load_from(&path).unwrap();
+        assert!(config.window.always_on_top);
+        assert_eq!(config.susie.plugin_dir, "custom-spi");
+        assert_eq!(config.display.margin, 12.0);
+    }
+
+    #[test]
+    fn invalid_enum_values_warn_without_discarding_valid_fields() {
+        let output = std::process::Command::new(crate::paths::exe_path().unwrap())
+            .args([
+                "--exact",
+                "config::tests::invalid_enum_warning_child",
+                "--nocapture",
+            ])
+            .env("GV_CONFIG_WARNING_CHILD", "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
         );
-        assert_eq!(
-            config.prefetch.cache_base_height,
-            default.prefetch.cache_base_height
-        );
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        for (field, default) in [
+            ("auto_scale", "fit"),
+            ("alpha_background", "checker"),
+            ("default_sort", "natural"),
+        ] {
+            assert!(stderr.contains(field), "{stderr}");
+            assert!(
+                stderr.contains(&format!("デフォルト ({default})")),
+                "{stderr}"
+            );
+        }
+    }
 
-        // list
-        assert_eq!(config.list.default_sort, default.list.default_sort);
-
-        // window
-        assert_eq!(
-            config.window.remember_position,
-            default.window.remember_position
-        );
-        assert_eq!(config.window.remember_size, default.window.remember_size);
-        assert_eq!(config.window.always_on_top, default.window.always_on_top);
-        assert_eq!(
-            config.window.keep_titlebar_in_fullscreen,
-            default.window.keep_titlebar_in_fullscreen
-        );
-
-        // susie
-        assert_eq!(config.susie.plugin_dir, default.susie.plugin_dir);
-        assert_eq!(config.susie.image_plugins, default.susie.image_plugins);
-        assert_eq!(config.susie.archive_plugins, default.susie.archive_plugins);
-
-        // slideshow
-        assert_eq!(config.slideshow.interval_ms, default.slideshow.interval_ms);
-        assert_eq!(config.slideshow.repeat, default.slideshow.repeat);
+    #[test]
+    fn invalid_enum_warning_child() {
+        if std::env::var_os("GV_CONFIG_WARNING_CHILD").is_none() {
+            return;
+        }
+        let config: Config = toml::from_str("[display]\nauto_scale='invalid'\nalpha_background='invalid'\nmargin=12\n[list]\ndefault_sort='invalid'").unwrap();
+        assert_eq!(config.display.auto_scale, DisplayModeConfig::Fit);
+        assert_eq!(config.display.alpha_background, AlphaBackground::Checker);
+        assert_eq!(config.list.default_sort, SortOrder::Natural);
+        assert_eq!(config.display.margin, 12.0);
     }
 
     #[test]

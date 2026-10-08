@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use anyhow::{Result, bail};
+use anyhow::{Context as _, Result, bail};
+
+use crate::action::Action;
 
 /// 配布版のデフォルトキーバインドTOML。
 /// ビルド時に取り込み、`with_defaults()` のソースとして使う。
@@ -48,159 +50,12 @@ pub enum InputChord {
     },
 }
 
-// --- Action enum ---
-
-/// 全操作を列挙するenum
-#[repr(u16)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum::EnumIter)]
-pub enum Action {
-    // --- ナビゲーション ---
-    NavigateBack,
-    NavigateForward,
-    Navigate5Back,
-    Navigate5Forward,
-    Navigate50Back,
-    Navigate50Forward,
-    NavigateFirst,
-    NavigateLast,
-    NavigatePrevFolder,
-    NavigateNextFolder,
-    NavigatePrevMark,
-    NavigateNextMark,
-    NavigateToPage,
-    SortNavigateBack,
-    SortNavigateForward,
-    ShuffleAll,
-    ShuffleGroups,
-
-    // --- 表示モード ---
-    DisplayAutoShrink,
-    DisplayAutoFit,
-    ZoomIn,
-    ZoomOut,
-    ZoomReset,
-    ToggleMargin,
-    CycleAlphaBackground,
-
-    // --- ウィンドウ ---
-    ToggleFullscreen,
-    Minimize,
-    ToggleMaximize,
-    ToggleAlwaysOnTop,
-    ToggleCursorHide,
-    ToggleMenuBar,
-
-    // --- ファイル操作 ---
-    NewWindow,
-    OpenFile,
-    OpenFolder,
-    CloseAll,
-    Reload,
-    RemoveFromList,
-    DeleteFile,
-    MoveFile,
-    CopyFile,
-    OpenContainingFolder,
-    CopyFileName,
-    CopyImage,
-    PasteImage,
-    ExportJpg,
-    ExportBmp,
-    ExportPng,
-    ShowImageInfo,
-
-    // --- マーク操作 ---
-    MarkSet,
-    MarkUnset,
-    MarkInvertAll,
-    MarkInvertToHere,
-    MarkedRemoveFromList,
-    MarkedDelete,
-    MarkedMove,
-    MarkedCopy,
-    MarkedCopyNames,
-
-    // --- 編集 ---
-    DeselectSelection,
-    Crop,
-    FlipHorizontal,
-    FlipVertical,
-    Rotate180,
-    Rotate90CW,
-    Rotate90CCW,
-    RotateArbitrary,
-    Resize,
-
-    // --- フィルタ (画像メニュー) ---
-    Fill,
-    Levels,
-    Gamma,
-    BrightnessContrast,
-    Mosaic,
-    GaussianBlur,
-    UnsharpMask,
-    InvertColors,
-    GrayscaleSimple,
-    GrayscaleStrict,
-    ApplyAlpha,
-    Blur,
-    BlurStrong,
-    Sharpen,
-    SharpenStrong,
-    MedianFilter,
-
-    // --- 永続フィルタ ---
-    PFilterToggle,
-    PFilterFlipH,
-    PFilterFlipV,
-    PFilterRotate180,
-    PFilterRotate90CW,
-    PFilterRotate90CCW,
-    PFilterLevels,
-    PFilterGamma,
-    PFilterBrightnessContrast,
-    PFilterGrayscaleSimple,
-    PFilterGrayscaleStrict,
-    PFilterBlur,
-    PFilterBlurStrong,
-    PFilterSharpen,
-    PFilterSharpenStrong,
-    PFilterGaussianBlur,
-    PFilterUnsharpMask,
-    PFilterMedianFilter,
-    PFilterInvertColors,
-    PFilterApplyAlpha,
-
-    // --- ブックマーク ---
-    BookmarkSave,
-    BookmarkLoad,
-
-    // --- ファイルリスト ---
-    ToggleFileList,
-
-    // --- ユーティリティ ---
-    OpenExeFolder,
-    OpenBookmarkFolder,
-    OpenSpiFolder,
-    OpenTempFolder,
-    ShowHelp,
-    CheckUpdate,
-    OpenHomepage,
-    RegisterShell,
-    UnregisterShell,
-    Exit,
-
-    // --- スライドショー ---
-    SlideshowToggle,
-    SlideshowFaster,
-    SlideshowSlower,
-}
-
 // --- KeyConfig ---
 
 /// キーバインド設定
 pub struct KeyConfig {
     bindings: HashMap<InputChord, Action>,
+    chords: HashMap<Action, Vec<InputChord>>,
 }
 
 impl KeyConfig {
@@ -209,7 +64,7 @@ impl KeyConfig {
         if let Some(p) = path
             && let Ok(content) = std::fs::read_to_string(p)
         {
-            match Self::parse_toml(&content) {
+            match Self::with_overrides(&content) {
                 Ok(config) => return config,
                 Err(e) => {
                     eprintln!("キーバインド設定のパースに失敗 ({e})。デフォルトを使用する。");
@@ -232,6 +87,39 @@ impl KeyConfig {
         self.bindings.get(&chord).copied()
     }
 
+    /// 操作に割り当てた入力を、設定値に書かれた順に返す。
+    pub fn chords(&self, action: Action) -> &[InputChord] {
+        self.chords.get(&action).map_or(&[], Vec::as_slice)
+    }
+
+    pub fn key_labels(&self, action: Action) -> Vec<String> {
+        self.chords(action)
+            .iter()
+            .copied()
+            .map(InputChord::display)
+            .collect()
+    }
+
+    /// 配布設定へ、指定された操作だけを上書きする。
+    fn with_overrides(content: &str) -> Result<Self> {
+        let overrides = Self::parse_toml(content)?;
+        let mut config = Self::with_defaults();
+        config.chords.retain(|action, chords| {
+            if overrides.chords.contains_key(action) {
+                return false;
+            }
+            chords.retain(|chord| !overrides.bindings.contains_key(chord));
+            true
+        });
+        config.chords.extend(overrides.chords);
+        config.bindings = config
+            .chords
+            .iter()
+            .flat_map(|(&action, chords)| chords.iter().map(move |&chord| (chord, action)))
+            .collect();
+        Ok(config)
+    }
+
     /// TOMLテキストからパース。
     /// セクション名を識別し、`[persistent_filter]` 配下のフィールドを `PFilter*` アクションへ解決する。
     /// 同名フィールド (`levels` 等) が `[filter]` と `[persistent_filter]` で別アクションへ
@@ -239,6 +127,7 @@ impl KeyConfig {
     fn parse_toml(content: &str) -> Result<Self> {
         let table: toml::Table = content.parse()?;
         let mut bindings = HashMap::new();
+        let mut chords: HashMap<Action, Vec<InputChord>> = HashMap::new();
 
         for (section, value) in &table {
             let Some(section_table) = value.as_table() else {
@@ -249,29 +138,75 @@ impl KeyConfig {
                     continue;
                 };
                 let Some(key_str) = val.as_str() else {
-                    continue;
+                    bail!("[{section}].{field} の割り当ては文字列で指定してください");
                 };
+                // 空文字列も操作単位の指定として保持し、デフォルトの割り当てを解除する。
+                if let Some(old) = chords.insert(action, Vec::new()) {
+                    for chord in old {
+                        bindings.remove(&chord);
+                    }
+                }
                 // カンマ区切りで複数キーを登録
                 for part in key_str.split(',') {
                     let part = part.trim();
                     if part.is_empty() {
                         continue;
                     }
-                    match parse_chord(part) {
-                        Ok(chord) => {
-                            bindings.insert(chord, action);
-                        }
-                        Err(e) => {
-                            eprintln!(
-                                "キーバインドパースエラー ([{section}].{field} = {part:?}): {e}"
-                            );
-                        }
+                    let chord = parse_chord(part).with_context(|| {
+                        format!("[{section}].{field} = {part:?} の入力を解釈できません")
+                    })?;
+                    if let Some(previous) = bindings.insert(chord, action)
+                        && let Some(previous_chords) = chords.get_mut(&previous)
+                    {
+                        previous_chords.retain(|&c| c != chord);
                     }
+                    chords.get_mut(&action).expect("登録済みの操作").push(chord);
                 }
             }
         }
 
-        Ok(Self { bindings })
+        Ok(Self { bindings, chords })
+    }
+}
+
+impl InputChord {
+    /// 解析可能なキー名へ戻し、マウス入力は表示用の日本語名にする。
+    pub fn display(self) -> String {
+        let (modifiers, name) = match self {
+            Self::Mouse { button } => {
+                return match button {
+                    MouseButton::LeftDoubleClick => "左ダブルクリック",
+                    MouseButton::MiddleClick => "ホイールクリック",
+                }
+                .to_string();
+            }
+            Self::Wheel {
+                direction,
+                modifiers,
+            } => (
+                modifiers,
+                match direction {
+                    WheelDirection::Up => "ホイール(上)".to_string(),
+                    WheelDirection::Down => "ホイール(下)".to_string(),
+                },
+            ),
+            Self::Key { vk, modifiers } => {
+                let name = KEY_NAMES.iter().find(|&&(_, code)| code == vk).map_or_else(
+                    || {
+                        char::from_u32(u32::from(vk))
+                            .map_or_else(|| format!("VK {vk:02X}"), |c| c.to_string())
+                    },
+                    |&(name, _)| name.to_string(),
+                );
+                (modifiers, name)
+            }
+        };
+        format!(
+            "{}{}{}{name}",
+            if modifiers.ctrl { "Ctrl+" } else { "" },
+            if modifiers.shift { "Shift+" } else { "" },
+            if modifiers.alt { "Alt+" } else { "" }
+        )
     }
 }
 
@@ -301,12 +236,12 @@ pub fn parse_chord(s: &str) -> Result<InputChord> {
 
     // マウス操作
     match s {
-        "LeftDoubleClick" => {
+        "LeftDoubleClick" | "左ダブルクリック" => {
             return Ok(InputChord::Mouse {
                 button: MouseButton::LeftDoubleClick,
             });
         }
-        "MiddleClick" => {
+        "MiddleClick" | "ホイールクリック" => {
             return Ok(InputChord::Mouse {
                 button: MouseButton::MiddleClick,
             });
@@ -588,7 +523,63 @@ fn field_to_action(field: &str) -> Option<Action> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn load_overlays_only_the_specified_action_and_falls_back_on_errors() {
+        use strum::IntoEnumIterator as _;
+        let dir = crate::test_helpers::TempDir::new("keys_overlay");
+        let path = dir.join("keys.toml");
+        std::fs::write(&path, "[file]\nopen_file = \"Ctrl+Shift+F12\"\n").unwrap();
+        let loaded = super::KeyConfig::load(Some(&path));
+        let defaults = super::KeyConfig::with_defaults();
+        for action in crate::action::Action::iter() {
+            if action != crate::action::Action::OpenFile {
+                assert_eq!(loaded.chords(action), defaults.chords(action), "{action:?}");
+            }
+        }
+        assert_eq!(
+            loaded.key_labels(crate::action::Action::OpenFile),
+            ["Ctrl+Shift+F12"]
+        );
+        std::fs::write(&path, "[file]\nopen_file = \"\"\n").unwrap();
+        assert!(
+            super::KeyConfig::load(Some(&path))
+                .chords(crate::action::Action::OpenFile)
+                .is_empty()
+        );
+        std::fs::write(&path, "invalid = [").unwrap();
+        let fallback = super::KeyConfig::load(Some(&path));
+        for action in crate::action::Action::iter() {
+            assert_eq!(fallback.chords(action), defaults.chords(action));
+        }
+    }
     use super::*;
+
+    #[test]
+    fn partial_overrides_preserve_other_actions_and_display_order() {
+        use strum::IntoEnumIterator as _;
+        let defaults = KeyConfig::with_defaults();
+        let config =
+            KeyConfig::with_overrides("[file]\nopen_file = \"Ctrl+Shift+F12, MiddleClick\"")
+                .unwrap();
+        assert_eq!(
+            config.key_labels(Action::OpenFile),
+            ["Ctrl+Shift+F12", "ホイールクリック"]
+        );
+        for action in Action::iter() {
+            if !matches!(action, Action::OpenFile | Action::ShowImageInfo) {
+                assert_eq!(config.chords(action), defaults.chords(action), "{action:?}");
+            }
+        }
+        assert!(config.chords(Action::ShowImageInfo).is_empty());
+        assert_eq!(config.lookup(parse_chord("Ctrl+O").unwrap()), None);
+        for chord in config.chords(Action::OpenFile) {
+            assert_eq!(config.lookup(*chord), Some(Action::OpenFile));
+            assert_eq!(parse_chord(&chord.display()).unwrap(), *chord);
+        }
+        let disabled = KeyConfig::with_overrides("[file]\nopen_file = \"\"").unwrap();
+        assert!(disabled.chords(Action::OpenFile).is_empty());
+        assert!(KeyConfig::with_overrides("[file]\nopen_file = \"UnknownKey\"").is_err());
+    }
 
     #[test]
     fn parse_simple_key() {

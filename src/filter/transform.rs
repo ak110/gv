@@ -262,21 +262,7 @@ pub fn resize(image: &DecodedImage, new_width: u32, new_height: u32) -> Result<D
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// 4x4のテスト画像を作成 (各ピクセルが座標で識別可能)
-    fn test_image_4x4() -> DecodedImage {
-        let mut data = Vec::with_capacity(4 * 4 * 4);
-        for y in 0..4u8 {
-            for x in 0..4u8 {
-                data.extend_from_slice(&[x * 60, y * 60, 0, 255]);
-            }
-        }
-        DecodedImage {
-            data,
-            width: 4,
-            height: 4,
-        }
-    }
+    use crate::test_helpers::test_image_4x4;
 
     #[test]
     fn output_image_returns_whole_image_without_selection() {

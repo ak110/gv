@@ -6,6 +6,8 @@ use anyhow::Result;
 use super::{ArchiveHandler, ExtractedEntry, extract_filename, resolve_filename};
 use crate::extension_registry::ExtensionRegistry;
 
+pub(super) const EXTENSIONS: &[&str] = &[".rar", ".cbr"];
+
 /// RAR/cbrアーカイブハンドラ
 /// unrarクレートはストリーム型APIのため、1パスで全画像を展開する
 pub struct RarHandler {
@@ -20,7 +22,7 @@ impl RarHandler {
 
 impl ArchiveHandler for RarHandler {
     fn supported_extensions(&self) -> Vec<String> {
-        vec![".rar".to_string(), ".cbr".to_string()]
+        EXTENSIONS.iter().map(ToString::to_string).collect()
     }
 
     fn extract_images(
@@ -48,12 +50,11 @@ impl ArchiveHandler for RarHandler {
             let entry = cursor.entry();
             let entry_path = entry.filename.to_string_lossy().to_string();
             let filename = extract_filename(&entry_path);
+            let modified = super::dos_modified(entry.file_time);
 
             // ディレクトリ、空ファイル名、隠しファイルはスキップ
-            let should_extract = !entry.is_directory()
-                && !filename.is_empty()
-                && !filename.starts_with('.')
-                && self.registry.is_image_extension(filename);
+            let should_extract =
+                super::is_image_entry(&entry_path, entry.is_directory(), &self.registry);
 
             if should_extract {
                 // エントリデータを取得する
@@ -61,7 +62,7 @@ impl ArchiveHandler for RarHandler {
                     Ok((data, next)) => {
                         let out_path = resolve_filename(target_dir, filename);
                         if std::fs::write(&out_path, &data).is_ok() {
-                            results.push((out_path, entry_path));
+                            results.push((out_path, entry_path, modified));
                         }
                         archive = next;
                     }
@@ -105,11 +106,9 @@ mod tests {
     fn nonexistent_rar_returns_error() {
         let reg = Arc::new(ExtensionRegistry::new());
         let handler = RarHandler::new(reg);
-        let dir = std::env::temp_dir().join("gv_test_rar_noexist");
-        let _ = std::fs::create_dir_all(&dir);
+        let dir = crate::test_helpers::TempDir::new("rar_noexist");
         let result: Result<Vec<super::ExtractedEntry>> =
             handler.extract_images(Path::new("nonexistent.rar"), &dir);
         assert!(result.is_err());
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

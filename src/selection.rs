@@ -472,16 +472,7 @@ fn apply_resize(rect: PixelRect, handle: HandleKind, dx: i32, dy: i32) -> PixelR
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn test_draw_rect() -> DrawRect {
-        // 画像100x100を画面の (10,10)-(210,210) に描画している想定
-        DrawRect {
-            x: 10.0,
-            y: 10.0,
-            width: 200.0,
-            height: 200.0,
-        }
-    }
+    use crate::test_helpers::test_draw_rect;
 
     #[test]
     fn screen_to_image_basic() {

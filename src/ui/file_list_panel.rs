@@ -26,9 +26,12 @@ const DEFAULT_WIDTH: i32 = 250;
 const SUBCLASS_ID: usize = 1;
 
 /// ファイルリストパネル
+#[derive(Clone)]
 pub struct FileListPanel {
     listview: HWND,
-    parent: HWND,
+    /// F4で選ぶ表示希望。フルスクリーン中も保持する。
+    requested_visible: bool,
+    /// ListViewへ適用した実表示。
     visible: bool,
     width: i32,
 }
@@ -114,20 +117,28 @@ impl FileListPanel {
 
         Self {
             listview,
-            parent,
+            requested_visible: false,
             visible: false,
             width: DEFAULT_WIDTH,
         }
     }
 
     /// 表示/非表示をトグル
-    pub fn toggle(&mut self) {
-        self.visible = !self.visible;
+    pub fn toggle(&mut self, fullscreen: bool) {
+        self.requested_visible = !self.requested_visible;
+        self.sync_visibility(fullscreen);
+    }
+
+    /// 表示希望とフルスクリーン状態を実表示へ反映する。
+    pub fn sync_visibility(&mut self, fullscreen: bool) {
+        self.visible = self.requested_visible && !fullscreen;
+    }
+
+    /// 確定済みの表示状態をWin32へ適用する。アプリの借用外で呼び出す。
+    pub fn apply_visibility(&self) {
         let cmd = if self.visible { SW_SHOW } else { SW_HIDE };
         unsafe {
             let _ = ShowWindow(self.listview, cmd);
-            // 親のレイアウト再計算をトリガー
-            let _ = SendMessageW(self.parent, WM_SIZE, None, None);
         }
     }
 
@@ -278,18 +289,9 @@ impl FileListPanel {
         self.visible
     }
 
-    /// 非表示にするがフラグは保持する (フルスクリーン開始時用)
-    pub fn hide_preserve_state(&self) {
-        unsafe {
-            let _ = ShowWindow(self.listview, SW_HIDE);
-        }
-    }
-
-    /// 表示する (フルスクリーン解除時用、visibleフラグがtrueの場合のみ呼ぶ)
-    pub fn show(&self) {
-        unsafe {
-            let _ = ShowWindow(self.listview, SW_SHOW);
-        }
+    /// F4で選んだ表示希望を返す。
+    pub fn requested_visible(&self) -> bool {
+        self.requested_visible
     }
 }
 

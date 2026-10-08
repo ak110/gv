@@ -1,4 +1,7 @@
 use std::collections::HashSet;
+use std::path::Path;
+
+pub const PDF_EXTENSION: &str = ".pdf";
 
 /// 画像・アーカイブ拡張子のレジストリ。
 ///
@@ -13,16 +16,13 @@ pub struct ExtensionRegistry {
 impl ExtensionRegistry {
     /// デフォルト拡張子で初期化
     pub fn new() -> Self {
-        let image_extensions = [
-            ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tiff", ".tif", ".tga", ".ico",
-            ".cur",
-        ]
-        .iter()
-        .map(ToString::to_string)
-        .collect();
+        let image_extensions = crate::image::StandardDecoder::extensions()
+            .map(ToString::to_string)
+            .collect();
 
-        let archive_extensions = [".zip", ".cbz", ".rar", ".cbr", ".7z"]
-            .iter()
+        let archive_extensions = crate::archive::builtin_formats()
+            .into_iter()
+            .flat_map(|(_, extensions)| extensions.iter())
             .map(ToString::to_string)
             .collect();
 
@@ -30,6 +30,24 @@ impl ExtensionRegistry {
             image_extensions,
             archive_extensions,
         }
+    }
+
+    pub fn is_pdf_path(path: &Path) -> bool {
+        path.extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case(PDF_EXTENSION.trim_start_matches('.')))
+    }
+
+    pub fn image_extensions(&self) -> Vec<&str> {
+        let mut extensions: Vec<_> = self.image_extensions.iter().map(String::as_str).collect();
+        extensions.sort_unstable();
+        extensions
+    }
+
+    pub fn archive_extensions(&self) -> Vec<&str> {
+        let mut extensions: Vec<_> = self.archive_extensions.iter().map(String::as_str).collect();
+        extensions.sort_unstable();
+        extensions
     }
 
     /// ファイル名が画像拡張子を持つか判定する

@@ -1,18 +1,20 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod action;
 mod app;
 mod archive;
 mod bookmark;
 mod clipboard;
 mod config;
 mod document;
-mod editing;
 mod extension_registry;
 mod file_info;
 mod file_list;
-mod file_ops;
 mod filter;
+mod filter_spec;
+mod help;
 mod image;
+mod paths;
 mod pdf_renderer;
 mod persistent_filter;
 mod prefetch;
@@ -37,6 +39,20 @@ use windows::Win32::UI::HiDpi::{
 };
 
 fn main() -> Result<()> {
+    if std::env::args().nth(1).is_some_and(|arg| {
+        matches!(
+            arg.as_str(),
+            "--help" | "-h" | "--register" | "--unregister"
+        )
+    }) {
+        // コンソールが無い起動では接続に失敗し、GUIと同じく出力先を持たない。
+        unsafe {
+            let _ = windows::Win32::System::Console::AttachConsole(
+                windows::Win32::System::Console::ATTACH_PARENT_PROCESS,
+            );
+        }
+    }
+
     // CLIフラグの分岐 (DPI/COM初期化前に処理: 副作用不要なもの)
     if let Some(arg) = std::env::args().nth(1) {
         match arg.as_str() {
@@ -83,7 +99,7 @@ fn main() -> Result<()> {
         .collect();
 
     // メインウィンドウ作成
-    // _appはメッセージループ中に生存する必要がある (Box<AppWindow>のドロップ防止)
+    // _appはメッセージループ中に生存する必要がある (Box<WindowState>のドロップ防止)
     let _app = app::AppWindow::create(config, &initial_files)?;
 
     // メッセージループ
@@ -93,10 +109,7 @@ fn main() -> Result<()> {
 
 /// 旧ファイル名 (gv3.*) を新ファイル名 (ぐらびゅ.*) にリネームする
 fn migrate_old_filenames() {
-    let Some(dir) = std::env::current_exe()
-        .ok()
-        .and_then(|e| e.parent().map(std::path::Path::to_path_buf))
-    else {
+    let Ok(dir) = crate::paths::exe_dir() else {
         return;
     };
     let migrations = [
@@ -115,36 +128,7 @@ fn migrate_old_filenames() {
 }
 
 fn print_help() {
-    let version = env!("CARGO_PKG_VERSION");
-    println!(
-        "\
-ぐらびゅ v{version} - Windows用画像ビューアー
-
-使い方:
-  ぐらびゅ.exe [オプション] [ファイルパス]
-
-オプション:
-  --help, -h        このヘルプを表示します
-  --register        ファイル関連付け・コンテキストメニュー・送るを一括登録します
-  --unregister      一括解除します
-
-対応フォーマット:
-  画像:     JPEG, PNG, GIF, BMP, WebP
-  ドキュメント: PDF
-  アーカイブ: ZIP/cbz, RAR/cbr, 7z
-  ※ 64bit Susieプラグイン (.sph/.spi) で拡張できます
-
-主要キーバインド:
-  ← / →              前後の画像に移動
-  ホイール上/下       前後の画像に移動
-  PageUp / PageDown   5ページ移動
-  Ctrl+Home / End     最初 / 最後へ
-  Ctrl+ホイール       拡大 / 縮小
-  Alt+Enter           フルスクリーン
-  Esc                 メニューバー表示/非表示
-  F4                  ファイルリスト表示/非表示
-  F1                  ヘルプ表示
-
-詳細は ぐらびゅ.keys.default.toml を参照してください。"
-    );
+    let key_path = crate::paths::key_config_path().ok();
+    let keys = ui::key_config::KeyConfig::load(key_path.as_deref());
+    println!("{}", help::build_help(&keys));
 }

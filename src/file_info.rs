@@ -17,10 +17,12 @@ pub enum FileSource {
         entry: String,
         /// trueならオンデマンド取得、falseならtemp展開済み
         on_demand: bool,
+        /// 一括展開した画像の実ファイル。オンデマンドではNone。
+        temp_path: Option<PathBuf>,
         /// アーカイブ内エントリの再アクセス用インデックス。
-        /// 新規ZIPオープン時は`Some`、ブックマーク等の旧形式復元時は`None`を保持し、
-        /// ZIPオンデマンド取得経路は値が`Some`ならインデックスベースAPIへ、
-        /// `None`なら名前ベースAPIへフォールバックする
+        /// オンデマンド取得には`Some`が必須で、表示名から番号を推測しない。
+        /// ブックマークの`None`はコンテナを開き直して番号付きの行へ再構築する。
+        /// 一括展開済みの画像は番号を使わず、temp_pathから読み込む。
         entry_index: Option<u32>,
     },
     /// PDFのページ
@@ -30,6 +32,84 @@ pub enum FileSource {
 }
 
 impl FileSource {
+    /// 削除・移動できる通常ファイルのパス。
+    pub fn file_path(&self) -> Option<&Path> {
+        match self {
+            Self::File(path) => Some(path),
+            _ => None,
+        }
+    }
+
+    /// 通常ファイルだけを削除・移動の対象にする。
+    pub fn can_delete(&self) -> bool {
+        self.file_path().is_some()
+    }
+    pub fn can_move(&self) -> bool {
+        self.file_path().is_some()
+    }
+
+    /// 複製できる内容を持つか。未展開コンテナは対象外。
+    pub fn can_copy(&self) -> bool {
+        !self.is_pending_container()
+    }
+
+    /// デコーダへ渡す元の画像ファイル名。
+    pub fn filename_hint(&self) -> String {
+        match self {
+            Self::ArchiveEntry { entry, .. } => crate::archive::extract_filename(entry).to_string(),
+            Self::File(path) => path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string(),
+            _ => self.default_save_name(),
+        }
+    }
+
+    /// 画像内容を取得する。PDFはページを描画しPNGとして返す。
+    pub fn read_bytes(
+        &self,
+        manager: &crate::archive::ArchiveManager,
+        buffers: &std::sync::RwLock<std::collections::HashMap<PathBuf, crate::document::ZipBuffer>>,
+    ) -> Result<Vec<u8>> {
+        match self {
+            Self::File(path) => {
+                std::fs::read(path).with_context(|| format!("画像読み込み失敗: {}", path.display()))
+            }
+            Self::ArchiveEntry {
+                archive,
+                entry_index,
+                temp_path,
+                on_demand,
+                ..
+            } => {
+                if !on_demand {
+                    let path = temp_path
+                        .as_ref()
+                        .context("アーカイブ画像の展開先が未解決")?;
+                    return Ok(std::fs::read(path)?);
+                }
+                let index = entry_index.context("オンデマンド取得用のエントリ番号がない")?;
+                let read = |buffer: &[u8]| manager.read_entry_at(archive, Some(buffer), index);
+                let cached = buffers.read().expect("zip_buffers lock poisoned");
+                if let Some(buffer) = cached.get(archive) {
+                    read(buffer.as_ref())
+                } else {
+                    drop(cached);
+                    read(&std::fs::read(archive)?)
+                }
+            }
+            Self::PdfPage {
+                pdf_path,
+                page_index,
+            } => crate::image::encode_png(&crate::pdf_renderer::render_pdf_page_safe(
+                pdf_path,
+                *page_index,
+            )?),
+            Self::PendingContainer { .. } => anyhow::bail!("未展開コンテナからは取得できない"),
+        }
+    }
+
     /// 表示用パスを生成する。
     ///
     /// 戻り値は OS パスではなく UI 表示専用の論理パス文字列であり、
@@ -51,17 +131,6 @@ impl FileSource {
                 format!("{} (未展開)", container_path.display())
             }
         }
-    }
-
-    /// コンテナ内のエントリかどうか (アーカイブまたはPDF)
-    /// 破壊的ファイル操作 (削除・移動等) のガードに使用
-    pub fn is_contained(&self) -> bool {
-        matches!(
-            self,
-            FileSource::ArchiveEntry { .. }
-                | FileSource::PdfPage { .. }
-                | FileSource::PendingContainer { .. }
-        )
     }
 
     /// 未展開コンテナかどうか
@@ -172,7 +241,6 @@ impl fmt::Display for FileSource {
 
 /// 個々のファイル情報
 pub struct FileInfo {
-    pub path: PathBuf,      // 実ファイルパス (デコード/描画用。アーカイブ時はtempパス)
     pub source: FileSource, // 論理ソース (表示・保存・ブックマーク用)
     pub file_name: String,  // ソート用キャッシュ
     pub file_size: u64,
@@ -197,7 +265,6 @@ impl FileInfo {
 
         Ok(Self {
             source: FileSource::File(path.to_path_buf()),
-            path: path.to_path_buf(),
             file_name,
             file_size: metadata.len(),
             modified,
@@ -231,9 +298,128 @@ mod tests {
     use std::io::Write;
 
     #[test]
+    fn on_demand_requires_index_with_and_without_cached_zip() {
+        let dir = crate::test_helpers::TempDir::new("on_demand_index");
+        let archive = dir.join("images.zip");
+        let png = crate::test_helpers::create_1x1_white_png();
+        crate::test_helpers::create_test_zip(&archive, &[("image.png", &png)]);
+        let manager = crate::test_helpers::test_archive_manager(&std::sync::Arc::new(
+            crate::extension_registry::ExtensionRegistry::new(),
+        ));
+        let source = FileSource::ArchiveEntry {
+            archive: archive.clone(),
+            entry: "image.png".into(),
+            on_demand: true,
+            temp_path: None,
+            entry_index: None,
+        };
+        for cached in [false, true] {
+            let mut contents = std::collections::HashMap::new();
+            if cached {
+                contents.insert(
+                    archive.clone(),
+                    crate::document::ZipBuffer::Memory(std::fs::read(&archive).unwrap()),
+                );
+            }
+            let buffers = std::sync::RwLock::new(contents);
+            assert!(source.read_bytes(&manager, &buffers).is_err());
+            for synchronous in [false, true] {
+                assert!(
+                    crate::image::decode_source(
+                        &source,
+                        &crate::test_helpers::test_decoder(),
+                        &manager,
+                        &buffers,
+                        synchronous,
+                    )
+                    .is_err()
+                );
+            }
+
+            // 表示名が一致しなくても、番号で選んだ内容を取得する。
+            let mut indexed = source.clone();
+            if let FileSource::ArchiveEntry {
+                entry, entry_index, ..
+            } = &mut indexed
+            {
+                *entry = "different-display-name.png".into();
+                *entry_index = Some(0);
+            }
+            assert_eq!(indexed.read_bytes(&manager, &buffers).unwrap(), png);
+            let mut invalid = indexed;
+            if let FileSource::ArchiveEntry { entry_index, .. } = &mut invalid {
+                *entry_index = Some(9);
+            }
+            assert!(invalid.read_bytes(&manager, &buffers).is_err());
+        }
+
+        // 一括展開済みの画像には番号を要求しない。
+        let extracted = dir.join("extracted.png");
+        std::fs::write(&extracted, &png).unwrap();
+        let source = FileSource::ArchiveEntry {
+            archive,
+            entry: "image.png".into(),
+            on_demand: false,
+            temp_path: Some(extracted),
+            entry_index: None,
+        };
+        assert_eq!(
+            source
+                .read_bytes(
+                    &manager,
+                    &std::sync::RwLock::new(std::collections::HashMap::new())
+                )
+                .unwrap(),
+            png
+        );
+    }
+
+    #[test]
+    fn bookmark_zip_rebuilds_index_before_reading() {
+        let dir = crate::test_helpers::TempDir::new("bookmark_zip_index");
+        let archive = dir.join("images.zip");
+        let first = crate::test_helpers::solid_image(2, 1, [10, 20, 30, 255]);
+        let selected = crate::test_helpers::solid_image(3, 2, [70, 80, 90, 255]);
+        let first_png = crate::image::encode_png(&first).unwrap();
+        let selected_png = crate::image::encode_png(&selected).unwrap();
+        crate::test_helpers::create_test_zip(
+            &archive,
+            &[("first.png", &first_png), ("selected.png", &selected_png)],
+        );
+        let bookmark = dir.join("images.gvbm");
+        std::fs::write(
+            &bookmark,
+            format!(
+                "# gv3 bookmark v1\n# index: 0\narchive\t{}\tselected.png\n",
+                archive.display()
+            ),
+        )
+        .unwrap();
+        let data = crate::bookmark::load_bookmark_from_path(&bookmark, &|_| true).unwrap();
+        assert!(matches!(
+            &data.entries[0],
+            FileSource::ArchiveEntry {
+                entry_index: None,
+                ..
+            }
+        ));
+        let (mut document, _events) = crate::test_helpers::test_document();
+        document.load_bookmark_data(data).unwrap();
+        assert!(matches!(
+            document.current_source(),
+            Some(FileSource::ArchiveEntry {
+                on_demand: true,
+                entry_index: Some(1),
+                ..
+            })
+        ));
+        assert_eq!(document.read_file_data_current().unwrap(), selected_png);
+        crate::test_helpers::assert_same_image(document.current_image().unwrap(), &selected);
+    }
+
+    #[test]
     fn from_path_valid_file() {
-        let dir = std::env::temp_dir().join("gv_test_file_info");
-        let _ = std::fs::create_dir_all(&dir);
+        let dir = crate::test_helpers::TempDir::new("file_info");
         let file_path = dir.join("test.png");
         let mut f = std::fs::File::create(&file_path).unwrap();
         f.write_all(b"dummy content").unwrap();
@@ -245,8 +431,6 @@ mod tests {
         assert!(!info.marked);
         assert!(!info.load_failed);
         assert!(!info.source.is_archive_entry());
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -260,6 +444,7 @@ mod tests {
             archive: PathBuf::from(r"C:\archive.zip"),
             entry: "folder/image.png".to_string(),
             on_demand: false,
+            temp_path: None,
             entry_index: Some(0),
         };
         assert_eq!(source.display_path(), r"C:\archive.zip/folder/image.png");
@@ -275,24 +460,25 @@ mod tests {
         };
         assert_eq!(source.display_path(), r"C:\docs\test.pdf/Page 3");
         assert!(!source.is_archive_entry());
-        assert!(source.is_contained());
+        assert!(!source.can_delete());
         assert_eq!(
             source.archive_path().unwrap(),
             Path::new(r"C:\docs\test.pdf")
         );
 
-        // File は is_contained() == false
+        // 通常ファイルは削除対象になる
         let file_source = FileSource::File(PathBuf::from(r"C:\images\test.jpg"));
-        assert!(!file_source.is_contained());
+        assert!(file_source.can_delete());
 
-        // ArchiveEntry は is_contained() == true
+        // アーカイブ内のエントリは削除対象にならない
         let archive_source = FileSource::ArchiveEntry {
             archive: PathBuf::from(r"C:\archive.zip"),
             entry: "img.png".to_string(),
             on_demand: false,
+            temp_path: None,
             entry_index: None,
         };
-        assert!(archive_source.is_contained());
+        assert!(!archive_source.can_delete());
     }
 
     #[test]
@@ -310,6 +496,7 @@ mod tests {
             archive: PathBuf::from(r"C:\archives\photos.zip"),
             entry: "folder/sunset.png".to_string(),
             on_demand: true,
+            temp_path: None,
             entry_index: Some(0),
         };
         assert_eq!(archive.parent_dir().unwrap(), Path::new(r"C:\archives"));
@@ -330,6 +517,7 @@ mod tests {
             archive: PathBuf::from(r"C:\photos.zip"),
             entry: "folder/sunset.png".to_string(),
             on_demand: false,
+            temp_path: None,
             entry_index: None,
         };
         assert_eq!(archive.default_save_name(), "photos_sunset.png");
@@ -350,6 +538,7 @@ mod tests {
             archive: PathBuf::from(r"C:\photos.zip"),
             entry: "img.png".to_string(),
             on_demand: false,
+            temp_path: None,
             entry_index: None,
         };
         assert_eq!(archive.default_save_stem(), "photos_img");
@@ -377,6 +566,7 @@ mod tests {
             archive: PathBuf::from(r"C:\archive.zip"),
             entry: "folder/image.png".to_string(),
             on_demand: false,
+            temp_path: None,
             entry_index: None,
         };
         assert_eq!(archive.bookmark_default_stem().as_deref(), Some("archive"));
@@ -417,6 +607,7 @@ mod tests {
             archive: PathBuf::from(r"C:\archive.zip"),
             entry: "folder/image.png".to_string(),
             on_demand: false,
+            temp_path: None,
             entry_index: None,
         };
         assert_eq!(
@@ -447,5 +638,69 @@ mod tests {
         let a = FileSource::File(PathBuf::from(r"C:\a\photos\x.jpg"));
         let b = FileSource::File(PathBuf::from(r"D:\b\photos\y.jpg"));
         assert_ne!(a.bookmark_container_key(), b.bookmark_container_key());
+    }
+    #[test]
+    fn copy_content_and_capabilities_for_mixed_sources() {
+        let dir = crate::test_helpers::TempDir::new("source_copy");
+        let image_path = dir.join("original.png");
+        let temp_path = dir.join("unrelated.tmp");
+        let png = crate::test_helpers::create_1x1_white_png();
+        std::fs::write(&image_path, &png).unwrap();
+        std::fs::write(&temp_path, &png).unwrap();
+        let archive = dir.join("archive.zip");
+        let mut writer = ::zip::ZipWriter::new(std::fs::File::create(&archive).unwrap());
+        writer
+            .start_file(
+                "folder/original.png",
+                ::zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+        writer.write_all(&png).unwrap();
+        writer.finish().unwrap();
+        let pdf_path = dir.join("document.pdf");
+        std::fs::write(&pdf_path, crate::test_helpers::minimal_pdf()).unwrap();
+        let manager = crate::test_helpers::test_archive_manager(&std::sync::Arc::new(
+            crate::extension_registry::ExtensionRegistry::new(),
+        ));
+        let buffers = std::sync::RwLock::new(std::collections::HashMap::new());
+        let sources = [
+            FileSource::File(image_path),
+            FileSource::ArchiveEntry {
+                archive: archive.clone(),
+                entry: "folder/original.png".into(),
+                on_demand: false,
+                temp_path: Some(temp_path),
+                entry_index: None,
+            },
+            FileSource::ArchiveEntry {
+                archive: archive.clone(),
+                entry: "folder/original.png".into(),
+                on_demand: true,
+                temp_path: None,
+                entry_index: Some(0),
+            },
+        ];
+        for (index, source) in sources.iter().enumerate() {
+            assert!(source.can_copy());
+            assert_eq!(source.can_delete(), index == 0);
+            assert_eq!(source.can_move(), index == 0);
+            assert_eq!(source.filename_hint(), "original.png");
+            assert_eq!(source.read_bytes(&manager, &buffers).unwrap(), png);
+        }
+        let page = FileSource::PdfPage {
+            pdf_path,
+            page_index: 0,
+        };
+        let bytes = page.read_bytes(&manager, &buffers).unwrap();
+        assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
+        let rendered = image::load_from_memory(&bytes).unwrap();
+        assert_eq!((rendered.width(), rendered.height()), (6, 3));
+        assert_eq!(page.default_save_name(), "document_page1.png");
+        assert!(!page.can_move());
+        let pending = FileSource::PendingContainer {
+            container_path: archive,
+        };
+        assert!(!pending.can_copy());
+        assert!(pending.read_bytes(&manager, &buffers).is_err());
     }
 }

@@ -5,15 +5,15 @@
 use std::collections::HashSet;
 
 use windows::Win32::Foundation::{LPARAM, LRESULT};
-use windows::Win32::Graphics::Gdi::InvalidateRect;
+use windows::Win32::Graphics::Gdi::{InvalidateRect, UpdateWindow};
 use windows::Win32::UI::Controls::{
-    LVIF_STATE, LVIF_TEXT, LVIS_SELECTED, LVN_GETDISPINFOW, LVN_ITEMCHANGED, NMHDR, NMLISTVIEW,
+    LVIF_STATE, LVIF_TEXT, LVIS_SELECTED, LVN_GETDISPINFOW, LVN_ITEMCHANGED, NMLISTVIEW,
     NMLVDISPINFOW,
 };
 use windows::Win32::UI::WindowsAndMessaging::HMENU;
 
+use crate::action::Action;
 use crate::ui::file_list_panel::FileListPanel;
-use crate::ui::key_config::Action;
 use crate::ui::menu;
 
 use super::AppWindow;
@@ -52,12 +52,14 @@ impl AppWindow {
 
         if file_list_changed {
             let count = self.document.file_list().len();
-            self.file_list_panel.update(count);
+            let panel = self.file_list_panel.clone();
+            self.defer_ui(move || panel.update(count));
             self.update_title();
         }
         if let Some(index) = nav_changed_index {
             self.update_title();
-            self.file_list_panel.set_selection(index);
+            let panel = self.file_list_panel.clone();
+            self.defer_ui(move || panel.set_selection(index));
         }
 
         // パネル表示中ならキャッシュ状態の差分のみ更新 (該当行のみ再描画)
@@ -73,7 +75,8 @@ impl AppWindow {
             }
             // 前回との差分だけ該当行を再描画
             for &i in self.cached_indices.symmetric_difference(&new_cached) {
-                self.file_list_panel.update_item(i);
+                let panel = self.file_list_panel.clone();
+                self.defer_ui(move || panel.update_item(i));
             }
             self.cached_indices = new_cached;
         }
@@ -88,47 +91,18 @@ impl AppWindow {
         menu::update_menu_check(popup, Action::PFilterToggle, pf_enabled);
 
         // 各フィルタ操作のチェックマーク + フィルタ無効時はグレーアウト
-        use crate::persistent_filter::FilterOperation as FO;
-        let filter_actions: &[(Action, FO)] = &[
-            (Action::PFilterFlipH, FO::FlipHorizontal),
-            (Action::PFilterFlipV, FO::FlipVertical),
-            (Action::PFilterRotate180, FO::Rotate180),
-            (Action::PFilterRotate90CW, FO::Rotate90CW),
-            (Action::PFilterRotate90CCW, FO::Rotate90CCW),
-            (Action::PFilterLevels, FO::Levels { low: 0, high: 0 }),
-            (Action::PFilterGamma, FO::Gamma { value: 0.0 }),
-            (
-                Action::PFilterBrightnessContrast,
-                FO::BrightnessContrast {
-                    brightness: 0,
-                    contrast: 0,
-                },
-            ),
-            (Action::PFilterGrayscaleSimple, FO::GrayscaleSimple),
-            (Action::PFilterGrayscaleStrict, FO::GrayscaleStrict),
-            (Action::PFilterBlur, FO::Blur),
-            (Action::PFilterBlurStrong, FO::BlurStrong),
-            (Action::PFilterSharpen, FO::Sharpen),
-            (Action::PFilterSharpenStrong, FO::SharpenStrong),
-            (
-                Action::PFilterGaussianBlur,
-                FO::GaussianBlur { radius: 0.0 },
-            ),
-            (Action::PFilterUnsharpMask, FO::UnsharpMask { radius: 0.0 }),
-            (Action::PFilterMedianFilter, FO::MedianFilter),
-            (Action::PFilterInvertColors, FO::InvertColors),
-            (Action::PFilterApplyAlpha, FO::ApplyAlpha),
-        ];
-        for (action, probe) in filter_actions {
-            menu::update_menu_check(popup, *action, pf.has_operation(probe));
-            menu::update_menu_enabled(popup, *action, pf_enabled);
+        for spec in crate::filter_spec::FILTER_SPECS {
+            if let Some(action) = spec.persistent_action {
+                menu::update_menu_check(popup, action, pf.has_operation(spec.kind));
+                menu::update_menu_enabled(popup, action, pf_enabled);
+            }
         }
 
         // その他のトグル項目
         menu::update_menu_check(
             popup,
             Action::ToggleFileList,
-            self.file_list_panel.is_visible(),
+            self.file_list_panel.requested_visible(),
         );
         menu::update_menu_check(popup, Action::ToggleAlwaysOnTop, self.always_on_top);
         menu::update_menu_check(
@@ -154,16 +128,18 @@ impl AppWindow {
         if self.file_list_panel.is_visible() {
             let doc = &self.document;
             let len = doc.file_list().len();
-            self.file_list_panel.update(len);
+            let panel = self.file_list_panel.clone();
+            self.defer_ui(move || panel.update(len));
             if let Some(idx) = doc.file_list().current_index() {
-                self.file_list_panel.set_selection(idx);
+                let panel = self.file_list_panel.clone();
+                self.defer_ui(move || panel.set_selection(idx));
             }
         }
     }
 
     /// ファイルリストパネルからの通知を処理
-    pub(crate) fn handle_file_list_notify(&mut self, nmhdr: &NMHDR, lparam: LPARAM) -> LRESULT {
-        match nmhdr.code {
+    pub(crate) fn handle_file_list_notify(&mut self, code: u32, lparam: LPARAM) -> LRESULT {
+        match code {
             // テキスト要求: 該当インデックスのラベルを ListView 提供のバッファへコピー
             i if i == LVN_GETDISPINFOW => {
                 // SAFETY: LVN_GETDISPINFOW の lparam は OS が有効な NMLVDISPINFOW へのポインタを保証する
@@ -209,22 +185,46 @@ impl AppWindow {
                     let target = nmlv.iItem as usize;
                     if self.document.file_list().current_index() != Some(target) {
                         self.begin_user_operation();
-                        if !self.guard_unsaved_edit() {
-                            // キャンセル時は選択位置を復元
-                            if let Some(idx) = self.document.file_list().current_index() {
-                                self.file_list_panel.set_selection(idx);
-                            }
-                            return LRESULT(0);
-                        }
-                        self.selection.deselect();
                         self.stop_slideshow();
-                        self.document.navigate_to(target);
-                        self.process_document_events();
+                        self.navigate_with_guard(|document| document.navigate_to(target));
                     }
                 }
                 LRESULT(0)
             }
             _ => LRESULT(0),
         }
+    }
+}
+
+impl AppWindow {
+    pub(super) fn action_toggle_file_list(&mut self) {
+        self.file_list_panel.toggle(self.fullscreen.is_fullscreen());
+        let panel = self.file_list_panel.clone();
+        self.defer_ui(move || panel.apply_visibility());
+        // パネルが表示状態になったら全同期 (非表示中の変更を反映)
+        if self.file_list_panel.is_visible() {
+            let doc = &self.document;
+            let len = doc.file_list().len();
+            let panel = self.file_list_panel.clone();
+            self.defer_ui(move || panel.update(len));
+            if let Some(idx) = doc.file_list().current_index() {
+                let panel = self.file_list_panel.clone();
+                self.defer_ui(move || panel.set_selection(idx));
+            }
+            // cached_indicesも同期
+            self.cached_indices.clear();
+            for i in 0..len {
+                if self.document.is_cached(i) {
+                    self.cached_indices.insert(i);
+                }
+            }
+        }
+        let (width, height) = crate::ui::window::get_client_size(self.hwnd);
+        self.on_size(width, height);
+        // 同期再描画でちらつきを防止
+        let hwnd = self.hwnd;
+        self.defer_ui(move || unsafe {
+            let _ = UpdateWindow(hwnd);
+        });
     }
 }

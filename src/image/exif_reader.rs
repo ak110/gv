@@ -169,6 +169,7 @@ fn gps_to_decimal(exif: &exif::Exif, coord_tag: Tag, ref_tag: Tag) -> Option<f64
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_helpers::create_1x1_white_png;
 
     #[test]
     fn read_exif_fields_returns_empty_for_non_exif_data() {
@@ -229,15 +230,5 @@ mod tests {
         let f = f64::from(r.num) / f64::from(r.denom);
         assert!((f - f.round()).abs() >= 0.01);
         assert_eq!(format!("f/{f:.1}"), "f/2.8");
-    }
-
-    /// テスト用: 1x1 白ピクセルのPNGバイナリを生成
-    fn create_1x1_white_png() -> Vec<u8> {
-        use image::{ImageBuffer, Rgba};
-        let img: ImageBuffer<Rgba<u8>, Vec<u8>> =
-            ImageBuffer::from_pixel(1, 1, Rgba([255, 255, 255, 255]));
-        let mut buf = std::io::Cursor::new(Vec::new());
-        img.write_to(&mut buf, image::ImageFormat::Png).unwrap();
-        buf.into_inner()
     }
 }

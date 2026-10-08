@@ -1,0 +1,27 @@
+name: Dependency Audit
+
+on:
+  schedule:
+    - cron: "23 2 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: windows-latest
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+      - name: セットアップ
+        run: mise run setup-ci
+      - name: advisory DBのCRLF変換を防止
+        run: git config --global core.autocrlf false
+      - name: Rustの脆弱性監査
+        run: mise exec -- cargo-deny --locked check advisories
+      - name: pnpmの脆弱性監査（開発依存を含む）
+        if: ${{ !cancelled() }}
+        run: mise exec -- corepack pnpm audit

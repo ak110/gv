@@ -7,9 +7,28 @@ use super::{DecodedImage, ImageDecoder, ImageMetadata};
 /// image crateによる標準デコーダ (JPEG/PNG/GIF/BMP/WebP)
 pub struct StandardDecoder;
 
+/// 標準デコーダで有効にしている形式と、その拡張子。
+const STANDARD_FORMATS: &[(&str, &[&str])] = &[
+    ("JPEG", &[".jpg", ".jpeg"]),
+    ("PNG", &[".png"]),
+    ("GIF", &[".gif"]),
+    ("BMP", &[".bmp"]),
+    ("WebP", &[".webp"]),
+];
+
 impl StandardDecoder {
     pub fn new() -> Self {
         Self
+    }
+
+    pub fn formats() -> &'static [(&'static str, &'static [&'static str])] {
+        STANDARD_FORMATS
+    }
+
+    pub fn extensions() -> impl Iterator<Item = &'static str> {
+        STANDARD_FORMATS
+            .iter()
+            .flat_map(|(_, extensions)| extensions.iter().copied())
     }
 }
 
@@ -99,6 +118,27 @@ impl StandardDecoder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_helpers::{create_1x1_png_with_text, create_1x1_white_png};
+
+    #[test]
+    fn all_standard_extensions_decode_an_image() {
+        let decoder = StandardDecoder::new();
+        for extension in StandardDecoder::extensions() {
+            let format = image::ImageFormat::from_extension(extension.trim_start_matches('.'))
+                .expect("標準拡張子には画像形式がある");
+            let sample = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+                2,
+                1,
+                image::Rgb([20, 40, 60]),
+            ));
+            let mut encoded = Cursor::new(Vec::new());
+            sample.write_to(&mut encoded, format).unwrap();
+            let decoded = decoder
+                .decode(encoded.get_ref(), &format!("sample{extension}"))
+                .unwrap();
+            assert_eq!((decoded.width, decoded.height), (2, 1), "{extension}");
+        }
+    }
 
     #[test]
     fn decode_invalid_data_returns_error() {
@@ -220,32 +260,5 @@ mod tests {
             assert_eq!((img.width, img.height), (3, 2), "{label}");
             assert_eq!(img.data, src.as_raw().clone(), "{label}");
         }
-    }
-
-    /// テスト用: 1x1 白ピクセルのPNGバイナリを生成
-    fn create_1x1_white_png() -> Vec<u8> {
-        use image::{ImageBuffer, Rgba};
-        let img: ImageBuffer<Rgba<u8>, Vec<u8>> =
-            ImageBuffer::from_pixel(1, 1, Rgba([255, 255, 255, 255]));
-        let mut buf = std::io::Cursor::new(Vec::new());
-        img.write_to(&mut buf, image::ImageFormat::Png).unwrap();
-        buf.into_inner()
-    }
-
-    /// テスト用: tEXtチャンク付き1x1 PNGバイナリを生成
-    fn create_1x1_png_with_text() -> Vec<u8> {
-        let mut buf = Vec::new();
-        {
-            let mut encoder = png::Encoder::new(std::io::Cursor::new(&mut buf), 1, 1);
-            encoder.set_color(png::ColorType::Rgba);
-            encoder.set_depth(png::BitDepth::Eight);
-            // tEXtチャンクを追加
-            let text_chunk =
-                png::text_metadata::TEXtChunk::new("Author".to_string(), "TestAuthor".to_string());
-            let _ = encoder.add_text_chunk(text_chunk.keyword, text_chunk.text);
-            let mut writer = encoder.write_header().unwrap();
-            writer.write_image_data(&[255, 255, 255, 255]).unwrap();
-        }
-        buf
     }
 }

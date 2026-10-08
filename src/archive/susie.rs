@@ -54,13 +54,7 @@ impl ArchiveHandler for SusieArchiveHandler {
             let raw_filename = from_ansi(&entry.filename);
             let filename = extract_filename(&raw_filename);
 
-            // 空ファイル名、隠しファイルはスキップ
-            if filename.is_empty() || filename.starts_with('.') {
-                continue;
-            }
-
-            // 画像ファイルのみ展開
-            if !self.registry.is_image_extension(filename) {
+            if !super::is_image_entry(&raw_filename, false, &self.registry) {
                 continue;
             }
 
@@ -70,7 +64,15 @@ impl ArchiveHandler for SusieArchiveHandler {
                 Ok(data) => {
                     let out_path = resolve_filename(target_dir, filename);
                     if std::fs::write(&out_path, &data).is_ok() {
-                        results.push((out_path, raw_filename));
+                        let timestamp = { entry.timestamp };
+                        let duration = std::time::Duration::from_secs(timestamp.unsigned_abs());
+                        let modified = if timestamp >= 0 {
+                            std::time::SystemTime::UNIX_EPOCH.checked_add(duration)
+                        } else {
+                            std::time::SystemTime::UNIX_EPOCH.checked_sub(duration)
+                        }
+                        .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                        results.push((out_path, raw_filename, modified));
                     }
                 }
                 Err(e) => {

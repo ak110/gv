@@ -1,0 +1,13 @@
+# 削除した項目を含む旧ユーザー設定の読込テスト用。
+[display]
+margin = 12.0
+
+[window]
+remember_position = true
+remember_size = true
+always_on_top = true
+
+[susie]
+plugin_dir = "custom-spi"
+image_plugins = ["ifwebp.sph"]
+archive_plugins = ["axlha.sph"]

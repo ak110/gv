@@ -180,6 +180,7 @@ fn classify_raw_path(raw: &str, is_archive: &impl Fn(&Path) -> bool) -> FileSour
             archive,
             entry,
             on_demand: false,
+            temp_path: None,
             entry_index: None,
         };
     }
@@ -228,18 +229,8 @@ fn split_archive_path(raw: &str, is_archive: &impl Fn(&Path) -> bool) -> Option<
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// テスト用のアーカイブ判定クロージャ
-    fn test_is_archive(p: &Path) -> bool {
-        p.extension().and_then(|e| e.to_str()).is_some_and(|e| {
-            ["zip", "cbz", "rar", "cbr", "7z"].contains(&e.to_lowercase().as_str())
-        })
-    }
-
-    /// テスト用に文字列を UTF-16 LE バイト列に変換する
-    fn to_utf16le(s: &str) -> Vec<u8> {
-        s.encode_utf16().flat_map(u16::to_le_bytes).collect()
-    }
+    use crate::test_helpers::test_is_archive;
+    use crate::test_helpers::to_utf16le;
 
     // --- parse_legacy_bookmark_utf16le ---
 

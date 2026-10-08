@@ -31,6 +31,36 @@ mise install && mise run setup
 Linux環境ではlint系（textlint / markdownlint / prettier）のみ確認可能。
 cargo-clippy / cargo-test / cargo-denyはWindowsターゲットのためLinuxでは失敗する。
 
+## サプライチェーン攻撃対策
+
+lockfileの尊重、公開待機、ピン留め、脆弱性監査の4点を基本方針とする。
+Rustは`Cargo.lock`、ドキュメント用のpnpm依存は`pnpm-lock.yaml`を版管理する。
+依存の更新は`mise run update`で行い、公開直後の依存を取り込むまでの待機期間はツールの設定で管理する。
+
+`cargo-deny`（`deny.toml`設定）でライセンスチェックと脆弱性アドバイザリチェックを実施する。
+`mise run test`に組み込まれているため、コミット前に自動実行される。
+`Dependency Audit`ワークフローは、毎週月曜日の02:23 UTCにWindowsで実行する。
+手動実行にも対応し、変更がない期間に公開された脆弱性を検出する。
+Rustは`cargo-deny --locked check advisories`、pnpmは開発依存を含む`pnpm audit`で監査する。
+Rustの監査が失敗してもpnpmの監査を続け、各監査の検出とツールの失敗をActionsの結果に残す。
+
+lockfileを持つデスクトップアプリとしてGitHubのsecurity alertsは有効に保つ。
+Dependabotのsecurity updatesによる自動修正PRは無効にし、version updatesの設定は維持する。
+監査の検出を確認してから手動で依存を更新し、Windowsのテストを通して公開する。
+監査の失敗は脆弱性の検出か、通信・セットアップなどの失敗かをログで確認する。
+結果は[ActionsのDependency Audit](https://github.com/ak110/gv/actions/workflows/audit.yaml)と
+リポジトリのSecurityにあるDependabot alertsで確認する。
+
+GitHub Actionsのワークフローは`pinact`でハッシュピン留めして実行する
+（`mise run update`でハッシュピン更新が可能）。
+
+## ドキュメントサイト運用
+
+ドキュメントはGitHub Pagesでホストする（URL: <https://ak110.github.io/gv/>）。
+
+- ローカルプレビュー: `mise run docs`
+- 自動デプロイ: masterブランチへのpush時に`Docs`ワークフローが自動実行される（`docs/`以下または`package.json`の変更時のみ）
+
 ## 表示時間の測定
 
 `mise run bench`は変更前後の画像の表示時間を同じ条件で比べるための測定である。
@@ -110,32 +140,38 @@ Windows 11 Pro（10.0.26200）、Ryzen 7 5800X3D、GeForce RTX 3060 Ti、Rust 1.
 メモリー取得のPowerShell起動中もUIの応答回収は止まるが、その時間は表示時間に含めていない。
 OSのファイルキャッシュを排除していないため、異なる環境で比較する場合はJSONの環境・条件も確認する。
 
-## サプライチェーン攻撃対策
-
-ロック尊重・公開待機・ピン留め運用の3点を基本方針とする。
-
-`cargo-deny`（`deny.toml`設定）でライセンスチェックと脆弱性アドバイザリチェックを実施する。
-`mise run test`に組み込まれているため、コミット前に自動実行される。
-
-GitHub Actionsのワークフローは`pinact`でハッシュピン留めして実行する
-（`mise run update`でハッシュピン更新が可能）。
-
-## ドキュメントサイト運用
-
-ドキュメントはGitHub Pagesでホストする（URL: <https://ak110.github.io/gv/>）。
-
-- ローカルプレビュー: `mise run docs`
-- 自動デプロイ: masterブランチへのpush時に`Docs`ワークフローが自動実行される（`docs/`以下または`package.json`の変更時のみ）
-
 ## リリース手順
 
-`releaser`でリリースする。
+`releaser`でリリースする。これは作者の[dotfiles](https://github.com/ak110/dotfiles)が提供するコマンドであり、
+gvの`mise install`と`mise run setup`には含まれない。
+GitとGitHub CLI（`gh`）をPATHへ追加し、`gh auth login`で公開先リポジトリへ書き込めるアカウントに認証する。
+GitHub CLIは[公式の導入案内](https://cli.github.com/)から導入する。
+
+`releaser`を導入していない環境では、gvと同じ親フォルダへdotfilesを取得する。
+以下はgvのルートで実行するWindowsのコマンド例である。
+`uv run --project`はdotfilesの依存とコマンドを解決し、リリース対象の作業フォルダはgvのまま保つ。
 
 ```cmd
-rem リリース実行 (いずれか1つ)
-releaser patch
-releaser minor
-releaser major
+git clone https://github.com/ak110/dotfiles.git ..\dotfiles
+uv run --project ..\dotfiles --frozen --no-dev releaser --help
 ```
+
+dotfilesが既に別の場所にある場合は`..\dotfiles`をそのパスに置き換える。
+Pythonの必要バージョンと依存はdotfilesの`pyproject.toml`と`uv.lock`に従う。
+`--frozen`を付け、導入のためにロックファイルを更新しない。
+
+既定ブランチで、未コミット変更がないことを確認してから、更新種別を1つ選ぶ。
+未pushのcommitがあれば`releaser`がpushし、CI完了を待ってからリリースする。
+majorはユーザーが明示的に指定した場合だけ実行する。
+
+```cmd
+uv run --project ..\dotfiles --frozen --no-dev releaser patch
+uv run --project ..\dotfiles --frozen --no-dev releaser minor
+uv run --project ..\dotfiles --frozen --no-dev releaser major
+```
+
+dotfilesのコマンドが既にPATH上にあれば、同じ処理を`releaser patch`などで実行できる。
+`releaser`はCI完了を待ち、リリースworkflowを起動・監視してローカルを同期する。
+`scripts/release.py`はworkflow内部の補助処理であり、開発者は`releaser`から起動する。
 
 結果の確認: <https://github.com/ak110/gv/actions>
