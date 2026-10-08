@@ -640,6 +640,7 @@ mod tests {
     /// 通常画像・ZIP・展開済み画像・PDFを同時に持つ受入用ウィンドウ。
     fn mixed_source_app(dir: &Path) -> (TestApp, PathBuf, Vec<crate::file_info::FileSource>) {
         use crate::file_info::{FileInfo, FileSource};
+        let dir = crate::util::strip_extended_length_prefix(&std::fs::canonicalize(dir).unwrap());
         let png = crate::test_helpers::create_1x1_white_png();
         let image = dir.join("image.png");
         std::fs::write(&image, &png).unwrap();
@@ -868,6 +869,7 @@ mod move_action_acceptance {
     use std::path::{Path, PathBuf};
 
     fn app_with_move_images(dir: &Path) -> (TestApp, [PathBuf; 3]) {
+        let dir = crate::util::strip_extended_length_prefix(&std::fs::canonicalize(dir).unwrap());
         let source = dir.join("source");
         std::fs::create_dir(&source).unwrap();
         let paths = ["a.png", "b.png", "c.png"].map(|name| source.join(name));
