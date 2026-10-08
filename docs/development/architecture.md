@@ -152,7 +152,9 @@ PDFはページ一覧を作成し、表示・先読み時にページを画像�
 同期読み込みと先読みは`image::decode_source`を使い、`FileSource`から内容と元のファイル名を取得する。
 `PendingContainer`は展開前の一覧項目であり、`decode_source`へ渡さない。
 Documentの`load_current`はその項目の背景展開を優先し、表示を読み込み中にする。
-`process_expand_results`が展開結果を一覧へ統合して表示位置を調整した後、`load_current`を再実行する。
+`process_expand_results`は展開結果を一覧へ統合して表示位置を調整し、キャッシュを無効化する。
+保留中の移動先に一致するコンテナーの展開が完了し、現在項目がある場合は`load_current`を再実行する。
+それ以外は`schedule_prefetch`で先読みを再登録し、現在画像を読み直さない。
 PDFの同期描画はMTAスレッドで行い、STAで待機しない。
 ZIPの列挙・番号指定取得は`ArchiveHandler`を通す。展開済みアーカイブ画像の実パスはソースが保持する。
 先読みの永続フィルタは要求時の設定をワーカーで適用し、受信側は適用済み画像を格納する。

@@ -153,10 +153,16 @@ GitHub CLIは[公式の導入案内](https://cli.github.com/)から導入する�
 
 ```cmd
 git clone https://github.com/ak110/dotfiles.git ..\dotfiles
-uv run --project ..\dotfiles --frozen --no-dev releaser --help
+uv run --project "..\dotfiles" --frozen --no-dev releaser --help
 ```
 
-dotfilesが既に別の場所にある場合は`..\dotfiles`をそのパスに置き換える。
+dotfilesが既に別の場所にある場合は`..\dotfiles`をそのパスに置き換え、引用符で囲む。
+空白を含むパスでも1つの引数として渡せる。
+
+```cmd
+uv run --project "C:\work folder\dotfiles" --frozen --no-dev releaser --help
+```
+
 Pythonの必要バージョンと依存はdotfilesの`pyproject.toml`と`uv.lock`に従う。
 `--frozen`を付け、導入のためにロックファイルを更新しない。
 
@@ -165,9 +171,9 @@ Pythonの必要バージョンと依存はdotfilesの`pyproject.toml`と`uv.lock
 majorはユーザーが明示的に指定した場合だけ実行する。
 
 ```cmd
-uv run --project ..\dotfiles --frozen --no-dev releaser patch
-uv run --project ..\dotfiles --frozen --no-dev releaser minor
-uv run --project ..\dotfiles --frozen --no-dev releaser major
+uv run --project "..\dotfiles" --frozen --no-dev releaser patch
+uv run --project "..\dotfiles" --frozen --no-dev releaser minor
+uv run --project "..\dotfiles" --frozen --no-dev releaser major
 ```
 
 dotfilesのコマンドが既にPATH上にあれば、同じ処理を`releaser patch`などで実行できる。

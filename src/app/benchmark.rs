@@ -639,7 +639,7 @@ mod tests {
         let (width, height, count) = LARGE_IMAGE_MATERIAL;
         let budget = 192 * 1024 * 1024;
         let work = crate::test_helpers::TempDir::new("large_memory");
-        let material_output = std::process::Command::new(std::env::current_exe().unwrap())
+        let material_output = std::process::Command::new(crate::paths::exe_path().unwrap())
             .args([
                 "--ignored",
                 "--exact",
