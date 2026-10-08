@@ -14,8 +14,8 @@ onlyBuiltDependencies:
 # textlint 15.8.0 が ajv 8.20.0 経由で fast-uri 3.1.5 を引き込むが、
 # Dependabot は GHSA 群に対し fast-uri 3.1.6 以上を要求してくる。
 # ajv が fast-uri 3.1.6 以上へ更新されるまでの間、fast-uri を patched 版へ強制 override する。
-# markdownlint-cli2 0.23.2 が smol-toml を 1.7.0 固定で要求するのに対し、
-# Dependabot は GHSA-7w5x-hrqm-74c2（CVE-2026-85730）に対し smol-toml 1.7.1 以上を要求してくる。
+# markdownlint-cli2 0.23.3 が smol-toml を 1.8.0 固定で要求するのに対し、
+# GHSA-r4xh-jqrq-34v2 の修正版は 1.9.0 以上である（1.7.1 で修正された GHSA-7w5x-hrqm-74c2 も同じ範囲で解消する）。
 # markdownlint-cli2 が修正版を取り込むまでの間、smol-toml を patched 版へ強制 override する。
 # micromark-extension-math 3.1.0 の要求範囲 katex ^0.16.0 では GHSA-238p-pmpm-9mq7 の修正版 0.18.2 へ到達しないため、
 # 同パッケージ経由の katex だけを修正版へ override する。micromark-extension-math が修正版を要求するようになったら撤去できる。
@@ -25,5 +25,5 @@ overrides:
   prh: ^6.0.6
   js-yaml: ^4.2.0
   fast-uri: ^3.1.6
-  smol-toml: ^1.7.1
+  smol-toml: ^1.9.0
   "micromark-extension-math@3.1.0>katex": 0.18.2
