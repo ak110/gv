@@ -135,10 +135,10 @@ impl ArchiveHandler for ZipHandler {
 
 /// ZIPエントリのファイル名バイト列を表示用文字列にデコードする。
 ///
-/// zipクレートv8の`name()`はファイル名をUTF-8として解釈し、
+/// zipクレートの`name()`はファイル名をUTF-8として解釈し、
 /// 失敗時にCP437へフォールバックするためCP932記録のZIPで文字化けする。
 /// 本関数はUTF-8として有効なら採用し、無効なら`MultiByteToWideChar`に
-/// コードページ932 (`CP_SHIFT_JIS`相当) を指定して復号する。
+/// コードページ932 (`CP_SHIFT_JIS`相当) を指定してデコードする。
 fn decode_zip_entry_name(raw: &[u8]) -> String {
     if let Ok(s) = std::str::from_utf8(raw) {
         return s.to_string();

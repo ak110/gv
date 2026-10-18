@@ -150,7 +150,8 @@ fn extract_files_from_zip(
             continue;
         }
         // ファイル名部分のみ取得 (ZIPのパスにディレクトリが含まれる場合に対応)
-        let file_name = std::path::Path::new(entry.name())
+        let entry_name = entry.name().context("ZIPエントリ名の取得失敗")?;
+        let file_name = std::path::Path::new(entry_name.as_ref())
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();

@@ -48,7 +48,7 @@ toml = "1.1"
 anyhow = "1"
 thiserror = "2"
 crossbeam-channel = "0.5"
-zip = { version = "8", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 sevenz-rust2 = { version = "0.23", features = ["bzip2", "zstd", "aes256"] }
 libloading = "0.9"
 ureq = "3"
