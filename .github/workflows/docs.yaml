@@ -21,6 +21,10 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      # サイトの公開パス名。docs/.vitepress/config.ts の base（/gv/）と一致させる。
+      # リンク検査の工程でリポジトリ固有の値はこの1つだけとする。
+      SITE_BASE: gv
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -33,6 +37,28 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Build docs
         run: pnpm run docs:build
+      # 公開時と同じURL構造（/<公開パス名>/...）で内部リンクをファイルの実在から判定するため、
+      # 出力を公開パス名のディレクトリへ置き、その親をlycheeの--root-dirへ渡す。
+      - name: リンク検査用にサイトを配置
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/site"
+          cp -r docs/.vitepress/dist "$RUNNER_TEMP/site/$SITE_BASE"
+      # frontmatter・config.tsから生成されるリンクと見出しへのリンクを含め、ビルド後の全HTMLのリンクを検査する。
+      # 失敗するとこのジョブが失敗し、needs: build の deploy は実行されない。
+      # 404などリンク先の不在は失敗とし、外部URLの一時的な障害（429・5xx・タイムアウト）では公開を止めない。
+      # 同時接続数はGitHub Actions上での接続エラーを避けるため4に抑える。
+      - name: リンク検査
+        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2.9.0
+        with:
+          args: >-
+            --no-progress
+            --root-dir '${{ runner.temp }}/site'
+            --include-fragments
+            --max-concurrency 4
+            --accept '200..=299,429,500..=599'
+            --accept-timeouts
+            '${{ runner.temp }}/site/${{ env.SITE_BASE }}/**/*.html'
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
