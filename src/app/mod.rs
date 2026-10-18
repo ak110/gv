@@ -70,7 +70,9 @@ const MAX_RENDER_RECOVERY_ATTEMPTS: u32 = 3;
 ///
 /// - メニューバー・キー入力・ファイルリストパネル等の UI 状態を所有
 /// - `Document` から `DocumentEvent` をチャネル経由で受け取り、再描画や UI 更新を行う
-/// - エラーは `show_error_title` でタイトルバーに表示する (詳細は AGENTS.md エラー方針)
+/// - エラーの通知方法は `.claude/rules/coding-standards.md` の「エラーハンドリング」に従う
+///   (明示操作の失敗は `show_error_title` でタイトルバーへ、
+///   アップデート確認とシェル登録・解除は結果のメッセージボックスへ通知する)
 pub(crate) struct AppWindow {
     pub(crate) hwnd: HWND,
     effects: std::cell::RefCell<std::collections::VecDeque<dispatch::UiEffect>>,

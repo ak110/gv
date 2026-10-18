@@ -118,8 +118,8 @@ PDFは既に画素になったページを使い、標準画像のデコーダ�
 
 - 前方4枚・後方2枚を上限に、メモリ予算でキャッシュする枚数を決める
 - ベースサイズ（デフォルト1024×1536）の画像を基準にキャッシュ可能枚数を計算
-- メモリ予算方式を採用: 固定枚数ではなく、利用可能メモリから動的にキャッシュ枚数を算出することで、
-  大画像でもOOM (Out of Memory) を回避
+- メモリ予算は起動時の空き物理メモリの半分とし、予算をベースサイズで割った枚数（3枚未満なら3枚）を上限の範囲で前方・後方へ配分する（前方・後方とも最低1枚）
+- この枚数は先読みを要求する範囲であり、実際の格納量は`PageCache`が制限する。`PageCache`は画像の実サイズを合計し、予算を超える画像は格納しないため、予算が小さい場合は要求した範囲の一部だけがキャッシュされる
 
 ### ワーカースレッド
 
@@ -131,15 +131,18 @@ sequenceDiagram
     M->>W: LoadRequest送信 (index, source, filter, generation)
     Note right of W: 共通処理でデコード<br/>要求時の永続フィルタを適用
     W->>M: Loaded受信 (index, image, generation)
-    alt 現在の世代番号と一致
-        Note left of M: キャッシュに格納<br/>→ DocumentEvent::ImageReady
-    else 世代番号が不一致
+    alt 世代番号が不一致
         Note left of M: 古い結果を破棄
+    else 現在項目で表示画像が未取得
+        Note left of M: 現在画像として表示<br/>→ DocumentEvent::ImageReady
+    else それ以外
+        Note left of M: キャッシュに格納
     end
 ```
 
 - `crossbeam-channel` でリクエストキューを実装
-- 優先度付きロード: 現在ページ → 次ページ → 前ページ → 遠いページ
+- 現在項目はDocumentの`load_current`がキャッシュから取り出し、キャッシュに無ければ同期でデコードする
+- 先読みは現在位置から近い順に、前方と後方を交互に要求する。キャッシュ済みの項目と未展開コンテナーは要求しない
 - 一覧や読込条件の変更時は世代を進め、現在の世代と一致しない要求と結果を破棄する。
   実行中のデコードを強制的に中断する機構ではない
 
@@ -177,11 +180,12 @@ ZIPの列挙・番号指定取得は`ArchiveHandler`を通す。展開済みア�
 
 ## デコーダチェーン
 
-デコーダはDecoderChainに登録された順で`can_decode()`を試行し、最初に対応したデコーダがデコードを担当する。
+DecoderChainは登録された順に、`can_decode()`が対応を示したデコーダでデコードを試し、最初の成功を返す。
+対応を示したデコーダがデコードに失敗した場合は、後続のデコーダを試す。
 登録順は以下の通り。
 
-1. StandardDecoder (`image` crate) — JPEG/PNG/GIF/BMP/WebP
-2. SusieDecoder (`libloading`) — Susieプラグインからの動的登録
+1. StandardDecoder (`image` crate): JPEG/PNG/GIF/BMP/WebP
+2. Susie画像プラグインのデコーダ (`libloading`): 起動時に読み込んだ画像プラグインごとに1つ登録する
 
 標準デコーダを優先することで、Susieプラグインがなくても主要フォーマットを確実にサポートする。
 

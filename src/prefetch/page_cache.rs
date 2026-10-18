@@ -98,7 +98,6 @@ mod tests {
     use crate::test_helpers::cache_image as make_image;
 
     /// CRUD + メモリ予算 + evict + clear のシナリオを 1 関数にまとめた統合テスト。
-    /// agent.md「テスト方針」: CRUD は 1 関数に。境界条件は維持。
     #[test]
     fn page_cache_crud_scenario() {
         let mut cache = PageCache::new(1024);

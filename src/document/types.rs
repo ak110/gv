@@ -26,7 +26,8 @@ impl AsRef<[u8]> for ZipBuffer {
 /// Documentが構築し、appモジュールが受信するUI通知イベント
 #[derive(Debug)]
 pub enum DocumentEvent {
-    /// 画像のデコード完了、再描画可能
+    /// 現在画像の状態が変わり、画像領域の再描画が必要
+    /// (デコード完了と編集結果の適用のほか、未展開コンテナへの移動や一覧の消去で現在画像を空にした場合も送る)
     ImageReady,
     /// ファイルリスト変更
     FileListChanged,
@@ -36,7 +37,7 @@ pub enum DocumentEvent {
     Error(String),
 }
 
-/// コンテナ (ZIP/PDF/RAR/7z) の並列読み込み結果
+/// コンテナ (ZIP/PDF/RAR/7z) の読み込み結果 (同期展開とバックグラウンド展開で共通、失敗を含む)
 pub(super) enum ContainerResult {
     Pdf {
         path: PathBuf,
@@ -65,18 +66,18 @@ pub(super) enum ContainerState {
     Pending,
     /// バックグラウンド展開中
     InFlight,
-    /// 展開完了
+    /// 展開処理済み (展開に失敗してリストから除いた場合を含む)
     Expanded,
 }
 
 /// バックグラウンド展開スレッドからの通知イベント
 pub(super) enum ContainerExpandEvent {
-    /// 展開成功
+    /// 1コンテナの展開結果 (失敗時は`ContainerResult::Error`を保持する)
     Expanded {
         container_path: PathBuf,
         result: ContainerResult,
         generation: u64,
     },
-    /// 全コンテナの展開完了
+    /// 展開ジョブの終了 (取消やスレッドプール作成失敗で未処理のコンテナが残る場合も送る)
     AllDone { generation: u64 },
 }

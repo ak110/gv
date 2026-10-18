@@ -5,7 +5,7 @@ pub enum DisplayMode {
     AutoShrink,
     /// ウィンドウに合わせて拡大・縮小
     AutoFit,
-    /// ウィンドウに合わせて拡大のみ (小さい画像は原寸)
+    /// ウィンドウに合わせて拡大のみ (小さい画像は拡大し、大きい画像は原寸)
     AutoEnlarge,
     /// 原寸大表示
     Original,

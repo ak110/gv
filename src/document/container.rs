@@ -8,11 +8,7 @@ use crate::archive::ArchiveManager;
 
 use super::types::{ContainerResult, ZipBuffer};
 
-/// 単一コンテナを処理する (rayon workerから呼ばれる)
-///
-/// Document::is_pdfはこのモジュール外で定義されているため、
-/// superのprivateメソッドへのアクセスが必要。
-/// ここでは型参照のみに限定し、実装の呼び出しは親で仲介する。
+/// 単一コンテナを処理し、ファイルリストへ統合する前の結果を返す
 pub(super) fn process_single_container(
     path: &Path,
     archive_manager: &ArchiveManager,

@@ -1,6 +1,6 @@
 //! EXIFメタデータの読み取りとフォーマット
 //!
-//! StandardDecoderとSusieDecoderの両方から利用される共通ユーティリティ。
+//! 標準画像とSusieプラグイン画像のメタデータ取得が共通で使うEXIF取得処理。
 
 use std::io::Cursor;
 

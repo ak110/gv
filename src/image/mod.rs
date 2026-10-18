@@ -20,7 +20,7 @@ impl DecodedImage {
     }
 }
 
-/// 画像メタデータ (Document::current_metadata() で構築・返却される)
+/// 画像メタデータ (形式名・コメント・EXIF)
 pub struct ImageMetadata {
     pub format: String,
     pub comments: Vec<String>,

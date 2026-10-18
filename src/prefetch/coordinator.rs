@@ -112,7 +112,8 @@ impl PrefetchCoordinator {
     }
 
     /// レスポンスを回収し、キャッシュに格納する。
-    /// 現在ページの画像が到着した場合は `PrefetchEvent::CurrentImageReady` を返す。
+    /// 現在ページの画像で、表示画像がまだ無い場合だけ `PrefetchEvent::CurrentImageReady` を返す
+    /// (表示画像が既にあれば現在ページの画像もキャッシュへ格納する)。
     pub fn process_responses(
         &mut self,
         current_index: Option<usize>,

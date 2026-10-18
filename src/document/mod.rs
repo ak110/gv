@@ -1083,7 +1083,7 @@ impl Document {
             .read_bytes(&self.archive_manager, &self.zip_buffers)
     }
 
-    /// 現在のファイルのデータを取得する (appモジュールのファイル操作用)
+    /// 現在項目の元データを取得する (テストで期待値を得るための補助)
     #[cfg(test)]
     pub fn read_file_data_current(&self) -> Result<Vec<u8>> {
         let current = self
