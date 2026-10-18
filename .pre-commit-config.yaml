@@ -17,9 +17,15 @@ repos:
       - id: check-yaml
         args: [--unsafe]
       - id: detect-private-key
+      # pyfltrの推奨ガイドから意図して外れる指定。`patches/`の依存パッチは文脈行の行末空白や改行まで
+      # 適用先のソースと一致する必要があり、整形すると内容とpnpm-lock.yamlのpatch_hashが変わるため、
+      # 空白と改行を整形する3つのhookの対象から外す。
       - id: end-of-file-fixer
+        exclude: ^patches/
       - id: mixed-line-ending
+        exclude: ^patches/
       - id: trailing-whitespace
+        exclude: ^patches/
 
   - repo: local
     hooks:
