@@ -38,11 +38,10 @@ SAFETYコメントの粒度判定基準は[.claude/agents/unsafe-reviewer.md](.c
 
 ## 注意点
 
-- Windows用プロジェクトのため、Linux環境での検証はlint系（textlint / markdownlint / prettier）のみ確認可能。
-  cargo-clippy / cargo-test / cargo-denyはWindowsターゲットのためLinuxでは失敗する
+- Linux（Debian/Ubuntu）では最初に`mise run setup-linux`を実行する。
+  cargo-xwinによるWindowsターゲット（x86_64-pc-windows-msvc）のクロスビルド環境がGit管理外の`.mise.local.toml`へ設定される。
+  以後は`mise run test`・`mise run build`とpre-commitのpyfltr hookをWindowsと同じ手順で使える
+  - LinuxビルドはRAR展開を除外する（`--cfg gv_no_rar`）。RAR関連のコードはLinuxのclippyとテストのコンパイルの対象外になる
+  - Linuxの`cargo test`はテストのコンパイルまでとし、テストの実行はWindows CIが担う
+  - 成果物は`target/x86_64-pc-windows-msvc/`配下へ出力される
 - Makefileではなく`mise.toml`のタスクを使用する。pre-commitフレームワークは`uvx prek`で呼び出す
-- Linux環境からドキュメント等のcargo無関係な変更をコミットする際は、
-  `SKIP=pyfltr git commit ...`形式でpyfltr hookをskipする
-  （cargo系のツールはpyfltr hookの内側で実行されるため、hook単位でしかskipできない）。
-  skipした分は`uvx --exclude-newer-package pyfltr=false pyfltr run <変更したファイル>`をcargo対象外のパスへ実行して補う。
-  `--no-verify`は全hookを無効化するため使わない

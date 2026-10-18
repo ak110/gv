@@ -1,3 +1,5 @@
+// Linuxからのクロスビルドは`--cfg gv_no_rar`でRAR展開を除外する（unrarのビルドがクロスビルドに対応しないため）。
+#[cfg(not(gv_no_rar))]
 mod rar;
 mod sevenz;
 pub mod susie;
@@ -11,23 +13,29 @@ use anyhow::{Result, bail};
 use crate::extension_registry::ExtensionRegistry;
 
 /// 組み込みハンドラの形式名と拡張子。拡張子の実体は各ハンドラが定義する。
-pub fn builtin_formats() -> [(&'static str, &'static [&'static str]); 3] {
-    [
+pub fn builtin_formats() -> Vec<(&'static str, &'static [&'static str])> {
+    vec![
         ("ZIP", zip::EXTENSIONS),
+        #[cfg(not(gv_no_rar))]
         ("RAR", rar::EXTENSIONS),
         ("7z", sevenz::EXTENSIONS),
     ]
 }
 
 /// コミック用の拡張子だけをシェルへ関連付ける。
-pub fn comic_extensions() -> [&'static str; 2] {
-    [zip::EXTENSIONS[1], rar::EXTENSIONS[1]]
+pub fn comic_extensions() -> Vec<&'static str> {
+    vec![
+        zip::EXTENSIONS[1],
+        #[cfg(not(gv_no_rar))]
+        rar::EXTENSIONS[1],
+    ]
 }
 
 /// 汎用アーカイブは過去の関連付けを解除する対象として使う。
-pub fn generic_extensions() -> [&'static str; 3] {
-    [
+pub fn generic_extensions() -> Vec<&'static str> {
+    vec![
         zip::EXTENSIONS[0],
+        #[cfg(not(gv_no_rar))]
         rar::EXTENSIONS[0],
         sevenz::EXTENSIONS[0],
     ]
@@ -91,6 +99,7 @@ impl ArchiveManager {
         Self {
             handlers: vec![
                 Box::new(zip::ZipHandler::new(Arc::clone(&registry))),
+                #[cfg(not(gv_no_rar))]
                 Box::new(rar::RarHandler::new(Arc::clone(&registry))),
                 Box::new(sevenz::SevenZHandler::new(Arc::clone(&registry))),
             ],
@@ -252,9 +261,10 @@ mod tests {
         assert!(mgr.is_archive(Path::new("test.zip")));
         assert!(mgr.is_archive(Path::new("test.ZIP")));
         assert!(mgr.is_archive(Path::new("test.cbz")));
-        assert!(mgr.is_archive(Path::new("test.rar")));
-        assert!(mgr.is_archive(Path::new("test.cbr")));
         assert!(mgr.is_archive(Path::new("test.7z")));
+        // RARはビルド構成で対応可否が変わる（`gv_no_rar`では非対応形式として扱う）
+        assert_eq!(mgr.is_archive(Path::new("test.rar")), cfg!(not(gv_no_rar)));
+        assert_eq!(mgr.is_archive(Path::new("test.cbr")), cfg!(not(gv_no_rar)));
         assert!(!mgr.is_archive(Path::new("test.jpg")));
         assert!(!mgr.is_archive(Path::new("test.txt")));
         assert!(!mgr.is_archive(Path::new("test")));
@@ -307,12 +317,22 @@ mod tests {
         // 各ハンドラの代表拡張子で成功すること
         assert!(mgr.find_handler(Path::new("a.zip")).is_ok());
         assert!(mgr.find_handler(Path::new("a.cbz")).is_ok());
-        assert!(mgr.find_handler(Path::new("a.rar")).is_ok());
-        assert!(mgr.find_handler(Path::new("a.cbr")).is_ok());
         assert!(mgr.find_handler(Path::new("a.7z")).is_ok());
         // 大文字小文字の正規化も find_handler 経由で確認 (normalized_extension の置き換え)
         assert!(mgr.find_handler(Path::new("a.ZIP")).is_ok());
-        assert!(mgr.find_handler(Path::new("a.Rar")).is_ok());
+        // RARはビルド構成で対応可否が変わる（`gv_no_rar`では非対応形式として扱う）
+        assert_eq!(
+            mgr.find_handler(Path::new("a.rar")).is_ok(),
+            cfg!(not(gv_no_rar))
+        );
+        assert_eq!(
+            mgr.find_handler(Path::new("a.cbr")).is_ok(),
+            cfg!(not(gv_no_rar))
+        );
+        assert_eq!(
+            mgr.find_handler(Path::new("a.Rar")).is_ok(),
+            cfg!(not(gv_no_rar))
+        );
         // 拡張子なしは失敗
         assert!(mgr.find_handler(Path::new("noext")).is_err());
     }
@@ -403,7 +423,7 @@ mod tests {
     fn list_images_from_buffer_rejects_non_zip_extension() {
         let reg = Arc::new(ExtensionRegistry::new());
         let mgr = ArchiveManager::new(reg);
-        let result = mgr.list_images_from_buffer(b"", Path::new("test.rar"));
+        let result = mgr.list_images_from_buffer(b"", Path::new("test.7z"));
         assert!(result.is_err());
         let msg = result.err().unwrap().to_string();
         assert!(msg.contains("オンデマンド列挙未対応"), "got: {msg}");

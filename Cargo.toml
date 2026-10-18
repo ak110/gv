@@ -49,7 +49,6 @@ anyhow = "1"
 thiserror = "2"
 crossbeam-channel = "0.5"
 zip = { version = "8", default-features = false, features = ["deflate"] }
-unrar = "0.5"
 sevenz-rust2 = { version = "0.23", features = ["bzip2", "zstd", "aes256"] }
 libloading = "0.9"
 ureq = "3"
@@ -61,6 +60,11 @@ memmap2 = "0.9"
 kamadak-exif = "0.6"
 getrandom = "0.4"
 
+# Linuxからのクロスビルドは`--cfg gv_no_rar`でRAR展開を除外する。
+# unrar_sysのbuild.rsがビルドするマシンでWindows向けかを判定し、クロスビルドでリンクに失敗するため。
+[target.'cfg(not(gv_no_rar))'.dependencies]
+unrar = "0.5"
+
 [build-dependencies]
 winresource = "0.1.31"
 
@@ -71,6 +75,9 @@ codegen-units = 1
 
 [profile.dev.package."*"]
 opt-level = 1
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(gv_no_rar)"] }
 
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }

@@ -13,11 +13,31 @@
 mise install && mise run setup
 ```
 
+### Linuxからのクロスビルド
+
+Linux（Debian/Ubuntu）では、Windowsターゲット（x86_64-pc-windows-msvc）向けに
+cargo-xwinでクロスビルドする環境を次のコマンドで構築する。
+
+```bash
+mise install && mise run setup-linux
+```
+
+`mise run setup-linux`は`sudo apt-get`でclang・lld・llvmを導入し、Rustのターゲットとcargo-xwinを導入する。
+続けてcargo-xwinが取得するMicrosoftのCRT・Windows SDK（利用はMicrosoftのライセンスへの同意を前提とする）の環境を
+Git管理外の`.mise.local.toml`へ保存し、`mise run setup`の手順も実行する。再実行しても同じ設定になる。
+
+構築後は`mise run test`・`mise run build`とpre-commitのhookをWindowsと同じ手順で使える。Windowsとの違いは次のとおり。
+
+- RAR展開を除外してビルドする（`--cfg gv_no_rar`）。LinuxでビルドしたexeはRARを開けない
+- `cargo test`はテストのコンパイルまでとし、テストの実行はWindows CIが担う
+- 成果物は`target/x86_64-pc-windows-msvc/`配下へ出力される（リリースexeは`target/x86_64-pc-windows-msvc/release/ぐらびゅ.exe`）
+
 ## 開発コマンド
 
 | コマンド                                          | 説明                                                        |
 | ------------------------------------------------- | ----------------------------------------------------------- |
 | `mise run setup`                                  | 開発環境のセットアップ                                      |
+| `mise run setup-linux`                            | Linuxからのクロスビルド環境のセットアップ（前述）           |
 | `mise run format`                                 | フォーマット + 軽量lint（開発時の手動実行用。自動修正あり） |
 | `mise run test`                                   | 全チェック実行（これを通過すればコミット可能）              |
 | `mise run build`                                  | リリースビルド                                              |
@@ -27,9 +47,6 @@ mise install && mise run setup
 | `mise run bench`                                  | 表示時間の測定（後述）                                      |
 | `mise run bench-memory`                           | 巨大画像の表示時間とプロセスメモリーの測定                  |
 | `mise run bench-compare -- <基準JSON> <比較JSON>` | 表示時間の測定結果2件の比較                                 |
-
-Linux環境ではlint系（textlint / markdownlint / prettier）のみ確認可能。
-cargo-clippy / cargo-test / cargo-denyはWindowsターゲットのためLinuxでは失敗する。
 
 ## サプライチェーン攻撃対策
 

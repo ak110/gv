@@ -48,8 +48,10 @@ description = "開発環境のセットアップ"
 # rustfmt / clippy の component インストールは mise の `[tools].rust` 側に集約している。
 # cargo-deny は `[tools]` の aqua バックエンド指定で `mise install` 時に解決されるため、
 # `cargo install cargo-deny` は重複インストールになるので外している。
+# `mise run setup-linux`が生成する`.mise.local.toml`は`CARGO_BUILD_TARGET`をWindowsターゲットにするため、
+# ホスト向けのツール導入ではこれを外す（外さないと`cargo install`もWindows向けにビルドする）。
 run = [
-  "cargo install cargo-edit",
+  "env -u CARGO_BUILD_TARGET cargo install cargo-edit",
   "corepack pnpm install",
   "git config --unset core.hooksPath || true",
   "uvx prek install -c .pre-commit-config.yaml",
@@ -61,6 +63,16 @@ run_windows = [
   "git config --unset core.hooksPath & exit /b 0",
   "uvx prek install -c .pre-commit-config.yaml",
   "git config --local commit.template .gitmessage",
+]
+
+[tasks.setup-linux]
+description = "LinuxからWindows向けにクロスビルドする開発環境のセットアップ（Debian/Ubuntu、sudoを使う）"
+# cargo-xwinの環境をGit管理外の`.mise.local.toml`へ保存してから、通常のセットアップを行う。
+# 以後の`mise run test`はclippy・cargo-deny・テストのコンパイルまで（テストの実行はWindows CI）、
+# `mise run build`の成果物は`target/x86_64-pc-windows-msvc/release/`へ出力される。RAR展開は除外される。
+run = [
+  "uv run --no-project scripts/setup_linux.py",
+  "mise run setup",
 ]
 
 [tasks.setup-ci]

@@ -96,7 +96,8 @@ mod tests {
     fn default_archive_extensions() {
         let reg = ExtensionRegistry::new();
         assert!(reg.is_archive_extension("test.zip"));
-        assert!(reg.is_archive_extension("test.RAR"));
+        // RARはビルド構成で対応可否が変わる（`gv_no_rar`では非対応形式として扱う）
+        assert_eq!(reg.is_archive_extension("test.RAR"), cfg!(not(gv_no_rar)));
         assert!(reg.is_archive_extension("test.7z"));
         assert!(!reg.is_archive_extension("test.jpg"));
     }
