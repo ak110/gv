@@ -171,6 +171,9 @@ overrides:
   smol-toml: ^1.9.0
   micromark-extension-math@3.1.0>katex: 0.18.2
 
+patchedDependencies:
+  braces@3.0.3: 85004877a9e0f06329cd9811669b96cbbcfa94785c9c47230993191df8751c74
+
 importers:
 
   .:
@@ -3456,7 +3459,7 @@ snapshots:
     dependencies:
       balanced-match: 4.0.4
 
-  braces@3.0.3:
+  braces@3.0.3(patch_hash=85004877a9e0f06329cd9811669b96cbbcfa94785c9c47230993191df8751c74):
     dependencies:
       fill-range: 7.1.1
 
@@ -4561,7 +4564,7 @@ snapshots:
 
   micromatch@4.0.8:
     dependencies:
-      braces: 3.0.3
+      braces: 3.0.3(patch_hash=85004877a9e0f06329cd9811669b96cbbcfa94785c9c47230993191df8751c74)
       picomatch: 2.3.2
 
   minimatch@10.2.6:

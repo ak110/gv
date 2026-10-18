@@ -1,0 +1,389 @@
+diff --git a/lib/compile.js b/lib/compile.js
+index dce69beb90ece5c3b0ca234a949418f9f34eedbc..74ea8b7ad7a35b07879bbcbf95dc424ee7578c34 100644
+--- a/lib/compile.js
++++ b/lib/compile.js
+@@ -4,12 +4,12 @@ const fill = require('fill-range');
+ const utils = require('./utils');
+ 
+ const compile = (ast, options = {}) => {
+-  const walk = (node, parent = {}) => {
++  // 子を走査せずに出力が決まるノードはその出力を返し、子の出力の連結になるノードはundefinedを返す。
++  const visit = (node, parent) => {
+     const invalidBlock = utils.isInvalidBrace(parent);
+     const invalidNode = node.invalid === true && options.escapeInvalid === true;
+     const invalid = invalidBlock === true || invalidNode === true;
+     const prefix = options.escapeInvalid === true ? '\\' : '';
+-    let output = '';
+ 
+     if (node.isOpen === true) {
+       return prefix + node.value;
+@@ -45,16 +45,39 @@ const compile = (ast, options = {}) => {
+       }
+     }
+ 
++    return undefined;
++  };
++
++  const pushChildren = (stack, node) => {
+     if (node.nodes) {
+-      for (const child of node.nodes) {
+-        output += walk(child, node);
++      for (let i = node.nodes.length - 1; i >= 0; i--) {
++        stack.push([node.nodes[i], node]);
+       }
+     }
+-
+-    return output;
+   };
+ 
+-  return walk(ast);
++  const first = visit(ast, {});
++  if (first !== undefined) {
++    return first;
++  }
++
++  // 上流の再帰と同じ先行順で子孫を訪問する。明示的なスタックを使い、呼出スタックを深さに比例して消費しない。
++  const stack = [];
++  let output = '';
++  pushChildren(stack, ast);
++
++  while (stack.length > 0) {
++    const [node, parent] = stack.pop();
++    const value = visit(node, parent);
++
++    if (value !== undefined) {
++      output += value;
++    } else {
++      pushChildren(stack, node);
++    }
++  }
++
++  return output;
+ };
+ 
+ module.exports = compile;
+diff --git a/lib/expand.js b/lib/expand.js
+index 35b2c41d6afdb8f0197959e26079f266e48370d3..e5bdd832b6622f1ecbe2ac7e0dfe7951a41af630 100644
+--- a/lib/expand.js
++++ b/lib/expand.js
+@@ -4,9 +4,73 @@ const fill = require('fill-range');
+ const stringify = require('./stringify');
+ const utils = require('./utils');
+ 
+-const append = (queue = '', stash = '', enclose = false) => {
++const CALL = 0;
++const VALUE = 1;
++
++const pushFlat = (result, arr) => {
++  for (const ele of utils.flatten(arr)) {
++    result.push(ele);
++  }
++};
++
++// append(queue, stash, enclose)の結果を平坦化した要素列を集める。
++// 上流の再帰呼出の結果は呼出元で平坦化されていたため、同じ順序で明示的な作業スタックから評価する。
++const collect = (queue, stash, enclose) => {
+   const result = [];
++  const tasks = [[CALL, queue, stash]];
++
++  while (tasks.length > 0) {
++    const task = tasks.pop();
++
++    if (task[0] === VALUE) {
++      result.push(task[1]);
++      continue;
++    }
++
++    let q = task[1] === undefined ? '' : task[1];
++    let s = task[2] === undefined ? '' : task[2];
++    q = [].concat(q);
++    s = [].concat(s);
++
++    if (!s.length) {
++      pushFlat(result, q);
++      continue;
++    }
++
++    if (!q.length) {
++      if (enclose) {
++        for (const ele of utils.flatten(s)) {
++          result.push(`{${ele}}`);
++        }
++      } else {
++        pushFlat(result, s);
++      }
++      continue;
++    }
++
++    const subtasks = [];
++    for (const item of q) {
++      if (Array.isArray(item)) {
++        for (const value of item) {
++          subtasks.push([CALL, value, s]);
++        }
++      } else {
++        for (let ele of s) {
++          if (enclose === true && typeof ele === 'string') ele = `{${ele}}`;
++          subtasks.push(Array.isArray(ele) ? [CALL, item, ele] : [VALUE, item + ele]);
++        }
++      }
++    }
++
++    for (let i = subtasks.length - 1; i >= 0; i--) {
++      tasks.push(subtasks[i]);
++    }
++  }
++
++  return result;
++};
+ 
++const append = (queue = '', stash = '', enclose = false) => {
+   queue = [].concat(queue);
+   stash = [].concat(stash);
+ 
+@@ -15,25 +79,14 @@ const append = (queue = '', stash = '', enclose = false) => {
+     return enclose ? utils.flatten(stash).map(ele => `{${ele}}`) : stash;
+   }
+ 
+-  for (const item of queue) {
+-    if (Array.isArray(item)) {
+-      for (const value of item) {
+-        result.push(append(value, stash, enclose));
+-      }
+-    } else {
+-      for (let ele of stash) {
+-        if (enclose === true && typeof ele === 'string') ele = `{${ele}}`;
+-        result.push(Array.isArray(ele) ? append(item, ele, enclose) : item + ele);
+-      }
+-    }
+-  }
+-  return utils.flatten(result);
++  return collect(queue, stash, enclose);
+ };
+ 
+ const expand = (ast, options = {}) => {
+   const rangeLimit = options.rangeLimit === undefined ? 1000 : options.rangeLimit;
+ 
+-  const walk = (node, parent = {}) => {
++  // ノードへの進入時の処理を行う。子を走査する場合はフレームを返し、子を走査せずに処理を終えた場合はundefinedを返す。
++  const enter = (node, parent) => {
+     node.queue = [];
+ 
+     let p = parent;
+@@ -46,12 +99,12 @@ const expand = (ast, options = {}) => {
+ 
+     if (node.invalid || node.dollar) {
+       q.push(append(q.pop(), stringify(node, options)));
+-      return;
++      return undefined;
+     }
+ 
+     if (node.type === 'brace' && node.invalid !== true && node.nodes.length === 2) {
+       q.push(append(q.pop(), ['{}']));
+-      return;
++      return undefined;
+     }
+ 
+     if (node.nodes && node.ranges > 0) {
+@@ -68,7 +121,7 @@ const expand = (ast, options = {}) => {
+ 
+       q.push(append(q.pop(), range));
+       node.nodes = [];
+-      return;
++      return undefined;
+     }
+ 
+     const enclose = utils.encloseBrace(node);
+@@ -80,34 +133,54 @@ const expand = (ast, options = {}) => {
+       queue = block.queue;
+     }
+ 
+-    for (let i = 0; i < node.nodes.length; i++) {
+-      const child = node.nodes[i];
++    return { node, q, queue, enclose, index: 0 };
++  };
+ 
+-      if (child.type === 'comma' && node.type === 'brace') {
+-        if (i === 1) queue.push('');
+-        queue.push('');
+-        continue;
+-      }
++  const root = enter(ast, {});
++  if (root === undefined) {
++    return utils.flatten(undefined);
++  }
+ 
+-      if (child.type === 'close') {
+-        q.push(append(q.pop(), queue, enclose));
+-        continue;
+-      }
++  // 再帰の代わりにフレームの明示的なスタックで子を走査し、ノードの進入と処理の順序を保つ。
++  const stack = [root];
+ 
+-      if (child.value && child.type !== 'open') {
+-        queue.push(append(queue.pop(), child.value));
+-        continue;
+-      }
++  while (stack.length > 0) {
++    const frame = stack[stack.length - 1];
++    const { node, q, queue, enclose } = frame;
+ 
+-      if (child.nodes) {
+-        walk(child, node);
+-      }
++    if (frame.index >= node.nodes.length) {
++      stack.pop();
++      continue;
+     }
+ 
+-    return queue;
+-  };
++    const i = frame.index++;
++    const child = node.nodes[i];
++
++    if (child.type === 'comma' && node.type === 'brace') {
++      if (i === 1) queue.push('');
++      queue.push('');
++      continue;
++    }
++
++    if (child.type === 'close') {
++      q.push(append(q.pop(), queue, enclose));
++      continue;
++    }
++
++    if (child.value && child.type !== 'open') {
++      queue.push(append(queue.pop(), child.value));
++      continue;
++    }
++
++    if (child.nodes) {
++      const childFrame = enter(child, node);
++      if (childFrame !== undefined) {
++        stack.push(childFrame);
++      }
++    }
++  }
+ 
+-  return utils.flatten(walk(ast));
++  return utils.flatten(root.queue);
+ };
+ 
+ module.exports = expand;
+diff --git a/lib/stringify.js b/lib/stringify.js
+index 8bcf872c31894f81a8c64d9202fd607e4fd7ea2b..ba70ce4c79901cb1ddf080aee71c9487776b1c2c 100644
+--- a/lib/stringify.js
++++ b/lib/stringify.js
+@@ -3,10 +3,10 @@
+ const utils = require('./utils');
+ 
+ module.exports = (ast, options = {}) => {
+-  const stringify = (node, parent = {}) => {
++  // 子を走査せずに出力が決まるノードはその出力を返し、子の出力の連結になるノードはundefinedを返す。
++  const visit = (node, parent) => {
+     const invalidBlock = options.escapeInvalid && utils.isInvalidBrace(parent);
+     const invalidNode = node.invalid === true && options.escapeInvalid === true;
+-    let output = '';
+ 
+     if (node.value) {
+       if ((invalidBlock || invalidNode) && utils.isOpenOrClose(node)) {
+@@ -15,18 +15,38 @@ module.exports = (ast, options = {}) => {
+       return node.value;
+     }
+ 
+-    if (node.value) {
+-      return node.value;
+-    }
++    return undefined;
++  };
+ 
++  // 上流の再帰は子へ親を渡していなかったため、従来どおり全ノードを空の親で評価する。
++  const pushChildren = (stack, node) => {
+     if (node.nodes) {
+-      for (const child of node.nodes) {
+-        output += stringify(child);
++      for (let i = node.nodes.length - 1; i >= 0; i--) {
++        stack.push(node.nodes[i]);
+       }
+     }
+-    return output;
+   };
+ 
+-  return stringify(ast);
++  const first = visit(ast, {});
++  if (first !== undefined) {
++    return first;
++  }
++
++  const stack = [];
++  let output = '';
++  pushChildren(stack, ast);
++
++  while (stack.length > 0) {
++    const node = stack.pop();
++    const value = visit(node, {});
++
++    if (value !== undefined) {
++      output += value;
++    } else {
++      pushChildren(stack, node);
++    }
++  }
++
++  return output;
+ };
+ 
+diff --git a/lib/utils.js b/lib/utils.js
+index d19311fe044ad5157624077670dc297e8b53da49..e89967724aeabeb793dd74836269d7fe9599ccfe 100644
+--- a/lib/utils.js
++++ b/lib/utils.js
+@@ -101,22 +101,34 @@ exports.reduce = nodes => nodes.reduce((acc, node) => {
+ exports.flatten = (...args) => {
+   const result = [];
+ 
+-  const flat = arr => {
+-    for (let i = 0; i < arr.length; i++) {
+-      const ele = arr[i];
+-
+-      if (Array.isArray(ele)) {
+-        flat(ele);
+-        continue;
+-      }
+-
+-      if (ele !== undefined) {
+-        result.push(ele);
+-      }
++  // 入れ子配列を配列と位置の明示的なスタックで走査し、呼出スタックを入れ子の深さに比例して消費しない。
++  const arrays = [args];
++  const positions = [0];
++
++  while (arrays.length > 0) {
++    const top = arrays.length - 1;
++    const arr = arrays[top];
++    const i = positions[top];
++
++    if (i >= arr.length) {
++      arrays.pop();
++      positions.pop();
++      continue;
+     }
+-    return result;
+-  };
+ 
+-  flat(args);
++    positions[top] = i + 1;
++    const ele = arr[i];
++
++    if (Array.isArray(ele)) {
++      arrays.push(ele);
++      positions.push(0);
++      continue;
++    }
++
++    if (ele !== undefined) {
++      result.push(ele);
++    }
++  }
++
+   return result;
+ };

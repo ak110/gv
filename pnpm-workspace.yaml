@@ -27,3 +27,13 @@ overrides:
   fast-uri: ^3.1.6
   smol-toml: ^1.9.0
   "micromark-extension-math@3.1.0>katex": 0.18.2
+# markdownlint-cli2 が micromatch 経由で使う braces 3.0.3 は、GHSA-vfj7-8cjw-p6xm の修正版が公開されていない。
+# 勧告の機構である木・入れ子配列の再帰処理を反復処理へ置き換えるパッチを適用する。
+patchedDependencies:
+  braces@3.0.3: patches/braces@3.0.3.patch
+# pnpm audit は版（3.0.3）だけで GHSA-vfj7-8cjw-p6xm を検出し続けるため、
+# 上記 patchedDependencies のパッチで勧告の機構を除いた braces 3.0.3 に限り、この勧告 1 件を監査の判定から外す。
+# パッチを外すか、braces が修正版へ更新されたら撤去する。
+auditConfig:
+  ignoreGhsas:
+    - GHSA-vfj7-8cjw-p6xm
