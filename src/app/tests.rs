@@ -624,3 +624,27 @@ fn image_export_failure_keeps_existing_file_and_can_retry() {
     app.destroy();
     assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
 }
+
+/// 一部のコンテナを開けなかった通知は、続行できることと確認対象を示す
+#[test]
+fn partial_container_failure_shows_next_action() {
+    let dir = TempDir::new("partial_container");
+    let image = dir.join("image.png");
+    write_png(&image, &solid_image(2, 2, [0, 0, 0, 255]));
+    let broken = dir.join("broken.zip");
+    fs::write(&broken, b"not a zip").unwrap();
+    let app = TestApp::new();
+
+    app.with_app(|state| state.document.open_multiple(&[image, broken]).unwrap());
+    app.with_app(super::AppWindow::process_document_events);
+    let title = app.title();
+    assert!(
+        title.contains(
+            "1件のコンテナを開けませんでした。開けたコンテナの画像は表示を続けられます。"
+        ),
+        "{title}"
+    );
+    assert!(title.contains("詳細: "), "{title}");
+
+    app.destroy();
+}

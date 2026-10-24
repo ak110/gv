@@ -44,13 +44,18 @@ pub fn show_error_box(
 ) {
     use windows::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK};
 
-    let message = match detail {
-        Some(detail) => format!("{summary}。\n{next_action}。\n\n詳細:\n{detail}"),
-        None => format!("{summary}。\n{next_action}。"),
-    };
+    let message = format_error_box_text(summary, next_action, detail);
     // SAFETY: 呼出側は自身が所有する有効なウィンドウハンドルか`HWND::default()`を渡す（本関数の契約）。
     unsafe {
         show_message_box(hwnd, title, &message, MB_OK | MB_ICONERROR);
+    }
+}
+
+/// エラー用メッセージボックスの本文を、要約、次の操作、詳細の順に行を分けて組み立てる
+pub fn format_error_box_text(summary: &str, next_action: &str, detail: Option<&str>) -> String {
+    match detail {
+        Some(detail) => format!("{summary}。\n{next_action}。\n\n詳細:\n{detail}"),
+        None => format!("{summary}。\n{next_action}。"),
     }
 }
 

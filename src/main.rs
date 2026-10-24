@@ -128,29 +128,34 @@ fn exit_with_startup_error(summary: &str, detail: &str) -> ! {
         windows::Win32::Foundation::HWND::default(),
         "ぐらびゅ",
         summary,
-        "ぐらびゅをもう一度起動してください。繰り返し失敗する場合は、\
-         ホームページ（https://github.com/ak110/gv）のIssuesへこの内容を添えて報告してください",
+        STARTUP_NEXT_ACTION,
         Some(detail),
     );
     std::process::exit(1);
 }
 
+/// 起動の失敗で示す次の操作
+const STARTUP_NEXT_ACTION: &str = "ぐらびゅをもう一度起動してください。繰り返し失敗する場合は、\
+     ホームページ（https://github.com/ak110/gv）のIssuesへこの内容を添えて報告してください";
+
 /// `--register`・`--unregister`の失敗を理由と次の操作とともにコンソールへ出し、非0で終了する
 fn finish_shell_command(result: anyhow::Result<()>, operation: &str, flag: &str) {
     if let Err(e) = result {
-        eprintln!(
-            "{}",
-            util::format_error_text(
-                &format!("{operation}に失敗しました"),
-                &format!(
-                    "レジストリ（HKEY_CURRENT_USER）への書き込みを妨げるセキュリティソフトなどが無いか確認し、\
-                     「ぐらびゅ.exe {flag}」を再実行してください"
-                ),
-                Some(&format!("{e:#}")),
-            )
-        );
+        eprintln!("{}", shell_command_error_text(operation, flag, &e));
         std::process::exit(1);
     }
+}
+
+/// `--register`・`--unregister`の失敗の文面を、要約、次の操作、詳細の順に組み立てる
+fn shell_command_error_text(operation: &str, flag: &str, error: &anyhow::Error) -> String {
+    util::format_error_text(
+        &format!("{operation}に失敗しました"),
+        &format!(
+            "レジストリ（HKEY_CURRENT_USER）への書き込みを妨げるセキュリティソフトなどが無いか確認し、\
+             「ぐらびゅ.exe {flag}」を再実行してください"
+        ),
+        Some(&format!("{error:#}")),
+    )
 }
 
 /// 旧ファイル名 (gv3.*) を新ファイル名 (ぐらびゅ.*) にリネームする
@@ -177,4 +182,49 @@ fn print_help() {
     let key_path = crate::paths::key_config_path().ok();
     let keys = ui::key_config::KeyConfig::load(key_path.as_deref());
     println!("{}", help::build_help(&keys));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 起動失敗のダイアログは理由と次の操作を示す
+    #[test]
+    fn startup_error_box_shows_reason_and_next_action() {
+        let text = util::format_error_box_text(
+            "ウィンドウの作成に失敗しました",
+            STARTUP_NEXT_ACTION,
+            Some("原因"),
+        );
+        assert!(
+            text.starts_with(
+                "ウィンドウの作成に失敗しました。\nぐらびゅをもう一度起動してください。"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains("Issuesへこの内容を添えて報告してください。"),
+            "{text}"
+        );
+        assert!(text.ends_with("詳細:\n原因"), "{text}");
+    }
+
+    /// `--register`の失敗は再実行の方法と原因を示す
+    #[test]
+    fn shell_command_error_shows_rerun_and_detail() {
+        let text = shell_command_error_text(
+            "シェル統合の登録",
+            "--register",
+            &anyhow::anyhow!("レジストリキー作成失敗"),
+        );
+        assert!(
+            text.starts_with("シェル統合の登録に失敗しました。"),
+            "{text}"
+        );
+        assert!(
+            text.contains("「ぐらびゅ.exe --register」を再実行してください。"),
+            "{text}"
+        );
+        assert!(text.ends_with("詳細: レジストリキー作成失敗"), "{text}");
+    }
 }
