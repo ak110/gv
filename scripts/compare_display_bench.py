@@ -47,10 +47,18 @@ def _load(path: pathlib.Path) -> dict[str, typing.Any]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as e:
-        print(f"結果を読み込めません: {path}: {e}", file=sys.stderr)
+        print(
+            f"結果を読み込めません: {path}: {e}。"
+            "引数のパスを確認するか、`mise run bench`で測定し直した結果JSONを指定してください",
+            file=sys.stderr,
+        )
         sys.exit(2)
     if not isinstance(data, dict) or "summary" not in data:
-        print(f"測定結果の形式ではありません: {path}", file=sys.stderr)
+        print(
+            f"測定結果の形式ではありません: {path}。"
+            "`mise run bench`が保存した、summaryキーを持つ結果JSONを指定してください",
+            file=sys.stderr,
+        )
         sys.exit(2)
     return data
 

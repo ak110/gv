@@ -11,6 +11,7 @@ mod info;
 mod mark;
 mod mouse;
 mod navigation;
+mod next_action;
 mod open;
 mod panel;
 mod slideshow;
@@ -290,7 +291,11 @@ impl AppWindow {
                 .document
                 .start_prefetch(notify, cache_budget, base_image_size)
             {
-                app.show_error_title(&format!("先読みエンジンの起動に失敗しました: {e:#}"));
+                app.show_error_title(
+                    "先読みエンジンの起動に失敗しました",
+                    next_action::PREFETCH_START,
+                    Some(&format!("{e:#}")),
+                );
             }
 
             // 設定でalways_on_topが有効な場合、ウィンドウに反映
@@ -322,7 +327,11 @@ impl AppWindow {
                     app.document.open(&initial_files[0])
                 };
                 if let Err(e) = result {
-                    app.show_error_title(&format!("ファイルを開けませんでした: {e:#}"));
+                    app.show_error_title(
+                        "ファイルを開けませんでした",
+                        next_action::OPEN_RETRY,
+                        Some(&format!("{e:#}")),
+                    );
                 }
                 app.process_document_events();
             }
@@ -415,18 +424,29 @@ impl AppWindow {
         });
     }
 
-    /// タイトルバーにエラーメッセージを表示する
+    /// タイトルバーにエラーを表示する
     ///
+    /// 失敗の要約、次の操作、詳細の順に並べ、詳細が長くても次の操作を先に読めるようにする。
+    /// 利用者が次の行動を選べるよう、次の操作（続行の可否、再操作、代替手段）を必ず指定する。
     /// 表示は利用者の次の操作の開始（`begin_user_operation`）まで保持する。
-    fn show_error_title(&mut self, msg: &str) {
-        self.error_message = Some(msg.to_string());
+    fn show_error_title(&mut self, summary: &str, next_action: &str, detail: Option<&str>) {
+        self.error_message = Some(crate::util::format_error_text(summary, next_action, detail));
         self.render_error_shown = false;
         self.update_title();
     }
 
+    /// 文書処理が通知した失敗をタイトルバーへ表示する
+    fn show_error_notice(&mut self, notice: &crate::document::ErrorNotice) {
+        self.show_error_title(
+            &notice.summary,
+            notice.next_action,
+            notice.detail.as_deref(),
+        );
+    }
+
     /// 描画の失敗を表示する。描画が次に成功した時点で自動的に解除する
-    fn show_render_error(&mut self, msg: &str) {
-        self.show_error_title(msg);
+    fn show_render_error(&mut self, summary: &str, detail: Option<&str>) {
+        self.show_error_title(summary, next_action::RENDER_RETRY, detail);
         self.render_error_shown = true;
     }
 
@@ -443,11 +463,21 @@ impl AppWindow {
     /// `.map(|done| done.then_some(()))`で同じ形へそろえて渡す。
     /// 失敗をキャンセルと同じ「何もしない」へまとめると利用者へ届かないため、分類をここへ集約する。
     /// 成功時だけ値を返すので、呼出側は`Some`のときだけ保存先記憶やリスト更新を行う。
-    fn take_success<T>(&mut self, operation: &str, result: Result<Option<T>>) -> Option<T> {
+    /// `next_action`は失敗時にタイトルバーへ示す次の操作で、呼出側が操作ごとに指定する。
+    fn take_success<T>(
+        &mut self,
+        operation: &str,
+        next_action: &str,
+        result: Result<Option<T>>,
+    ) -> Option<T> {
         match result {
             Ok(value) => value,
             Err(e) => {
-                self.show_error_title(&format!("{operation}に失敗しました: {e:#}"));
+                self.show_error_title(
+                    &format!("{operation}に失敗しました"),
+                    next_action,
+                    Some(&format!("{e:#}")),
+                );
                 None
             }
         }
@@ -700,12 +730,10 @@ impl AppWindow {
                 if self.render_recovery_attempts <= MAX_RENDER_RECOVERY_ATTEMPTS {
                     self.invalidate();
                 } else {
-                    self.show_render_error(
-                        "描画を復旧できませんでした。ウィンドウサイズの変更などで再描画すると再試行します",
-                    );
+                    self.show_render_error("描画を復旧できませんでした", None);
                 }
             }
-            Err(e) => self.show_render_error(&format!("描画に失敗しました: {e:#}")),
+            Err(e) => self.show_render_error("描画に失敗しました", Some(&format!("{e:#}"))),
         }
     }
 
@@ -718,7 +746,7 @@ impl AppWindow {
 
             // D2Dレンダーターゲットは全体サイズでリサイズ
             if let Err(e) = self.renderer.resize(width, height) {
-                self.show_render_error(&format!("{e:#}"));
+                self.show_render_error("描画領域のリサイズに失敗しました", Some(&format!("{e:#}")));
             }
 
             // 描画オフセットを設定 (パネル幅分だけ右にずらす)

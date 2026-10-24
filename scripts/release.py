@@ -80,7 +80,9 @@ def prepare(source_commit: str, bump: str) -> dict[str, str]:
             _run("git", "show", f"{release_commit}:Cargo.lock")
         ):
             raise ValueError(
-                "既存タグの依存が検証済みcommitと異なる。リリースを見直してください"
+                f"既存タグ{tag}の依存が検証済みcommitと異なる。"
+                f"タグのcommitのCI成功を確認してから起動し直すか、"
+                f"誤ったタグなら`git push --delete origin {tag}`で削除してからリリースを再実行してください"
             )
         _run("git", "checkout", "--detach", release_commit)
         rerun = "true"
@@ -124,7 +126,9 @@ def _update_version(source: str, next_version: str) -> None:
     new_lock = pathlib.Path("Cargo.lock").read_text(encoding="utf-8")
     if _dependencies(old_lock) != _dependencies(new_lock):
         raise ValueError(
-            "依存が検証済みロックから変わった。依存更新を別途検証してください"
+            "依存が検証済みロックから変わった。"
+            "ローカルで`cargo update --workspace`を実行して更新したCargo.lockをcommitし、"
+            "CI成功を確認してからリリースを再実行してください"
         )
 
 
@@ -199,7 +203,11 @@ def main() -> int:
         else:
             publish(args.repository, args.tag, args.asset, args.notes)
     except (OSError, ValueError, subprocess.SubprocessError) as error:
-        print(f"リリース処理に失敗しました: {error}", file=sys.stderr)
+        print(
+            f"リリース処理に失敗しました: {error}。"
+            "原因（直後の出力を含む）を解消してから、リリースworkflowを再実行してください",
+            file=sys.stderr,
+        )
         if isinstance(error, subprocess.CalledProcessError):
             print(error.stderr, file=sys.stderr)
         return 1

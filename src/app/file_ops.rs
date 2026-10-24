@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result};
 
-use super::AppWindow;
+use super::{AppWindow, next_action};
 use crate::image::DecodedImage;
 
 #[derive(Default)]
@@ -133,7 +133,10 @@ impl AppWindow {
             },
             |app, result| {
                 app.restore_file_operation_focus();
-                if app.take_success("ファイルの削除", result).is_some() {
+                if app
+                    .take_success("ファイルの削除", next_action::FILE_DELETE, result)
+                    .is_some()
+                {
                     app.navigate_with_guard(crate::document::Document::remove_current_from_list);
                 }
             },
@@ -177,10 +180,14 @@ impl AppWindow {
                 })
             },
             |app, result| {
-                if let Some((dest, result)) = app.take_success("保存ダイアログの表示", result)
+                if let Some((dest, result)) =
+                    app.take_success("保存ダイアログの表示", next_action::DIALOG_RETRY, result)
                 {
                     app.restore_file_operation_focus();
-                    if app.take_success("ファイルの移動", result).is_some() {
+                    if app
+                        .take_success("ファイルの移動", next_action::FILE_MOVE, result)
+                        .is_some()
+                    {
                         app.file_operation_directory.remember_file(&dest);
                         app.navigate_with_guard(
                             crate::document::Document::remove_current_from_list,
@@ -217,9 +224,14 @@ impl AppWindow {
                 )
             },
             move |app, result| {
-                if let Some(dest) = app.take_success("保存ダイアログの表示", result) {
+                if let Some(dest) =
+                    app.take_success("保存ダイアログの表示", next_action::DIALOG_RETRY, result)
+                {
                     let result = app.document.copy_source_to(&source, &dest).map(Some);
-                    if app.take_success("ファイルの複製", result).is_some() {
+                    if app
+                        .take_success("ファイルの複製", next_action::FILE_COPY, result)
+                        .is_some()
+                    {
                         app.file_operation_directory.remember_file(&dest);
                     }
                 }
@@ -248,17 +260,22 @@ impl AppWindow {
 
     fn notify_skipped(&mut self, skipped: usize, copy: bool) {
         if skipped > 0 {
-            let reason = if copy {
-                "未展開コンテナ"
+            let (reason, next_action) = if copy {
+                ("未展開コンテナ", next_action::SKIPPED_COPY)
             } else {
-                "アーカイブ内画像・PDFページ・未展開コンテナ"
+                (
+                    "アーカイブ内画像・PDFページ・未展開コンテナ",
+                    "アーカイブ内画像とPDFページは移動・削除できないため対応不要です。\
+                     未展開コンテナは表示して展開した後にもう一度実行してください",
+                )
             };
-            let notice = format!("対象外 {skipped} 件: {reason}");
+            let notice = format!("対象外 {skipped} 件を処理しませんでした: {reason}");
+            // 同じ操作の失敗を表示中なら、上書きせずに並べて示す
             let notice = self
                 .error_message
                 .as_ref()
                 .map_or_else(|| notice.clone(), |error| format!("{error} / {notice}"));
-            self.show_error_title(&notice);
+            self.show_error_title(&notice, next_action, None);
         }
     }
 
@@ -286,7 +303,10 @@ impl AppWindow {
                 },
                 move |app, result| {
                     app.restore_file_operation_focus();
-                    if app.take_success("マークファイルの削除", result).is_some() {
+                    if app
+                        .take_success("マークファイルの削除", next_action::MARKED_DELETE, result)
+                        .is_some()
+                    {
                         app.navigate_with_guard(|document| {
                             document.remove_indices_from_list(&targets);
                         });
@@ -349,9 +369,11 @@ impl AppWindow {
                 (sources, result)
             },
             move |app, (sources, result)| {
-                if let Some((dest, move_result)) =
-                    app.take_success("フォルダ選択ダイアログの表示", result)
-                {
+                if let Some((dest, move_result)) = app.take_success(
+                    "フォルダ選択ダイアログの表示",
+                    next_action::DIALOG_RETRY,
+                    result,
+                ) {
                     if copy {
                         let mut copied = false;
                         for source in &sources {
@@ -360,7 +382,13 @@ impl AppWindow {
                                 &source.default_save_name(),
                             );
                             let result = app.document.copy_source_to(source, &path).map(Some);
-                            copied |= app.take_success("マークファイルの複製", result).is_some();
+                            copied |= app
+                                .take_success(
+                                    "マークファイルの複製",
+                                    next_action::MARKED_COPY,
+                                    result,
+                                )
+                                .is_some();
                         }
                         if copied {
                             app.file_operation_directory.remember_folder(&dest);
@@ -368,7 +396,10 @@ impl AppWindow {
                     } else {
                         let result = move_result.expect("移動の要求はShell操作の結果を持つ");
                         app.restore_file_operation_focus();
-                        if app.take_success("マークファイルの移動", result).is_some() {
+                        if app
+                            .take_success("マークファイルの移動", next_action::MARKED_MOVE, result)
+                            .is_some()
+                        {
                             app.file_operation_directory.remember_folder(&dest);
                             app.navigate_with_guard(|document| {
                                 document.remove_indices_from_list(&targets);
@@ -396,9 +427,11 @@ impl AppWindow {
                 move || crate::clipboard::copy_text_to_clipboard(hwnd, &text),
                 |app, result| {
                     if let Err(e) = result {
-                        app.show_error_title(&format!(
-                            "マークファイル名のコピーに失敗しました: {e:#}"
-                        ));
+                        app.show_error_title(
+                            "マークファイル名のコピーに失敗しました",
+                            next_action::MARKED_COPY_NAMES,
+                            Some(&format!("{e:#}")),
+                        );
                     }
                 },
             );
@@ -414,7 +447,11 @@ impl AppWindow {
             |app, result| match result {
                 Ok(Some(image)) => app.open_pasted_image(&image),
                 Ok(None) => {} // クリップボードに画像なし
-                Err(e) => app.show_error_title(&format!("貼り付けに失敗しました: {e:#}")),
+                Err(e) => app.show_error_title(
+                    "貼り付けに失敗しました",
+                    next_action::PASTE_READ,
+                    Some(&format!("{e:#}")),
+                ),
             },
         );
     }
@@ -424,12 +461,20 @@ impl AppWindow {
         let path = match self.pasted_images.save(image) {
             Ok(path) => path,
             Err(e) => {
-                self.show_error_title(&format!("貼り付けに失敗しました: {e:#}"));
+                self.show_error_title(
+                    "貼り付けた画像の一時保存に失敗しました",
+                    next_action::PASTE_SAVE,
+                    Some(&format!("{e:#}")),
+                );
                 return;
             }
         };
         if let Err(e) = self.document.open_single(&path) {
-            self.show_error_title(&format!("貼り付けに失敗しました: {e:#}"));
+            self.show_error_title(
+                "貼り付けた画像を開けませんでした",
+                next_action::PASTE_OPEN,
+                Some(&format!("{e:#}")),
+            );
         }
         self.process_document_events();
     }
@@ -444,7 +489,11 @@ impl AppWindow {
                 move || crate::clipboard::copy_text_to_clipboard(hwnd, &text),
                 |app, result| {
                     if let Err(e) = result {
-                        app.show_error_title(&format!("ファイル名のコピーに失敗しました: {e:#}"));
+                        app.show_error_title(
+                            "ファイル名のコピーに失敗しました",
+                            next_action::COPY_FILE_NAME,
+                            Some(&format!("{e:#}")),
+                        );
                     }
                 },
             );
@@ -461,7 +510,11 @@ impl AppWindow {
                 move || crate::clipboard::copy_image_to_clipboard(hwnd, &target),
                 |app, result| {
                     if let Err(e) = result {
-                        app.show_error_title(&format!("画像のコピーに失敗しました: {e:#}"));
+                        app.show_error_title(
+                            "画像のコピーに失敗しました",
+                            next_action::COPY_IMAGE,
+                            Some(&format!("{e:#}")),
+                        );
                     }
                 },
             );
@@ -578,7 +631,10 @@ mod tests {
         app.with_app(super::super::AppWindow::begin_user_operation);
         app.with_app(|state| state.open_pasted_image(&solid_image(2, 2, [9, 9, 9, 255])));
         let title = app.title();
-        assert!(title.contains("貼り付けに失敗しました"), "{title}");
+        assert!(
+            title.contains("貼り付けた画像の一時保存に失敗しました。一時フォルダ"),
+            "{title}"
+        );
         assert_eq!(app.borrow().pasted_images.files, vec![previous.clone()]);
         assert_eq!(std::fs::read(&previous).unwrap(), previous_bytes);
         assert_same_image(app.borrow().document.current_image().unwrap(), &first);
@@ -599,7 +655,8 @@ mod tests {
         app.with_app(super::super::AppWindow::begin_user_operation);
         app.with_app(|state| state.open_pasted_image(&solid_image(2, 2, [9, 9, 9, 255])));
         assert!(
-            app.title().contains("貼り付けに失敗しました"),
+            app.title()
+                .contains("貼り付けた画像の一時保存に失敗しました"),
             "{}",
             app.title()
         );

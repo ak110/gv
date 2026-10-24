@@ -44,8 +44,8 @@ impl AppWindow {
                     self.stop_slideshow();
                     file_list_changed = true;
                 }
-                crate::document::DocumentEvent::Error(msg) => {
-                    self.show_error_title(&msg);
+                crate::document::DocumentEvent::Error(notice) => {
+                    self.show_error_notice(&notice);
                 }
             }
         }

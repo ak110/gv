@@ -1,6 +1,6 @@
 //! 画像情報とヘルプの表示
 
-use super::AppWindow;
+use super::{AppWindow, next_action};
 use crate::ui::info_dialog;
 
 impl AppWindow {
@@ -32,7 +32,11 @@ impl AppWindow {
         self.defer_modal(
             move || info_dialog::show_info_dialog(hwnd, "画像情報", &text, font),
             |app, result| {
-                app.take_success("画像情報ダイアログの表示", result.map(Some));
+                app.take_success(
+                    "画像情報ダイアログの表示",
+                    next_action::DIALOG_RETRY,
+                    result.map(Some),
+                );
             },
         );
     }
@@ -70,9 +74,10 @@ impl AppWindow {
                 }
             }
             Err(e) => {
-                let msg = format!("メタデータの取得に失敗しました: {e:#}");
-                info_lines.push(msg.clone());
-                self.show_error_title(&msg);
+                let summary = "メタデータの取得に失敗しました";
+                let next_action = next_action::METADATA;
+                info_lines.push(format!("{summary}: {e:#}"));
+                self.show_error_title(summary, next_action, Some(&format!("{e:#}")));
             }
         }
         Some(info_lines)
@@ -87,7 +92,7 @@ impl AppWindow {
         self.defer_modal(
             move || info_dialog::show_info_dialog(hwnd, "ぐらびゅ ヘルプ", &text, font),
             |app, result| {
-                app.take_success("ヘルプの表示", result.map(Some));
+                app.take_success("ヘルプの表示", next_action::HELP, result.map(Some));
             },
         );
     }

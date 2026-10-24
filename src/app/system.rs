@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use anyhow::{Context as _, Result};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-use super::AppWindow;
+use super::{AppWindow, next_action};
 
 /// フォルダが無ければ作成してから返す
 fn ensure_dir(dir: PathBuf) -> Result<PathBuf> {
@@ -33,14 +33,15 @@ impl AppWindow {
                 }
 
                 match result {
-                    Err(e) => unsafe {
-                        crate::util::show_message_box(
-                            hwnd,
-                            "アップデート確認",
-                            &format!("更新の確認に失敗しました:\n{e:#}"),
-                            MB_OK | MB_ICONERROR,
-                        );
-                    },
+                    Err(e) => crate::util::show_error_box(
+                        hwnd,
+                        "アップデート確認",
+                        "更新の確認に失敗しました",
+                        "ネットワーク接続を確認して「アップデートを確認...」を再実行してください。\
+                         繰り返し失敗する場合は、ホームページ（https://github.com/ak110/gv）の\
+                         Releasesから最新版を入手してください",
+                        Some(&format!("{e:#}")),
+                    ),
                     Ok(info) if !info.is_newer => unsafe {
                         crate::util::show_message_box(
                             hwnd,
@@ -81,14 +82,15 @@ impl AppWindow {
                                     unsafe {
                                         let _ = SetCursor(Some(prev));
                                     }
-                                    unsafe {
-                                        crate::util::show_message_box(
-                                            hwnd,
-                                            "アップデート",
-                                            &format!("更新に失敗しました:\n{e:#}"),
-                                            MB_OK | MB_ICONERROR,
-                                        );
-                                    }
+                                    crate::util::show_error_box(
+                                        hwnd,
+                                        "アップデート",
+                                        "更新に失敗しました",
+                                        "現在のバージョンのまま使い続けられます。\
+                                         ネットワーク接続と実行ファイルのフォルダへの書き込み権限を確認し、\
+                                         「アップデートを確認...」を再実行してください",
+                                        Some(&format!("{e:#}")),
+                                    );
                                 }
                             }
                         }
@@ -125,14 +127,14 @@ impl AppWindow {
                             MB_OK | MB_ICONINFORMATION,
                         );
                     },
-                    Err(e) => unsafe {
-                        crate::util::show_message_box(
-                            hwnd,
-                            "シェル統合",
-                            &format!("シェル統合の登録に失敗しました:\n{e:#}"),
-                            MB_OK | MB_ICONERROR,
-                        );
-                    },
+                    Err(e) => crate::util::show_error_box(
+                        hwnd,
+                        "シェル統合",
+                        "シェル統合の登録に失敗しました",
+                        "「シェル統合を登録...」を再実行するか、コマンドプロンプトで\
+                         「ぐらびゅ.exe --register」を実行してください",
+                        Some(&format!("{e:#}")),
+                    ),
                 }
             },
             |_, ()| {},
@@ -165,14 +167,14 @@ impl AppWindow {
                             MB_OK | MB_ICONINFORMATION,
                         );
                     },
-                    Err(e) => unsafe {
-                        crate::util::show_message_box(
-                            hwnd,
-                            "シェル統合",
-                            &format!("シェル統合の解除に失敗しました:\n{e:#}"),
-                            MB_OK | MB_ICONERROR,
-                        );
-                    },
+                    Err(e) => crate::util::show_error_box(
+                        hwnd,
+                        "シェル統合",
+                        "シェル統合の解除に失敗しました",
+                        "「シェル統合を解除...」を再実行するか、コマンドプロンプトで\
+                         「ぐらびゅ.exe --unregister」を実行してください",
+                        Some(&format!("{e:#}")),
+                    ),
                 }
             },
             |_, ()| {},
@@ -199,7 +201,7 @@ impl AppWindow {
 
     /// フォルダの解決に成功した場合だけエクスプローラーで開き、失敗は通知する
     fn open_folder_in_explorer(&mut self, operation: &str, dir: Result<PathBuf>) {
-        if let Some(dir) = self.take_success(operation, dir.map(Some)) {
+        if let Some(dir) = self.take_success(operation, next_action::FOLDER_CREATE, dir.map(Some)) {
             self.open_in_explorer(&dir);
         }
     }
@@ -229,7 +231,11 @@ impl AppWindow {
             |app, code| {
                 // ShellExecuteW は戻り値が32以下の場合エラー（WinSDK仕様）
                 if code <= 32 {
-                    app.show_error_title(&format!("ブラウザの起動に失敗しました: {code}"));
+                    app.show_error_title(
+                        "ブラウザの起動に失敗しました",
+                        next_action::BROWSER,
+                        Some(&format!("ShellExecuteWの戻り値 {code}")),
+                    );
                 }
             },
         );

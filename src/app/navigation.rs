@@ -1,6 +1,6 @@
 //! ナビゲーション操作
 
-use super::AppWindow;
+use super::{AppWindow, next_action};
 use crate::document::Document;
 
 impl AppWindow {
@@ -38,7 +38,9 @@ impl AppWindow {
         self.defer_modal(
             move || crate::ui::page_dialog::show_page_dialog(hwnd, current, total),
             move |app, result| {
-                if let Some(page) = app.take_success("ダイアログの表示", result) {
+                if let Some(page) =
+                    app.take_success("ダイアログの表示", next_action::DIALOG_RETRY, result)
+                {
                     let index = (page.saturating_sub(1)).min(total - 1);
                     app.stop_slideshow();
                     app.navigate_with_guard(|document| document.navigate_to(index));

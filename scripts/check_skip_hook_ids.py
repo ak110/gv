@@ -56,11 +56,19 @@ def _load_hook_ids(config: pathlib.Path) -> set[str]:
     try:
         lines = config.read_text(encoding="utf-8").splitlines()
     except OSError as e:
-        print(f"prek設定の読み取りに失敗した: {config}: {e}", file=sys.stderr)
+        print(
+            f"prek設定の読み取りに失敗した: {config}: {e}。"
+            "ファイルの所在と読み取り権限を確認し、リポジトリ直下で再実行する",
+            file=sys.stderr,
+        )
         sys.exit(2)
     hook_ids = {m.group(1) for line in lines if (m := _HOOK_ID_PATTERN.match(line))}
     if not hook_ids:
-        print(f"prek設定からhook IDを取得できない: {config}", file=sys.stderr)
+        print(
+            f"prek設定からhook IDを取得できない: {config}。"
+            "hooksの各要素を「- id: <hook ID>」の1行で書いてから再実行する",
+            file=sys.stderr,
+        )
         sys.exit(2)
     return hook_ids
 
@@ -75,7 +83,11 @@ def _tracked_markdown() -> list[pathlib.Path]:
             text=True,
         )
     except (OSError, subprocess.CalledProcessError) as e:
-        print(f"Gitの追跡下のMarkdownを取得できない: {e}", file=sys.stderr)
+        print(
+            f"Gitの追跡下のMarkdownを取得できない: {e}。"
+            "gitコマンドを実行できることを確認し、リポジトリ内で再実行する",
+            file=sys.stderr,
+        )
         sys.exit(2)
     return [pathlib.Path(name) for name in proc.stdout.split("\0") if name]
 
@@ -89,7 +101,11 @@ def _collect_violations(
         try:
             lines = doc.read_text(encoding="utf-8").splitlines()
         except OSError as e:
-            print(f"走査対象の読み取りに失敗した: {doc}: {e}", file=sys.stderr)
+            print(
+                f"走査対象の読み取りに失敗した: {doc}: {e}。"
+                "ファイルの所在と文字コード（UTF-8）を確認して再実行する",
+                file=sys.stderr,
+            )
             sys.exit(2)
         for lineno, line in enumerate(lines, start=1):
             for match in _SKIP_PATTERN.finditer(line):

@@ -34,7 +34,35 @@ pub enum DocumentEvent {
     /// 表示位置変更
     NavigationChanged { index: usize },
     /// エラー通知
-    Error(String),
+    Error(ErrorNotice),
+}
+
+/// 利用者へ通知する失敗
+///
+/// 利用者が次の行動を選べるよう、要約、次の操作、詳細を分けて持ち、次の操作の指定を必須にする。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ErrorNotice {
+    /// 失敗の要約（句点なし）
+    pub summary: String,
+    /// 続行の可否、再操作、代替手段などの次の操作（句点なし）
+    pub next_action: &'static str,
+    /// 原因などの詳細
+    pub detail: Option<String>,
+}
+
+impl ErrorNotice {
+    pub fn new(summary: impl Into<String>, next_action: &'static str) -> Self {
+        Self {
+            summary: summary.into(),
+            next_action,
+            detail: None,
+        }
+    }
+
+    pub fn with_detail(mut self, detail: impl Into<String>) -> Self {
+        self.detail = Some(detail.into());
+        self
+    }
 }
 
 /// コンテナ (ZIP/PDF/RAR/7z) の読み込み結果 (同期展開とバックグラウンド展開で共通、失敗を含む)

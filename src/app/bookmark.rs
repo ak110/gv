@@ -1,6 +1,6 @@
 //! ブックマークの保存と読み込み
 
-use super::AppWindow;
+use super::{AppWindow, next_action};
 
 impl AppWindow {
     pub(super) fn action_bookmark_load(&mut self) {
@@ -10,7 +10,8 @@ impl AppWindow {
         self.defer_modal(
             move || crate::ui::file_dialog::open_bookmark_dialog(hwnd),
             |app, result| {
-                let Some(path) = app.take_success("ブックマークの読み込み", result)
+                let Some(path) =
+                    app.take_success("ブックマークの読み込み", next_action::BOOKMARK_LOAD, result)
                 else {
                     return;
                 };
@@ -19,12 +20,16 @@ impl AppWindow {
                     app.document.is_archive_path(p)
                 })
                 .map(Some);
-                let Some(data) = app.take_success("ブックマークの読み込み", result)
+                let Some(data) =
+                    app.take_success("ブックマークの読み込み", next_action::BOOKMARK_LOAD, result)
                 else {
                     return;
                 };
                 let result = app.document.load_bookmark_data(data).map(Some);
-                if app.take_success("ブックマークの読み込み", result).is_some() {
+                if app
+                    .take_success("ブックマークの読み込み", next_action::BOOKMARK_LOAD, result)
+                    .is_some()
+                {
                     app.file_operation_directory.reset();
                     // 読み込み成功時のみ前回名キャッシュを更新する。
                     // 反映後のファイルリスト先頭からコンテナ識別キーを取得し、
@@ -83,7 +88,9 @@ impl AppWindow {
         self.defer_modal(
             move || crate::bookmark::save_bookmark(hwnd, &entries, idx, &initial_name),
             move |app, result| {
-                if let Some(saved_path) = app.take_success("ブックマークの保存", result) {
+                if let Some(saved_path) =
+                    app.take_success("ブックマークの保存", next_action::BOOKMARK_SAVE, result)
+                {
                     // 保存成功時のみキャッシュを更新する。コンテナ識別キーは現在の先頭ソースから取得する。
                     if let (Some(key), Some(file_name)) = (
                         current_key,

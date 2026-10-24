@@ -9,7 +9,13 @@ pub(crate) mod container;
 pub(crate) mod types;
 pub(crate) mod utils;
 
-pub use types::{DocumentEvent, ZipBuffer};
+pub use types::{DocumentEvent, ErrorNotice, ZipBuffer};
+
+/// 画像を読み込めなかった場合に示す次の操作
+const DECODE_FAILED_ACTION: &str =
+    "ファイルが壊れていないか確認してください。他の画像へ移動すると表示を続けられます";
+/// 一部のコンテナだけを開けなかった場合に示す次の操作
+const PARTIAL_OPEN_ACTION: &str = "開けたコンテナの画像は表示を続けられます。開けなかったコンテナはファイルの破損やパスワード保護を確認してください";
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -139,7 +145,10 @@ impl Document {
                     let _ = self.event_sender.send(DocumentEvent::ImageReady);
                 }
                 PrefetchEvent::Error(error) => {
-                    let _ = self.event_sender.send(DocumentEvent::Error(error));
+                    let _ = self.event_sender.send(DocumentEvent::Error(
+                        ErrorNotice::new("画像を読み込めませんでした", DECODE_FAILED_ACTION)
+                            .with_detail(error),
+                    ));
                 }
             }
         }
@@ -250,8 +259,12 @@ impl Document {
             anyhow::bail!("全てのコンテナの読み込みに失敗:\n{}", errors.join("\n"));
         }
         if !errors.is_empty() {
-            let msg = format!("{}件のコンテナを開けませんでした", errors.len());
-            let _ = self.event_sender.send(DocumentEvent::Error(msg));
+            let notice = ErrorNotice::new(
+                format!("{}件のコンテナを開けませんでした", errors.len()),
+                PARTIAL_OPEN_ACTION,
+            )
+            .with_detail(errors.join(" / "));
+            let _ = self.event_sender.send(DocumentEvent::Error(notice));
         }
 
         self.file_list.sort_current();
@@ -391,8 +404,12 @@ impl Document {
             anyhow::bail!("読み込みに失敗:\n{}", errors.join("\n"));
         }
         if !errors.is_empty() {
-            let msg = format!("{}件のコンテナを開けませんでした", errors.len());
-            let _ = self.event_sender.send(DocumentEvent::Error(msg));
+            let notice = ErrorNotice::new(
+                format!("{}件のコンテナを開けませんでした", errors.len()),
+                PARTIAL_OPEN_ACTION,
+            )
+            .with_detail(errors.join(" / "));
+            let _ = self.event_sender.send(DocumentEvent::Error(notice));
         }
 
         self.file_list.sort_current();
@@ -651,9 +668,13 @@ impl Document {
             let pool = match build_expansion_pool() {
                 Ok(pool) => pool,
                 Err(e) => {
-                    let _ = event_sender.send(DocumentEvent::Error(format!(
-                        "バックグラウンド展開用スレッドプールの作成に失敗しました: {e}"
-                    )));
+                    let _ = event_sender.send(DocumentEvent::Error(
+                        ErrorNotice::new(
+                            "バックグラウンド展開用スレッドプールの作成に失敗しました",
+                            "未展開のコンテナは表示した時点で展開します。改善しない場合はぐらびゅを再起動してください",
+                        )
+                        .with_detail(e.to_string()),
+                    ));
                     let _ = tx.send(ContainerExpandEvent::AllDone { generation });
                     if let Some(notify) = &ui_notify {
                         notify();
@@ -826,7 +847,13 @@ impl Document {
                 self.file_list.remove_at(index);
                 self.container_states
                     .insert(container_path.to_path_buf(), ContainerState::Expanded);
-                let _ = self.event_sender.send(DocumentEvent::Error(msg.clone()));
+                let _ = self.event_sender.send(DocumentEvent::Error(
+                    ErrorNotice::new(
+                        "コンテナを展開できませんでした",
+                        "このコンテナはリストから除き、他の画像の表示を続けています。ファイルの破損やパスワード保護を確認してください",
+                    )
+                    .with_detail(msg.clone()),
+                ));
                 anyhow::bail!("コンテナ展開失敗: {msg}");
             }
             result => {
@@ -1042,7 +1069,10 @@ impl Document {
                 // 同期デコード失敗時はfailedマーク (ナビゲーション時にスキップ対象)
                 self.file_list.mark_failed(index);
                 let msg = format!("{}: {}", source.display_path(), e);
-                let _ = self.event_sender.send(DocumentEvent::Error(msg));
+                let _ = self.event_sender.send(DocumentEvent::Error(
+                    ErrorNotice::new("画像を読み込めませんでした", DECODE_FAILED_ACTION)
+                        .with_detail(msg),
+                ));
             }
         }
 

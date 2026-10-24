@@ -67,7 +67,11 @@ impl KeyConfig {
             match Self::with_overrides(&content) {
                 Ok(config) => return config,
                 Err(e) => {
-                    eprintln!("キーバインド設定のパースに失敗 ({e})。デフォルトを使用する。");
+                    eprintln!(
+                        "キーバインド設定のパースに失敗しました ({e})。既定のキー割り当てで続行します。\
+                         独自の割り当てを使う場合は {} の記述を修正してください。",
+                        p.display()
+                    );
                 }
             }
         }

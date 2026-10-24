@@ -45,13 +45,16 @@ jobs:
             }
             if ($conclusion -and $conclusion -ne "null") {
               # 完了しているが success ではない
-              Write-Error "CI failed on this commit (status: $conclusion)."
+              Write-Error ("このcommitのCIが成功していない (status: $conclusion)。" +
+                "gh run list --workflow=ci.yaml --commit=${{ github.sha }} で失敗したジョブを確認して修正し、" +
+                "修正をpushしてCIが成功した後に、releaserでリリースし直す。")
               exit 1
             }
             Write-Host "CI still running... waiting ${intervalSec}s (attempt $i/$maxAttempts)"
             Start-Sleep -Seconds $intervalSec
           }
-          Write-Error "Timed out waiting for CI to complete (waited $($maxAttempts * $intervalSec)s)."
+          Write-Error ("CIの完了待ちが時間切れになった (待機 $($maxAttempts * $intervalSec)秒)。" +
+            "gh run list --workflow=ci.yaml --commit=${{ github.sha }} でCIの完了を確認してから、このworkflowを再実行する。")
           exit 1
 
       - name: Checkout

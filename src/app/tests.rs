@@ -372,12 +372,17 @@ fn operation_failure_is_shown_and_survives_title_update() {
 
     let result: Result<Option<()>> = Err(anyhow::anyhow!("アクセスが拒否されました"));
     assert_eq!(
-        app.with_app(|state| state.take_success("ファイルの移動", result)),
+        app.with_app(|state| state.take_success("ファイルの移動", "移動先を確認する", result)),
         None
     );
     let title = app.title();
-    assert!(title.contains("ファイルの移動に失敗しました"), "{title}");
-    assert!(title.contains("アクセスが拒否されました"), "{title}");
+    // 要約、次の操作、詳細の順に表示する
+    assert!(
+        title.contains(
+            "ファイルの移動に失敗しました。移動先を確認する。詳細: アクセスが拒否されました"
+        ),
+        "{title}"
+    );
 
     // 同じ処理内のリスト更新・選択更新
     app.with_app(|state| state.document.reload());
@@ -418,28 +423,40 @@ fn cancel_and_success_are_not_reported_as_failure() {
     let normal = app.title();
 
     assert_eq!(
-        app.with_app(|state| state.take_success::<PathBuf>("保存ダイアログの表示", Ok(None))),
+        app.with_app(|state| state.take_success::<PathBuf>(
+            "保存ダイアログの表示",
+            "再操作する",
+            Ok(None)
+        )),
         None
     );
     let aborted: Result<bool> = Ok(false);
     assert_eq!(
-        app.with_app(
-            |state| state.take_success("ファイルの削除", aborted.map(|done| done.then_some(())))
-        ),
+        app.with_app(|state| state.take_success(
+            "ファイルの削除",
+            "再操作する",
+            aborted.map(|done| done.then_some(()))
+        )),
         None
     );
     assert_eq!(app.title(), normal);
 
     let dest = PathBuf::from("dest");
     assert_eq!(
-        app.with_app(|state| state.take_success("保存ダイアログの表示", Ok(Some(dest.clone())))),
+        app.with_app(|state| state.take_success(
+            "保存ダイアログの表示",
+            "再操作する",
+            Ok(Some(dest.clone()))
+        )),
         Some(dest)
     );
     let done: Result<bool> = Ok(true);
     assert_eq!(
-        app.with_app(
-            |state| state.take_success("ファイルの削除", done.map(|done| done.then_some(())))
-        ),
+        app.with_app(|state| state.take_success(
+            "ファイルの削除",
+            "再操作する",
+            done.map(|done| done.then_some(()))
+        )),
         Some(())
     );
     assert_eq!(app.title(), normal);
@@ -592,7 +609,7 @@ fn image_export_failure_keeps_existing_file_and_can_retry() {
         .with_app(|state| state.write_current_image(ExportFormat::Png, &path))
         .map(Some);
     assert!(
-        app.with_app(|state| state.take_success("画像の出力", result))
+        app.with_app(|state| state.take_success("画像の出力", "保存先を確認する", result))
             .is_none()
     );
     assert!(app.title().contains("画像の出力に失敗しました"));

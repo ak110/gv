@@ -20,6 +20,40 @@ pub fn strip_extended_length_prefix(path: &Path) -> PathBuf {
     }
 }
 
+/// 失敗の通知文を、要約、次の操作、詳細の順に1行へ組み立てる
+///
+/// `summary`と`next_action`は句点を付けずに渡す。詳細が長くても次の操作を先に読めるよう、詳細は末尾に置く。
+pub fn format_error_text(summary: &str, next_action: &str, detail: Option<&str>) -> String {
+    match detail {
+        Some(detail) => format!("{summary}。{next_action}。詳細: {detail}"),
+        None => format!("{summary}。{next_action}。"),
+    }
+}
+
+/// 失敗を伝えるエラー用メッセージボックスを表示する
+///
+/// 利用者が次の行動を選べるよう、要約、次の操作、詳細を分けて受け取り、次の操作の指定を必須にする。
+/// エラー用途のメッセージボックスはこの関数を通す。
+/// `hwnd`は有効なウィンドウハンドルか`HWND::default()`（NULLに相当）を渡す。
+pub fn show_error_box(
+    hwnd: windows::Win32::Foundation::HWND,
+    title: &str,
+    summary: &str,
+    next_action: &str,
+    detail: Option<&str>,
+) {
+    use windows::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK};
+
+    let message = match detail {
+        Some(detail) => format!("{summary}。\n{next_action}。\n\n詳細:\n{detail}"),
+        None => format!("{summary}。\n{next_action}。"),
+    };
+    // SAFETY: 呼出側は自身が所有する有効なウィンドウハンドルか`HWND::default()`を渡す（本関数の契約）。
+    unsafe {
+        show_message_box(hwnd, title, &message, MB_OK | MB_ICONERROR);
+    }
+}
+
 /// Win32 MessageBoxW のラッパー
 ///
 /// # Safety
@@ -43,6 +77,22 @@ pub unsafe fn show_message_box(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn error_text_puts_next_action_before_detail() {
+        assert_eq!(
+            format_error_text(
+                "ファイルの移動に失敗しました",
+                "移動先を確認してください",
+                Some("拒否")
+            ),
+            "ファイルの移動に失敗しました。移動先を確認してください。詳細: 拒否"
+        );
+        assert_eq!(
+            format_error_text("描画を復旧できませんでした", "再描画してください", None),
+            "描画を復旧できませんでした。再描画してください。"
+        );
+    }
 
     #[test]
     fn empty_string() {

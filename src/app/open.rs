@@ -1,6 +1,6 @@
 //! 開く・閉じる・新規ウィンドウ・ドロップとエクスプローラー操作
 
-use super::AppWindow;
+use super::{AppWindow, next_action};
 use anyhow::Context as _;
 use std::os::windows::process::CommandExt as _;
 use std::path::Path;
@@ -23,13 +23,20 @@ impl AppWindow {
                 crate::ui::file_dialog::open_file_dialog(hwnd, initial_dir.as_deref(), &registry)
             },
             |app, result| {
-                let Some(path) = app.take_success("ファイル選択ダイアログの表示", result)
-                else {
+                let Some(path) = app.take_success(
+                    "ファイル選択ダイアログの表示",
+                    next_action::OPEN_DIALOG,
+                    result,
+                ) else {
                     return;
                 };
                 match app.document.open(&path) {
                     Ok(()) => app.file_operation_directory.reset(),
-                    Err(e) => app.show_error_title(&format!("ファイルを開けませんでした: {e:#}")),
+                    Err(e) => app.show_error_title(
+                        "ファイルを開けませんでした",
+                        next_action::OPEN_RETRY,
+                        Some(&format!("{e:#}")),
+                    ),
                 }
                 app.process_document_events();
             },
@@ -48,13 +55,20 @@ impl AppWindow {
         self.defer_modal(
             move || crate::ui::file_dialog::open_folder_dialog(hwnd, initial_dir.as_deref()),
             |app, result| {
-                let Some(path) = app.take_success("フォルダ選択ダイアログの表示", result)
-                else {
+                let Some(path) = app.take_success(
+                    "フォルダ選択ダイアログの表示",
+                    next_action::DIALOG_RETRY,
+                    result,
+                ) else {
                     return;
                 };
                 match app.document.open_folder(&path) {
                     Ok(()) => app.file_operation_directory.reset(),
-                    Err(e) => app.show_error_title(&format!("フォルダを開けませんでした: {e:#}")),
+                    Err(e) => app.show_error_title(
+                        "フォルダを開けませんでした",
+                        next_action::OPEN_RETRY,
+                        Some(&format!("{e:#}")),
+                    ),
                 }
                 app.process_document_events();
             },
@@ -70,7 +84,11 @@ impl AppWindow {
                 .context("プロセスを起動できませんでした")
         });
         if let Err(e) = result {
-            self.show_error_title(&format!("新規ウィンドウの起動に失敗しました: {e:#}"));
+            self.show_error_title(
+                "新規ウィンドウの起動に失敗しました",
+                next_action::NEW_WINDOW,
+                Some(&format!("{e:#}")),
+            );
         }
     }
 
@@ -89,13 +107,21 @@ impl AppWindow {
             .raw_arg(&arg)
             .spawn()
         {
-            self.show_error_title(&format!("エクスプローラの起動に失敗しました: {e:#}"));
+            self.show_error_title(
+                "エクスプローラの起動に失敗しました",
+                next_action::EXPLORER,
+                Some(&format!("{e:#}")),
+            );
         }
     }
 
     pub(super) fn open_in_explorer(&mut self, path: &Path) {
         if let Err(e) = std::process::Command::new("explorer.exe").arg(path).spawn() {
-            self.show_error_title(&format!("エクスプローラの起動に失敗しました: {e:#}"));
+            self.show_error_title(
+                "エクスプローラの起動に失敗しました",
+                next_action::EXPLORER,
+                Some(&format!("{e:#}")),
+            );
         }
     }
 
@@ -147,7 +173,11 @@ impl AppWindow {
         match result {
             Ok(()) => self.file_operation_directory.reset(),
             Err(e) => {
-                self.show_error_title(&format!("ドロップされたファイルを開けませんでした: {e:#}"));
+                self.show_error_title(
+                    "ドロップされたファイルを開けませんでした",
+                    next_action::OPEN_RETRY,
+                    Some(&format!("{e:#}")),
+                );
             }
         }
 

@@ -6,7 +6,7 @@
 
 use crate::filter_spec::{FilterKind, FilterSpec};
 
-use super::AppWindow;
+use super::{AppWindow, next_action};
 
 impl AppWindow {
     pub(crate) fn action_filter_for_action(&mut self, action: crate::action::Action) {
@@ -23,7 +23,8 @@ impl AppWindow {
         self.defer_modal(
             move || crate::ui::rotate_dialog::show_rotate_dialog(hwnd),
             |app, result| {
-                if let Some(degrees) = app.take_success("ダイアログの表示", result)
+                if let Some(degrees) =
+                    app.take_success("ダイアログの表示", next_action::DIALOG_RETRY, result)
                     && let Some(img) = app.document.current_image()
                 {
                     let result = crate::filter::transform::rotate_arbitrary(img, degrees);
@@ -47,7 +48,8 @@ impl AppWindow {
         self.defer_modal(
             move || crate::ui::resize_dialog::show_resize_dialog(hwnd, w, h),
             |app, result| {
-                if let Some((nw, nh)) = app.take_success("ダイアログの表示", result)
+                if let Some((nw, nh)) =
+                    app.take_success("ダイアログの表示", next_action::DIALOG_RETRY, result)
                     && let Some(img) = app.document.current_image()
                 {
                     match crate::filter::transform::resize(img, nw, nh) {
@@ -57,7 +59,11 @@ impl AppWindow {
                             app.process_document_events();
                         }
                         Err(e) => {
-                            app.show_error_title(&format!("リサイズに失敗しました: {e:#}"));
+                            app.show_error_title(
+                                "リサイズに失敗しました",
+                                next_action::RESIZE,
+                                Some(&format!("{e:#}")),
+                            );
                         }
                     }
                 }
@@ -93,7 +99,9 @@ impl AppWindow {
             self.defer_modal(
                 move || crate::ui::filter_dialog::show_filter_dialog(hwnd, &title, &fields),
                 move |app, result| {
-                    if let Some(values) = app.take_success("ダイアログの表示", result) {
+                    if let Some(values) =
+                        app.take_success("ダイアログの表示", next_action::DIALOG_RETRY, result)
+                    {
                         app.apply_filter_values(&spec, persistent, values);
                     }
                 },
@@ -102,9 +110,11 @@ impl AppWindow {
     }
 
     fn apply_filter_values(&mut self, spec: &FilterSpec, persistent: bool, values: Vec<String>) {
-        let Some(operation) =
-            self.take_success("フィルター入力の検証", spec.operation(&values).map(Some))
-        else {
+        let Some(operation) = self.take_success(
+            "フィルター入力の検証",
+            next_action::FILTER_INPUT,
+            spec.operation(&values).map(Some),
+        ) else {
             return;
         };
         if persistent {

@@ -37,13 +37,12 @@ mod test_helpers;
 
 use std::path::PathBuf;
 
-use anyhow::Result;
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
 use windows::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,
 };
 
-fn main() -> Result<()> {
+fn main() {
     if std::env::args().nth(1).is_some_and(|arg| {
         matches!(
             arg.as_str(),
@@ -63,7 +62,7 @@ fn main() -> Result<()> {
         match arg.as_str() {
             "--help" | "-h" => {
                 print_help();
-                return Ok(());
+                return;
             }
             _ => {}
         }
@@ -75,8 +74,8 @@ fn main() -> Result<()> {
     }
 
     // COM初期化
-    unsafe {
-        CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok()?;
+    if let Err(e) = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok() } {
+        exit_with_startup_error("COMの初期化に失敗しました", &format!("{e:#}"));
     }
 
     // 起動時マイグレーション・クリーンアップ
@@ -87,8 +86,14 @@ fn main() -> Result<()> {
     // CLI分岐 (--register / --unregister: COM初期化後に実行)
     if let Some(arg) = std::env::args().nth(1) {
         match arg.as_str() {
-            "--register" => return shell::register_all(),
-            "--unregister" => return shell::unregister_all(),
+            "--register" => {
+                finish_shell_command(shell::register_all(), "シェル統合の登録", "--register");
+                return;
+            }
+            "--unregister" => {
+                finish_shell_command(shell::unregister_all(), "シェル統合の解除", "--unregister");
+                return;
+            }
             _ => {}
         }
     }
@@ -105,11 +110,47 @@ fn main() -> Result<()> {
 
     // メインウィンドウ作成
     // _appはメッセージループ中に生存する必要がある (Box<WindowState>のドロップ防止)
-    let _app = app::AppWindow::create(config, &initial_files)?;
+    let _app = match app::AppWindow::create(config, &initial_files) {
+        Ok(app) => app,
+        Err(e) => exit_with_startup_error("ウィンドウの作成に失敗しました", &format!("{e:#}")),
+    };
 
     // メッセージループ
     let exit_code = ui::window::run_message_loop();
     std::process::exit(exit_code);
+}
+
+/// 起動の失敗を理由と次の操作とともにダイアログで示し、非0で終了する
+///
+/// release版はウィンドウサブシステムで標準エラーの出力先が無いため、ダイアログで伝える。
+fn exit_with_startup_error(summary: &str, detail: &str) -> ! {
+    util::show_error_box(
+        windows::Win32::Foundation::HWND::default(),
+        "ぐらびゅ",
+        summary,
+        "ぐらびゅをもう一度起動してください。繰り返し失敗する場合は、\
+         ホームページ（https://github.com/ak110/gv）のIssuesへこの内容を添えて報告してください",
+        Some(detail),
+    );
+    std::process::exit(1);
+}
+
+/// `--register`・`--unregister`の失敗を理由と次の操作とともにコンソールへ出し、非0で終了する
+fn finish_shell_command(result: anyhow::Result<()>, operation: &str, flag: &str) {
+    if let Err(e) = result {
+        eprintln!(
+            "{}",
+            util::format_error_text(
+                &format!("{operation}に失敗しました"),
+                &format!(
+                    "レジストリ（HKEY_CURRENT_USER）への書き込みを妨げるセキュリティソフトなどが無いか確認し、\
+                     「ぐらびゅ.exe {flag}」を再実行してください"
+                ),
+                Some(&format!("{e:#}")),
+            )
+        );
+        std::process::exit(1);
+    }
 }
 
 /// 旧ファイル名 (gv3.*) を新ファイル名 (ぐらびゅ.*) にリネームする

@@ -1,6 +1,6 @@
 //! 表示画像と選択範囲のファイル出力
 
-use super::AppWindow;
+use super::{AppWindow, next_action};
 use anyhow::{Context as _, Result};
 use std::path::Path;
 
@@ -33,12 +33,16 @@ impl AppWindow {
                 )
             },
             move |app, result| {
-                let Some(save_path) = app.take_success("保存ダイアログの表示", result)
+                let Some(save_path) =
+                    app.take_success("保存ダイアログの表示", next_action::DIALOG_RETRY, result)
                 else {
                     return;
                 };
                 let result = app.write_current_image(format, &save_path);
-                if app.take_success("画像の出力", result.map(Some)).is_some() {
+                if app
+                    .take_success("画像の出力", next_action::IMAGE_EXPORT, result.map(Some))
+                    .is_some()
+                {
                     app.file_operation_directory.remember_file(&save_path);
                 }
             },
