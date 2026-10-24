@@ -138,7 +138,7 @@ fn exit_with_startup_error(summary: &str, detail: &str) -> ! {
 const STARTUP_NEXT_ACTION: &str = "ぐらびゅをもう一度起動してください。繰り返し失敗する場合は、\
      ホームページ（https://github.com/ak110/gv）のIssuesへこの内容を添えて報告してください";
 
-/// `--register`・`--unregister`の失敗を理由と次の操作とともにコンソールへ出し、非0で終了する
+/// `--register`・`--unregister`の失敗を理由と次の操作とともにコンソールへ出力し、非0で終了する
 fn finish_shell_command(result: anyhow::Result<()>, operation: &str, flag: &str) {
     if let Err(e) = result {
         eprintln!("{}", shell_command_error_text(operation, flag, &e));

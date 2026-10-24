@@ -143,7 +143,7 @@ fn render_page_to_rgba(page: &PdfPage, width: u32, height: u32) -> Result<Decode
         .context("描画先テクスチャ作成失敗")?;
     let target = target.context("描画先テクスチャ作成失敗")?;
 
-    // 描画先はCPUから読めないため、読み出し用のテクスチャへ複写してから読む
+    // 描画先はCPUから読めないため、読み取り用のテクスチャへ複写してから読む
     let staging_desc = D3D11_TEXTURE2D_DESC {
         Usage: D3D11_USAGE_STAGING,
         BindFlags: 0,
@@ -152,8 +152,8 @@ fn render_page_to_rgba(page: &PdfPage, width: u32, height: u32) -> Result<Decode
     };
     let mut staging: Option<ID3D11Texture2D> = None;
     unsafe { device.CreateTexture2D(&raw const staging_desc, None, Some(&raw mut staging)) }
-        .context("読み出し用テクスチャ作成失敗")?;
-    let staging = staging.context("読み出し用テクスチャ作成失敗")?;
+        .context("読み取り用テクスチャ作成失敗")?;
+    let staging = staging.context("読み取り用テクスチャ作成失敗")?;
 
     let renderer = unsafe { PdfCreateRenderer(&device.cast::<IDXGIDevice>()?) }
         .context("PDFレンダラー作成失敗")?;
@@ -183,7 +183,7 @@ fn render_page_to_rgba(page: &PdfPage, width: u32, height: u32) -> Result<Decode
     unsafe { context.CopyResource(&staging, &target) };
     let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
     unsafe { context.Map(&staging, 0, D3D11_MAP_READ, 0, Some(&raw mut mapped)) }
-        .context("描画結果の読み出し失敗")?;
+        .context("描画結果の読み取り失敗")?;
     let row_bytes = width as usize * 4;
     let mut data = Vec::with_capacity(row_bytes * height as usize);
     for y in 0..height as usize {
