@@ -1,4 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// 本番から到達しないコードを残さないため、非テストのビルドでは未使用を誤りにし、
+// 局所の`allow(dead_code)`による抑制も拒否する。テストビルドはテストハーネスが生成する
+// `main`へ`allow(dead_code)`を付けるため、`forbid`と衝突しないよう対象から外す。
+// テスト専用のAPIは`#[cfg(test)]`で限定する。
+#![cfg_attr(not(test), forbid(dead_code))]
 
 mod action;
 mod app;

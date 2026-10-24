@@ -83,7 +83,7 @@ struct FrameResult {
 
 /// Direct2D描画エンジン
 pub struct D2DRenderer {
-    #[allow(dead_code)] // COM参照をDrop時まで保持する必要がある
+    /// 描画先を失効後に作り直すため、レンダラーの寿命の間保持する
     factory: ID2D1Factory,
     hwnd: HWND,
     /// 失効後は次の描画まで`None`

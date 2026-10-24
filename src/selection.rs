@@ -118,11 +118,6 @@ impl Selection {
         }
     }
 
-    #[allow(dead_code)] // 将来のPhase (フィルタ適用時の選択領域判定等) で使用予定
-    pub fn state(&self) -> &SelectionState {
-        &self.state
-    }
-
     /// 確定済み選択矩形を返す (Drawing中は未確定の矩形を返す)
     pub fn current_rect(&self) -> Option<PixelRect> {
         match &self.state {
