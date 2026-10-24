@@ -49,7 +49,7 @@ anyhow = "1"
 thiserror = "2"
 crossbeam-channel = "0.5"
 zip = { version = "9", default-features = false, features = ["deflate"] }
-sevenz-rust2 = { version = "0.23", features = ["bzip2", "zstd", "aes256"] }
+sevenz-rust2 = { version = "0.24", features = ["bzip2", "zstd", "aes256"] }
 libloading = "0.9"
 ureq = "3"
 serde_json = "1"
@@ -66,7 +66,7 @@ getrandom = "0.4"
 unrar = "0.5"
 
 [build-dependencies]
-winresource = "0.1.31"
+winresource = "0.1.34"
 
 [profile.release]
 lto = true

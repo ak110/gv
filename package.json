@@ -1,15 +1,15 @@
 {
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@12.9.1+sha512.06b055fff5cd20dc12781de173ced3310ce0951bf2ec620211a16045d5444d5c93a663210764ef29a653a610459ba0368f0e74f84d80c54723cf95aae7bc0d6d",
+  "packageManager": "pnpm@12.15.0+sha512.b3951d6d6ff4a9f13dc7cf56cd28d2b8eb37dbcc9c68e52e1e1191873ea9f82a017287ab50baadc5ccc494f036c67c0e47eb13608c2fa36f47711b61ea128e61",
   "scripts": {
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
     "docs:preview": "vitepress preview docs"
   },
   "devDependencies": {
-    "markdownlint-cli2": "^0.23.3",
-    "prettier": "^3.9.9",
+    "markdownlint-cli2": "^0.24.0",
+    "prettier": "^3.9.10",
     "textlint": "^15.8.0",
     "textlint-rule-ja-no-abusage": "^3.0.0",
     "textlint-rule-preset-ai-words-ja": "^1.2.1",
