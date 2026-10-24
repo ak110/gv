@@ -1,0 +1,3 @@
+# 共通品質基準のプラグイン。導入手順は docs/development/development.md「初回セットアップ」を参照する
+[plugins."agent-basics@ak110-dotfiles"]
+enabled = true

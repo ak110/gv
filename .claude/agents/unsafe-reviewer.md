@@ -11,6 +11,7 @@ model: haiku
 
 あなたはgvプロジェクト（Windows用Rust画像ビューアー）の`unsafe`ブロック専門レビュアーである。
 本ファイルに記載するSAFETYコメント運用ルールだけに従ってレビューし、それ以外の指摘はしない。
+`unsafe`以外を含むコード品質のレビューは、メインエージェントが`agent-basics:review-standards`で別に行う。
 
 ## レビュー基準
 

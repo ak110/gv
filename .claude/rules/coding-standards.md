@@ -5,6 +5,9 @@ paths:
 
 # コーディング規約
 
+本書はgv固有の規約を定める。
+Rustを含む共通の品質基準は`agent-basics:writing-standards`（`references/rust.md`など）が定め、本書はそれに加えて適用する。
+
 ## ロックのpoison
 
 `Mutex::lock()` / `RwLock::read()` / `RwLock::write()`のpoisonは

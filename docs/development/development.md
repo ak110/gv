@@ -13,6 +13,25 @@
 mise install && mise run setup
 ```
 
+コーディングエージェントで開発する場合は、共通品質基準のプラグイン`agent-basics`（マーケットプレイス`ak110-dotfiles`）を導入する。
+Claude Codeでは、`.claude/settings.json`がマーケットプレイスの登録とプラグインの有効化をプロジェクトで共有する。
+未導入の端末ではプロジェクトを開いたときに導入を案内されるため、それに従うか次のコマンドで導入する。
+
+```cmd
+claude plugin marketplace add ak110/dotfiles
+claude plugin install agent-basics@ak110-dotfiles
+```
+
+Codexでは、`.codex/config.toml`がプラグインを有効にするだけで、マーケットプレイスの登録とプラグインの導入は行わない。
+各端末で次のコマンドを1回実行する。
+
+```cmd
+codex plugin marketplace add ak110/dotfiles
+codex plugin add agent-basics@ak110-dotfiles
+```
+
+agent-toolkitは任意であり、gvの開発に必須ではない。
+
 ### Linuxからのクロスビルド
 
 Linux（Debian/Ubuntu）では、Windowsターゲット（x86_64-pc-windows-msvc）向けに

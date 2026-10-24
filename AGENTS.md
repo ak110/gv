@@ -21,6 +21,14 @@ Windows用画像ビューアー（Rust製）。多形式対応と高速切り替
 アーキテクチャ概要・モジュール構成・設計判断の根拠は
 [docs/development/architecture.md](docs/development/architecture.md)を参照する。
 
+## 共通品質基準
+
+コード・設計・テスト・文書の作成と修正の前に`agent-basics:writing-standards`を起動する。
+レビューとレビュー指摘の採否の判断の前には`agent-basics:review-standards`を起動する。
+いずれも各スキルの読込表が示すreferences（Rustは`references/rust.md`など）を読む。
+本プロジェクト固有の規約（次節）と`unsafe-reviewer`の起動条件は、共通品質基準に加えて適用する。
+agent-basicsの導入は[開発ガイドの初回セットアップ](docs/development/development.md#初回セットアップ)を参照する。
+
 ## コーディング規約
 
 Rust実装の規約（ロックpoison・TOML SSOT・自然順比較・エラーハンドリング）は
