@@ -320,6 +320,6 @@ mod tests {
     fn cleanup_old_progids_succeeds_when_keys_absent() {
         // テスト並列実行時にレジストリ状態を汚染しないよう、削除のみの操作で完結する。
         // Windows以外では HKEY_CURRENT_USER 操作が動かないので #[cfg(windows)] を維持する。
-        let _ = cleanup_old_progids();
+        assert!(cleanup_old_progids().is_ok());
     }
 }

@@ -229,13 +229,38 @@ fn request_file_if_needed(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::cache_image as make_image;
+    use crate::test_helpers::{
+        cache_image as make_image, test_archive_manager, test_decoder, test_zip_buffers,
+    };
+    use std::sync::Arc;
 
     #[test]
     fn invalidate_and_reschedule_advances_generation_once() {
-        // エンジンなしの場合でもパニックしないこと
+        let engine = PrefetchEngine::new(
+            Box::new(|| {}),
+            test_decoder(),
+            Arc::new(test_archive_manager(&Arc::new(
+                crate::extension_registry::ExtensionRegistry::new(),
+            ))),
+            test_zip_buffers(),
+        )
+        .expect("test PrefetchEngine::new");
         let mut coord = PrefetchCoordinator::new();
+        coord.start(engine, 1024, 100);
+        let before = coord.generation().expect("engine started");
+
         coord.invalidate_and_reschedule(0, &[], &PersistentFilter::new());
+        assert_eq!(coord.generation(), Some(before + 1));
+    }
+
+    #[test]
+    fn invalidate_and_reschedule_without_engine_clears_cache() {
+        let mut coord = PrefetchCoordinator::new();
+        coord.update_cache_range(1024, 100);
+        coord.insert(0, make_image(100));
+
+        coord.invalidate_and_reschedule(0, &[], &PersistentFilter::new());
+        assert!(!coord.contains(0));
         assert!(coord.generation().is_none());
     }
 

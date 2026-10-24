@@ -137,17 +137,146 @@ pub fn create_1x1_white_png() -> Vec<u8> {
 
 /// テスト用: Orientationタグだけを持つEXIF (TIFF形式、リトルエンディアン) を生成する
 pub fn exif_with_orientation(orientation: u16) -> Vec<u8> {
-    let mut exif = Vec::new();
-    exif.extend_from_slice(b"II*\0");
-    exif.extend_from_slice(&8u32.to_le_bytes()); // 最初のIFDの位置
-    exif.extend_from_slice(&1u16.to_le_bytes()); // エントリ数
-    exif.extend_from_slice(&0x0112u16.to_le_bytes()); // Orientation
-    exif.extend_from_slice(&3u16.to_le_bytes()); // SHORT
-    exif.extend_from_slice(&1u32.to_le_bytes()); // 個数
-    exif.extend_from_slice(&orientation.to_le_bytes());
-    exif.extend_from_slice(&[0, 0]); // 値欄の残り
-    exif.extend_from_slice(&0u32.to_le_bytes()); // 次のIFDなし
-    exif
+    exif_with_entries(&[ExifEntry::new(
+        ExifIfd::Primary,
+        0x0112,
+        ExifValue::Short(orientation),
+    )])
+}
+
+/// テスト用EXIFのタグを置くIFD
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExifIfd {
+    /// IFD0 (Model、Orientationなど)
+    Primary,
+    /// Exif IFD (撮影条件、LensModelなど)
+    Exif,
+    /// GPS IFD
+    Gps,
+}
+
+/// テスト用EXIFのタグの値
+#[derive(Debug, Clone)]
+pub enum ExifValue {
+    Ascii(&'static str),
+    Short(u16),
+    Long(u32),
+    /// (分子, 分母) の並び
+    Rational(Vec<(u32, u32)>),
+}
+
+/// テスト用EXIFの1タグ
+#[derive(Debug, Clone)]
+pub struct ExifEntry {
+    pub ifd: ExifIfd,
+    pub tag: u16,
+    pub value: ExifValue,
+}
+
+impl ExifEntry {
+    pub fn new(ifd: ExifIfd, tag: u16, value: ExifValue) -> Self {
+        Self { ifd, tag, value }
+    }
+}
+
+/// テスト用: 任意のタグを持つEXIF (TIFF形式、リトルエンディアン) を生成する
+///
+/// Exif IFDとGPS IFDのタグがあれば、IFD0へ各IFDへのポインタ (0x8769、0x8825) を置く。
+pub fn exif_with_entries(entries: &[ExifEntry]) -> Vec<u8> {
+    const EXIF_POINTER: u16 = 0x8769;
+    const GPS_POINTER: u16 = 0x8825;
+
+    let raw_entries = |ifd: ExifIfd| -> Vec<(u16, u16, u32, Vec<u8>)> {
+        entries
+            .iter()
+            .filter(|e| e.ifd == ifd)
+            .map(|e| {
+                let (typ, count, raw) = match &e.value {
+                    ExifValue::Ascii(s) => {
+                        let mut raw = s.as_bytes().to_vec();
+                        raw.push(0);
+                        (2u16, raw.len() as u32, raw)
+                    }
+                    ExifValue::Short(v) => (3, 1, v.to_le_bytes().to_vec()),
+                    ExifValue::Long(v) => (4, 1, v.to_le_bytes().to_vec()),
+                    ExifValue::Rational(values) => (
+                        5,
+                        values.len() as u32,
+                        values
+                            .iter()
+                            .flat_map(|(num, denom)| {
+                                num.to_le_bytes().into_iter().chain(denom.to_le_bytes())
+                            })
+                            .collect(),
+                    ),
+                };
+                (e.tag, typ, count, raw)
+            })
+            .collect()
+    };
+    let exif_entries = raw_entries(ExifIfd::Exif);
+    let gps_entries = raw_entries(ExifIfd::Gps);
+    let primary_with_pointers = |exif_offset: u32, gps_offset: u32| {
+        let mut primary = raw_entries(ExifIfd::Primary);
+        if !exif_entries.is_empty() {
+            primary.push((EXIF_POINTER, 4, 1, exif_offset.to_le_bytes().to_vec()));
+        }
+        if !gps_entries.is_empty() {
+            primary.push((GPS_POINTER, 4, 1, gps_offset.to_le_bytes().to_vec()));
+        }
+        primary
+    };
+
+    // IFD0の長さはポインタの値に依存しないため、仮の値で長さを求めてから配置を決める
+    let ifd0_len = build_ifd(8, primary_with_pointers(0, 0)).len() as u32;
+    let exif_offset = 8 + ifd0_len;
+    let exif_ifd = build_ifd(exif_offset, exif_entries.clone());
+    let exif_len = if exif_entries.is_empty() {
+        0
+    } else {
+        exif_ifd.len() as u32
+    };
+    let gps_offset = exif_offset + exif_len;
+
+    let mut tiff = b"II*\0".to_vec();
+    tiff.extend_from_slice(&8u32.to_le_bytes()); // 最初のIFDの位置
+    tiff.extend(build_ifd(8, primary_with_pointers(exif_offset, gps_offset)));
+    if !exif_entries.is_empty() {
+        tiff.extend(exif_ifd);
+    }
+    if !gps_entries.is_empty() {
+        tiff.extend(build_ifd(gps_offset, gps_entries));
+    }
+    tiff
+}
+
+/// 1つのIFDと、4バイトに収まらない値を置く後続のデータ領域を組み立てる (`start`はTIFF先頭からの位置)
+fn build_ifd(start: u32, mut entries: Vec<(u16, u16, u32, Vec<u8>)>) -> Vec<u8> {
+    entries.sort_by_key(|(tag, ..)| *tag);
+    let data_start = start + 2 + 12 * entries.len() as u32 + 4;
+    let mut ifd = Vec::new();
+    let mut data = Vec::new();
+    ifd.extend_from_slice(&(entries.len() as u16).to_le_bytes());
+    for (tag, typ, count, raw) in entries {
+        ifd.extend_from_slice(&tag.to_le_bytes());
+        ifd.extend_from_slice(&typ.to_le_bytes());
+        ifd.extend_from_slice(&count.to_le_bytes());
+        if raw.len() <= 4 {
+            let mut inline = raw;
+            inline.resize(4, 0);
+            ifd.extend_from_slice(&inline);
+        } else {
+            let offset = data_start + data.len() as u32;
+            ifd.extend_from_slice(&offset.to_le_bytes());
+            data.extend_from_slice(&raw);
+            if data.len() % 2 == 1 {
+                data.push(0);
+            }
+        }
+    }
+    ifd.extend_from_slice(&0u32.to_le_bytes()); // 次のIFDなし
+    ifd.extend(data);
+    ifd
 }
 
 /// テスト用: 画素ごとに異なる色を持つ非対称な画像 (向きの判定用)

@@ -80,13 +80,16 @@ fn get_rational(exif: &exif::Exif, tag: Tag) -> Option<exif::Rational> {
     }
 }
 
+/// 有理数を数値へ変換する。分母0は数値として扱わず`None`を返す
+///
+/// 有理数の割り算はこの関数へ集約し、分母0の項目を表示から省く扱いを全項目でそろえる。
+fn rational_to_f64(r: exif::Rational) -> Option<f64> {
+    (r.denom != 0).then(|| f64::from(r.num) / f64::from(r.denom))
+}
+
 /// 焦点距離をフォーマット (例: "50 mm")
 fn format_focal_length(exif: &exif::Exif) -> Option<String> {
-    let r = get_rational(exif, Tag::FocalLength)?;
-    if r.denom == 0 {
-        return None;
-    }
-    let mm = f64::from(r.num) / f64::from(r.denom);
+    let mm = rational_to_f64(get_rational(exif, Tag::FocalLength)?)?;
     // 整数で表示できる場合は整数で
     if (mm - mm.round()).abs() < 0.01 {
         Some(format!("{} mm", mm.round() as u32))
@@ -97,11 +100,7 @@ fn format_focal_length(exif: &exif::Exif) -> Option<String> {
 
 /// F値をフォーマット (例: "f/2.8")
 fn format_fnumber(exif: &exif::Exif) -> Option<String> {
-    let r = get_rational(exif, Tag::FNumber)?;
-    if r.denom == 0 {
-        return None;
-    }
-    let f = f64::from(r.num) / f64::from(r.denom);
+    let f = rational_to_f64(get_rational(exif, Tag::FNumber)?)?;
     if (f - f.round()).abs() < 0.01 {
         Some(format!("f/{}", f.round() as u32))
     } else {
@@ -112,12 +111,12 @@ fn format_fnumber(exif: &exif::Exif) -> Option<String> {
 /// シャッター速度をフォーマット (例: "1/250 秒", "2 秒")
 fn format_exposure_time(exif: &exif::Exif) -> Option<String> {
     let r = get_rational(exif, Tag::ExposureTime)?;
-    if r.denom == 0 || r.num == 0 {
+    let secs = rational_to_f64(r)?;
+    if r.num == 0 {
         return None;
     }
     if r.num >= r.denom {
         // 1秒以上
-        let secs = f64::from(r.num) / f64::from(r.denom);
         if (secs - secs.round()).abs() < 0.01 {
             Some(format!("{} 秒", secs.round() as u32))
         } else {
@@ -149,9 +148,9 @@ fn gps_to_decimal(exif: &exif::Exif, coord_tag: Tag, ref_tag: Tag) -> Option<f64
         return None;
     };
 
-    let deg = f64::from(rationals[0].num) / f64::from(rationals[0].denom);
-    let min = f64::from(rationals[1].num) / f64::from(rationals[1].denom);
-    let sec = f64::from(rationals[2].num) / f64::from(rationals[2].denom);
+    let deg = rational_to_f64(rationals[0])?;
+    let min = rational_to_f64(rationals[1])?;
+    let sec = rational_to_f64(rationals[2])?;
     let mut decimal = deg + min / 60.0 + sec / 3600.0;
 
     // S/W なら負数
@@ -169,7 +168,10 @@ fn gps_to_decimal(exif: &exif::Exif, coord_tag: Tag, ref_tag: Tag) -> Option<f64
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::create_1x1_white_png;
+    use crate::test_helpers::{
+        ExifEntry, ExifIfd, ExifValue, asymmetric_rgba, create_1x1_white_png, encode_with_exif,
+        exif_with_entries,
+    };
 
     #[test]
     fn read_exif_fields_returns_empty_for_non_exif_data() {
@@ -191,44 +193,157 @@ mod tests {
         assert!(fields.is_empty());
     }
 
+    /// 指定したタグのEXIFを埋め込んだPNGを製品の読取経路へ渡し、(ラベル, 値) の組を返す
+    fn read_fields(entries: &[ExifEntry]) -> Vec<(String, String)> {
+        let png = encode_with_exif(
+            &asymmetric_rgba(2, 2),
+            image::ImageFormat::Png,
+            Some(exif_with_entries(entries)),
+        );
+        read_exif_fields(&png)
+    }
+
+    fn field(label: &str, value: &str) -> (String, String) {
+        (label.to_string(), value.to_string())
+    }
+
+    fn rational(ifd: ExifIfd, tag: u16, values: &[(u32, u32)]) -> ExifEntry {
+        ExifEntry::new(ifd, tag, ExifValue::Rational(values.to_vec()))
+    }
+
+    const MODEL: u16 = 0x0110;
+    const EXPOSURE_TIME: u16 = 0x829A;
+    const F_NUMBER: u16 = 0x829D;
+    const ISO: u16 = 0x8827;
+    const DATE_TIME_ORIGINAL: u16 = 0x9003;
+    const FOCAL_LENGTH: u16 = 0x920A;
+    const LENS_MODEL: u16 = 0xA434;
+    const GPS_LATITUDE_REF: u16 = 0x0001;
+    const GPS_LATITUDE: u16 = 0x0002;
+    const GPS_LONGITUDE_REF: u16 = 0x0003;
+    const GPS_LONGITUDE: u16 = 0x0004;
+
+    /// 35°40'52.45"と139°46'1.65" (docコメントの例 "35.681236, 139.767125" の度分秒)
+    fn gps_entries(lat_ref: &'static str, lon_ref: &'static str) -> Vec<ExifEntry> {
+        vec![
+            ExifEntry::new(ExifIfd::Gps, GPS_LATITUDE_REF, ExifValue::Ascii(lat_ref)),
+            rational(ExifIfd::Gps, GPS_LATITUDE, &[(35, 1), (40, 1), (5245, 100)]),
+            ExifEntry::new(ExifIfd::Gps, GPS_LONGITUDE_REF, ExifValue::Ascii(lon_ref)),
+            rational(
+                ExifIfd::Gps,
+                GPS_LONGITUDE,
+                &[(139, 1), (46, 1), (165, 100)],
+            ),
+        ]
+    }
+
+    #[test]
+    fn read_exif_fields_lists_all_items_in_display_order() {
+        let mut entries = vec![
+            ExifEntry::new(ExifIfd::Primary, MODEL, ExifValue::Ascii("TestCam")),
+            ExifEntry::new(ExifIfd::Exif, LENS_MODEL, ExifValue::Ascii("TestLens 50mm")),
+            rational(ExifIfd::Exif, FOCAL_LENGTH, &[(50, 1)]),
+            rational(ExifIfd::Exif, F_NUMBER, &[(28, 10)]),
+            rational(ExifIfd::Exif, EXPOSURE_TIME, &[(1, 250)]),
+            ExifEntry::new(ExifIfd::Exif, ISO, ExifValue::Long(6400)),
+            ExifEntry::new(
+                ExifIfd::Exif,
+                DATE_TIME_ORIGINAL,
+                ExifValue::Ascii("2026:10:25 06:00:00"),
+            ),
+        ];
+        entries.extend(gps_entries("N", "E"));
+        assert_eq!(
+            read_fields(&entries),
+            vec![
+                field("カメラ", "TestCam"),
+                field("レンズ", "TestLens 50mm"),
+                field("焦点距離", "50 mm"),
+                field("F値", "f/2.8"),
+                field("シャッター速度", "1/250 秒"),
+                field("ISO感度", "ISO 6400"),
+                field("撮影日時", "2026-10-25 06:00:00"),
+                field("GPS", "35.681236, 139.767125"),
+            ]
+        );
+    }
+
     #[test]
     fn format_exposure_time_fraction() {
-        // 1/250
-        let r = exif::Rational { num: 1, denom: 250 };
-        assert_eq!(r.num, 1);
-        assert!(r.denom > r.num); // 分数表示条件
+        let fields = read_fields(&[rational(ExifIfd::Exif, EXPOSURE_TIME, &[(1, 250)])]);
+        assert_eq!(fields, vec![field("シャッター速度", "1/250 秒")]);
     }
 
     #[test]
     fn format_exposure_time_whole_seconds() {
-        // 2秒
-        let r = exif::Rational { num: 2, denom: 1 };
-        assert!(r.num >= r.denom); // 整数秒条件
+        let fields = read_fields(&[rational(ExifIfd::Exif, EXPOSURE_TIME, &[(2, 1)])]);
+        assert_eq!(fields, vec![field("シャッター速度", "2 秒")]);
     }
 
     #[test]
     fn gps_decimal_conversion() {
-        // 35° 40' 52.45" N = 35.681236...
-        let deg = 35.0;
-        let min = 40.0;
-        let sec = 52.45;
-        let decimal = deg + min / 60.0 + sec / 3600.0;
-        assert!((decimal - 35.681_236_f64).abs() < 0.001);
+        assert_eq!(
+            read_fields(&gps_entries("N", "E")),
+            vec![field("GPS", "35.681236, 139.767125")]
+        );
+        // 南緯・西経は負の値
+        assert_eq!(
+            read_fields(&gps_entries("S", "W")),
+            vec![field("GPS", "-35.681236, -139.767125")]
+        );
     }
 
     #[test]
     fn focal_length_integer() {
-        let r = exif::Rational { num: 50, denom: 1 };
-        let mm = f64::from(r.num) / f64::from(r.denom);
-        assert!((mm - mm.round()).abs() < 0.01);
-        assert_eq!(format!("{} mm", mm.round() as u32), "50 mm");
+        let fields = read_fields(&[rational(ExifIfd::Exif, FOCAL_LENGTH, &[(50, 1)])]);
+        assert_eq!(fields, vec![field("焦点距離", "50 mm")]);
     }
 
     #[test]
     fn fnumber_decimal() {
-        let r = exif::Rational { num: 28, denom: 10 };
-        let f = f64::from(r.num) / f64::from(r.denom);
-        assert!((f - f.round()).abs() >= 0.01);
-        assert_eq!(format!("f/{f:.1}"), "f/2.8");
+        let fields = read_fields(&[rational(ExifIfd::Exif, F_NUMBER, &[(28, 10)])]);
+        assert_eq!(fields, vec![field("F値", "f/2.8")]);
+    }
+
+    #[test]
+    fn gps_with_zero_denominator_is_omitted_and_other_fields_remain() {
+        // 緯度・経度の度・分・秒のそれぞれで分母を0にする (分子0の0/0も含む)
+        let cases: [(u16, usize, (u32, u32)); 4] = [
+            (GPS_LATITUDE, 0, (35, 0)),
+            (GPS_LATITUDE, 1, (0, 0)),
+            (GPS_LATITUDE, 2, (5245, 0)),
+            (GPS_LONGITUDE, 0, (139, 0)),
+        ];
+        for (tag, position, broken) in cases {
+            let mut entries = gps_entries("N", "E");
+            for entry in &mut entries {
+                if entry.tag == tag
+                    && let ExifValue::Rational(values) = &mut entry.value
+                {
+                    values[position] = broken;
+                }
+            }
+            entries.push(ExifEntry::new(
+                ExifIfd::Primary,
+                MODEL,
+                ExifValue::Ascii("TestCam"),
+            ));
+            assert_eq!(
+                read_fields(&entries),
+                vec![field("カメラ", "TestCam")],
+                "tag={tag:#06x} position={position}"
+            );
+        }
+    }
+
+    #[test]
+    fn rational_fields_with_zero_denominator_are_omitted() {
+        for tag in [FOCAL_LENGTH, F_NUMBER, EXPOSURE_TIME] {
+            let fields = read_fields(&[
+                ExifEntry::new(ExifIfd::Primary, MODEL, ExifValue::Ascii("TestCam")),
+                rational(ExifIfd::Exif, tag, &[(28, 0)]),
+            ]);
+            assert_eq!(fields, vec![field("カメラ", "TestCam")], "tag={tag:#06x}");
+        }
     }
 }
