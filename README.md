@@ -12,8 +12,9 @@ Windows用画像ビューアー。
 
 ## 特徴
 
-- 前後画像の先読みによる高速切り替え
-- 多形式対応: JPEG / PNG / GIF / BMP / WebP / PDF / ZIP / cbz / RAR / cbr / 7z / 64bit Susieプラグイン
+- 前後画像の先読み（表示中の前後の画像を事前に読み込んでおく）による高速切り替え
+- 多形式対応: JPEG / PNG / GIF / BMP / WebP / PDF / ZIP / cbz / RAR / cbr / 7z。
+  64bit Susieプラグインを任意で追加すると他の形式も開ける（[対応フォーマット](https://ak110.github.io/gv/guide/formats)）
 - 設定ファイルとキーバインドによるカスタマイズ
 
 ## インストール

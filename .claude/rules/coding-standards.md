@@ -14,13 +14,14 @@ paths:
 - `expect("<lock 名> lock poisoned")`形式でpanicさせる（Rust標準ライブラリも同様の慣例）
 - メッセージは`"<lock 名> lock poisoned"`形式で統一する。
   ログでの追跡が容易になる
-- 上記方針はsusie系を含むすべてのモジュールに適用する。
-  `map_err`で`anyhow::Error`化する旧パターンは禁止し、新規・既存ともに`expect`形式へ揃える
+- 上記方針はSusieプラグイン関連（`src/susie/`、`src/archive/susie.rs`、`src/image/susie.rs`）を含むすべてのモジュールに適用する。
+  poisonを`map_err`で`anyhow::Error`へ変換して呼び出し元へ返す書き方は使わない
 
 ## 設定値とキー割り当て
 
 アプリケーション設定の初期値は`Config::default()`が定める。
-`ぐらびゅ.default.toml`は設定項目と初期値を説明する配布ファイルとし、
+リポジトリ直下の`ぐらびゅ.default.toml`は設定項目と初期値を説明する配布ファイルとし、
+リリースのZIPへ同梱する（`.github/workflows/release.yaml`）。
 全キーと値が`Config::default()`のシリアライズ結果と一致することをテストする。
 配布ファイルへの未知キー追加と設定構造体への項目追加による不足を、両方とも検出する。
 ユーザーの設定ファイルは未知キーを無視する互換性を保つ。
@@ -90,4 +91,4 @@ zipクレート（v9）の`ZipFile::name()`はファイル名をまずUTF-8と�
 - 親ウィンドウの破棄後はカーソル終了処理と結果の適用をしない。
   所有者とフォントの寿命は同期コールバックとモーダル処理の終了まで保持する
 - モーダルを伴わない同期Win32操作は`defer_ui`または結果付きの`defer_call`へ渡す。
-  ListViewの同期表示情報要求は、元の通知中に応答し、通知ポインターを保留しない
+  ListViewの同期表示情報要求（`LVN_GETDISPINFOW`）は元の通知中に応答し、`NMLVDISPINFOW`へのポインターを保留しない

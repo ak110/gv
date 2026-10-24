@@ -52,12 +52,13 @@ Git管理外の`.mise.local.toml`へ保存し、`mise run setup`の手順も実�
 
 lockfileの尊重、公開待機、ピン留め、脆弱性監査の4点を基本方針とする。
 Rustは`Cargo.lock`、ドキュメント用のpnpm依存は`pnpm-lock.yaml`を版管理する。
-依存の更新は`mise run update`で行い、公開直後の依存を取り込むまでの待機期間はツールの設定で管理する。
+依存の更新は`mise run update`で行う。
+公開待機は公開から一定期間たった版だけを取り込む待機であり、`pnpm-workspace.yaml`の`minimumReleaseAge`、`pyproject.toml`の`exclude-newer`、`.github/dependabot.yaml`の`cooldown`で設定する。
 
 `cargo-deny`（`deny.toml`設定）でライセンスチェックと脆弱性アドバイザリチェックを実施する。
 `mise run test`に組み込まれているため、コミット前に自動実行される。
 `Dependency Audit`ワークフローは、毎週月曜日の02:23 UTCにWindowsで実行する。
-手動実行にも対応し、変更がない期間に公開された脆弱性を検出する。
+手動実行にも対応し、依存を更新しない期間（lockfileが変わらない期間）に公開された脆弱性を検出する。
 Rustは`cargo-deny --locked check advisories`、pnpmは開発依存を含む`pnpm audit`で監査する。
 Rustの監査が失敗してもpnpmの監査を続け、各監査の検出とツールの失敗をActionsの結果に残す。
 
@@ -79,6 +80,10 @@ GitHub Actionsのワークフローは`pinact`でハッシュピン留めして�
 - 自動デプロイ: masterブランチへのpush時に`Docs`ワークフローが自動実行される（`docs/`以下または`package.json`の変更時のみ）
   - ビルドしたサイトのリンク（トップページのfrontmatterとナビゲーションのリンク、見出しへのリンク、外部URLを含む）の到達先をlycheeで確かめ、全て到達できた場合だけ公開する
   - 外部URLの一時的な障害（429・5xx・タイムアウト）は到達できない扱いにしない
+
+利用者向けガイド（`docs/guide/`）の機能説明は、操作をメニュー項目名（「表示」メニューの「余白」など）、設定を`[セクション]`とキー名（`[display]`の`margin`など）で示す。
+キーの割り当ては`docs/guide/navigation.md`の表とメニューの表示に、設定値の説明は配布TOMLのコメントへ導く`docs/guide/customization.md`に委ね、各ガイドへ値を書き写さない。
+値や条件を書く場合は、それを決める実装か設定の名前を同じ文に置く。
 
 ## 表示時間の測定
 

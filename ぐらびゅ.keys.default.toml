@@ -6,11 +6,11 @@
 #   修飾キー: Ctrl+, Shift+, Alt+ (組み合わせ可)
 #   矢印: ←, →, ↑, ↓ または Left, Right, Up, Down
 #   テンキー: Num0〜Num9, Num +, Num -, Num *, Num /
-#   特殊キー: Enter, Space, Tab, Esc, BackSpace, Delete, Home, End, PageUp, PageDown
+#   特殊キー: Enter (Return も可), Space, Tab, Esc (Escape も可), BackSpace, Delete, Home, End, PageUp, PageDown
 #   ファンクション: F1〜F12
-#   英数字: A〜Z, 0〜9
-#   ホイール: WheelUp, WheelDown
-#   マウス: LeftDoubleClick, MiddleClick
+#   英数字: A〜Z (大文字1文字), 0〜9
+#   ホイール: WheelUp, WheelDown (ホイール(上), ホイール(下) も可)
+#   マウス: LeftDoubleClick (左ダブルクリック も可), MiddleClick (ホイールクリック も可)
 #   複数割り当て: カンマ区切り (例: "Ctrl+Num -, Ctrl+WheelUp")
 
 [navigation]

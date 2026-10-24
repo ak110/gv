@@ -239,18 +239,8 @@ pub fn parse_chord(s: &str) -> Result<InputChord> {
     let s = s.trim();
 
     // マウス操作
-    match s {
-        "LeftDoubleClick" | "左ダブルクリック" => {
-            return Ok(InputChord::Mouse {
-                button: MouseButton::LeftDoubleClick,
-            });
-        }
-        "MiddleClick" | "ホイールクリック" => {
-            return Ok(InputChord::Mouse {
-                button: MouseButton::MiddleClick,
-            });
-        }
-        _ => {}
+    if let Some(&(_, button)) = MOUSE_NAMES.iter().find(|&&(name, _)| name == s) {
+        return Ok(InputChord::Mouse { button });
     }
 
     // 修飾子 + キーを分離
@@ -274,20 +264,11 @@ pub fn parse_chord(s: &str) -> Result<InputChord> {
     }
 
     // ホイール操作
-    match remaining {
-        "WheelUp" | "ホイール(上)" => {
-            return Ok(InputChord::Wheel {
-                direction: WheelDirection::Up,
-                modifiers,
-            });
-        }
-        "WheelDown" | "ホイール(下)" => {
-            return Ok(InputChord::Wheel {
-                direction: WheelDirection::Down,
-                modifiers,
-            });
-        }
-        _ => {}
+    if let Some(&(_, direction)) = WHEEL_NAMES.iter().find(|&&(name, _)| name == remaining) {
+        return Ok(InputChord::Wheel {
+            direction,
+            modifiers,
+        });
     }
 
     // キー名 → 仮想キーコード
@@ -318,6 +299,22 @@ fn key_name_to_vk(name: &str) -> Result<u16> {
 
     bail!("不明なキー名: {name:?}");
 }
+
+/// マウス操作の名前。日本語名はメニューとヘルプの表示名で、表示どおりに書いても受理する
+const MOUSE_NAMES: &[(&str, MouseButton)] = &[
+    ("LeftDoubleClick", MouseButton::LeftDoubleClick),
+    ("左ダブルクリック", MouseButton::LeftDoubleClick),
+    ("MiddleClick", MouseButton::MiddleClick),
+    ("ホイールクリック", MouseButton::MiddleClick),
+];
+
+/// ホイール操作の名前。日本語名はメニューとヘルプの表示名で、表示どおりに書いても受理する
+const WHEEL_NAMES: &[(&str, WheelDirection)] = &[
+    ("WheelUp", WheelDirection::Up),
+    ("ホイール(上)", WheelDirection::Up),
+    ("WheelDown", WheelDirection::Down),
+    ("ホイール(下)", WheelDirection::Down),
+];
 
 /// キー名 → VKコード マッピングテーブル
 const KEY_NAMES: &[(&str, u16)] = &[
@@ -557,6 +554,60 @@ mod tests {
         }
     }
     use super::*;
+
+    /// 受理するキー名の全てが、配布TOML冒頭の記法コメントと利用者向けガイドの記法の表に載っている。
+    /// 受理する名前を増やしたときに文書の追随漏れを検出する。
+    #[test]
+    fn accepted_key_names_are_documented() {
+        const GUIDE: &str = include_str!("../../docs/guide/customization.md");
+        let guide = GUIDE
+            .split("### キー名の記法")
+            .nth(1)
+            .expect("customization.mdに「キー名の記法」の節がある");
+        let toml_notation: String = DEFAULT_KEYS_TOML
+            .lines()
+            .take_while(|line| line.starts_with('#'))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        // F1〜F12・Num0〜Num9・英字・数字は範囲で書くため、範囲の両端を確かめる
+        let mut documented: Vec<(String, String)> = Vec::new();
+        for &(name, _) in KEY_NAMES {
+            let range = if name.starts_with('F') && name[1..].parse::<u8>().is_ok() {
+                Some(("F1", "F12"))
+            } else if name.starts_with("Num") && name[3..].parse::<u8>().is_ok() {
+                Some(("Num0", "Num9"))
+            } else {
+                None
+            };
+            match range {
+                Some((first, last)) => {
+                    documented.push((format!("`{first}`"), first.to_string()));
+                    documented.push((format!("`{last}`"), last.to_string()));
+                }
+                None => documented.push((format!("`{name}`"), name.to_string())),
+            }
+        }
+        for name in MOUSE_NAMES
+            .iter()
+            .map(|&(name, _)| name)
+            .chain(WHEEL_NAMES.iter().map(|&(name, _)| name))
+            .chain(["A", "Z", "0", "9"])
+        {
+            documented.push((format!("`{name}`"), name.to_string()));
+        }
+
+        for (guide_token, toml_token) in &documented {
+            assert!(
+                guide.contains(guide_token.as_str()),
+                "customization.mdの記法の表に{guide_token}が無い"
+            );
+            assert!(
+                toml_notation.contains(toml_token.as_str()),
+                "ぐらびゅ.keys.default.tomlの記法コメントに{toml_token}が無い"
+            );
+        }
+    }
 
     #[test]
     fn partial_overrides_preserve_other_actions_and_display_order() {

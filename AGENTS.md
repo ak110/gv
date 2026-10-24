@@ -2,7 +2,8 @@
 
 Windows用画像ビューアー（Rust製）。多形式対応と高速切り替えを軸にした単一ユーザー向けGUIアプリ。
 本プロジェクトは人間による開発作業がほぼ発生しないため、
-コーディング規約・設計判断・実装上の注意点はAGENTS.mdおよび`.claude/rules/`配下に集約する。
+開発手順と注意点はAGENTS.md、コーディング規約は`.claude/rules/`配下、
+設計判断の根拠は`docs/development/architecture.md`に置く。
 
 ## 開発手順
 
