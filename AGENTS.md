@@ -56,7 +56,8 @@ SAFETYコメントの粒度判定基準は[.claude/agents/unsafe-reviewer.md](.c
 - Makefileではなく`mise.toml`のタスクを使用する。pre-commitフレームワークは`uvx prek`で呼び出す
 - Windowsの通常テストは、表示しない実Win32ウィンドウとDirect2D資源を作成・破棄する。
   `src/app/test_support.rs`の`TestApp`を使うapp層のテストと、`src/test_helpers.rs`の`HiddenWindow`を使う`src/render/d2d_renderer.rs`のテストが該当する。
-  対話中の端末で反復すると、ユーザーの画面でウィンドウの開閉が起きて作業を妨げる
+  ウィンドウを表示しない設定でも、対話中の端末でこれらのテストを反復した際に、ユーザーの画面でウィンドウの開閉が観測され、作業を妨げた。
+  画面に現れたウィンドウの種類は特定していない
   - 対話中のユーザー端末では、通常の検証に必要な回数だけ実行する
   - 再現率の測定などの反復実行は、一時branchをpushしてWindows CIで行う
   - Win32ウィンドウ、Direct2D、Shell UIなど対話デスクトップのOS・UI資源を生成するテストを追加した場合も同じ扱いとする
