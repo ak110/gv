@@ -54,11 +54,11 @@ SAFETYコメントの粒度判定基準は[.claude/agents/unsafe-reviewer.md](.c
   - Linuxの`cargo test`はテストのコンパイルまでとし、テストの実行はWindows CIが担う
   - 成果物は`target/x86_64-pc-windows-msvc/`配下へ出力される
 - Makefileではなく`mise.toml`のタスクを使用する。pre-commitフレームワークは`uvx prek`で呼び出す
-- Windowsの通常テストは、表示しない実Win32ウィンドウとDirect2D資源を作成・破棄する。
+- Windowsの通常テストには、表示しない実Win32ウィンドウとDirect2D資源を作成・破棄するテストが含まれる。
   `src/app/test_support.rs`の`TestApp`を使うapp層のテストと、`src/test_helpers.rs`の`HiddenWindow`を使う`src/render/d2d_renderer.rs`のテストが該当する。
-  ウィンドウを表示しない設定でも、対話中の端末でこれらのテストを反復した際に、ユーザーの画面でウィンドウの開閉が観測され、作業を妨げた。
-  画面に現れたウィンドウの種類は特定していない
-  - 対話中のユーザー端末では、通常の検証に必要な回数だけ実行する
-  - 再現率の測定などの反復実行は、一時branchをpushしてWindows CIで行う
+  対話中の端末でWindowsのテスト一式を背景で約130回反復した際、ユーザーの画面でウィンドウが開閉し、作業を妨げた。
+  画面に現れたウィンドウを生成したテストは特定していないため、反復の判断はテスト一式に適用する
+  - 対話中のユーザー端末では、Windowsのテストを通常の検証に必要な回数だけ実行する
+  - 再現率の測定などの反復実行は、対象を一部のテストに限定する場合も、一時branchをpushしてWindows CIで行う
   - Win32ウィンドウ、Direct2D、Shell UIなど対話デスクトップのOS・UI資源を生成するテストを追加した場合も同じ扱いとする
   - Linuxの`mise run test`はテストのコンパイルまでであり、この制約の対象外である
