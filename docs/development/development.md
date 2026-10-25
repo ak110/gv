@@ -70,8 +70,8 @@ Git管理外の`.mise.local.toml`へ保存し、`mise run setup`の手順も実�
 ## サプライチェーン攻撃対策
 
 lockfileの尊重、公開待機、ピン留め、脆弱性監査の4点を基本方針とする。
-Rustは`Cargo.lock`、ドキュメント用のpnpm依存は`pnpm-lock.yaml`を版管理する。
-依存の更新は`mise run update`で行う。
+Rustは`Cargo.lock`、ドキュメント用のpnpm依存は`pnpm-lock.yaml`、miseが導入する開発ツールは`mise.lock`を版管理する。
+依存の更新は`mise run update`で行い、`mise.lock`も同じタスクの`mise lock --bump`で更新する。
 公開待機は公開から一定期間たった版だけを取り込む待機であり、`pnpm-workspace.yaml`の`minimumReleaseAge`、`pyproject.toml`の`exclude-newer`、`.github/dependabot.yaml`の`cooldown`で設定する。
 
 `cargo-deny`（`deny.toml`設定）でライセンスチェックと脆弱性アドバイザリチェックを実施する。

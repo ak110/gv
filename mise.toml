@@ -1,3 +1,6 @@
+# 追跡済みのmise.lock（lockfile_version 3）を読める最低版。
+min_version = "2026.9.16"
+
 [tools]
 uv = "latest"
 # Windows CI で `rustup component add` が異なるツールチェーンに当たり cargo-clippy が
@@ -118,6 +121,9 @@ description = "依存パッケージの更新"
 # 反映した状態でロックファイルを再生成する。
 # `CI=true` は pnpm 11 以降で `corepack use` が実行する node_modules 削除確認の
 # プロンプトを抑止する。非対話実行で TTY が無くてもエラーにせず進める。
+# `mise lock --bump` は `latest`・`lts` 指定の開発ツールを再解決して mise.lock を更新する。
+# rust は rust-toolchain.toml・Cargo.toml の `rust-version` と揃えて固定しているため
+# `mise upgrade --bump` で書き換えず、固定版を手で変えたときも本コマンドがロックへ反映する。
 env = { CI = "true" }
 run = [
   "cargo upgrade --incompatible",
@@ -125,6 +131,7 @@ run = [
   "corepack use pnpm@latest",
   "corepack pnpm update --latest",
   "pinact run --update --min-age 1",
+  "mise lock --bump",
 ]
 
 [tasks.bench]
