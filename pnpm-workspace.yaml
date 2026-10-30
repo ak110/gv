@@ -27,6 +27,9 @@ overrides:
   fast-uri: ^3.1.6
   smol-toml: ^1.9.0
   "micromark-extension-math@3.1.0>katex": 0.18.2
+  # markdownlint の固定依存による GHSA-gg6h-894w-4m9c を解消する。
+  # markdownlint が修正版の re2js を要求するようになったら撤去する。
+  "markdownlint@0.42.0>re2js": ~2.8.8
 # markdownlint-cli2 が micromatch 経由で使う braces 3.0.3 は、GHSA-vfj7-8cjw-p6xm の修正版が公開されていない。
 # 勧告の機構である木・入れ子配列の再帰処理を反復処理へ置き換えるパッチを適用する。
 patchedDependencies:
