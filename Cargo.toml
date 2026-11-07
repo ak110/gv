@@ -48,12 +48,12 @@ windows = { version = "0.62", features = [
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "bmp", "webp"] }
 png = "0.18"
 serde = { version = "1", features = ["derive"] }
-toml = "1.1"
+toml = "1.2"
 anyhow = "1"
 thiserror = "2"
 crossbeam-channel = "0.5"
 zip = { version = "9", default-features = false, features = ["deflate"] }
-sevenz-rust2 = { version = "0.24", features = ["bzip2", "zstd", "aes256"] }
+sevenz-rust2 = { version = "0.25", features = ["bzip2", "zstd", "aes256"] }
 libloading = "0.9"
 ureq = "3"
 serde_json = "1"
