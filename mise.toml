@@ -13,14 +13,12 @@ uv = "latest"
 # Cargo.toml の `[lints.clippy]` で対象 lint を allow 指定して許容している。
 rust = { version = "1.95.0", components = "rustfmt,clippy" }
 node = "lts"
-# pnpm は mise の npm バックエンドで導入し、版を mise.lock、各プラットフォームの
-# integrity を `.mise/locks/npm-pnpm/` で固定する。Node.js 25 以降は Corepack を同梱しない。
+# pnpm の初回導入は mise の npm バックエンドで行う。Node.js 25 以降は Corepack を同梱しない。
+# 実際に使う版は `package.json` の `packageManager` と pnpm-lock.yaml 先頭の記録（boot 文書）で固定し、
+# 導入した pnpm がその版へ切り替えて integrity を検証する。
 # mise registry 既定 (`aqua:pnpm/pnpm`) は aqua-registry の Windows アセット命名
 # (`pnpm-win-x64`) と上流リリース (`pnpm-win32-x64.zip`) の齟齬で pnpm 11.x の
 # Windows runner インストールが失敗したため、npm バックエンドを明示する。
-# `package.json` の `packageManager` で固定すると pnpm-lock.yaml の先頭に版の記録
-# （boot 文書）が加わり、GitHub の Dependency Graph が lockfile を解釈できなくなるため、
-# 版の照合は `pnpm-workspace.yaml` の `pmOnFail: ignore` で mise 側へ任せる。
 "npm:pnpm" = "latest"
 pinact = "latest"
 git-cliff = "latest"
@@ -118,20 +116,23 @@ run = [
 
 [tasks.update]
 description = "依存パッケージの更新"
-# `mise lock --bump` は pnpm を含む `latest`・`lts` 指定の開発ツールを再解決して mise.lock を更新する。
+# `pnpm self-update` は `packageManager` と pnpm-lock.yaml 先頭の版の記録を、
+# 公開から `minimumReleaseAge`（既定1440分）を過ぎた最新版へ同時に更新する。
+# `pnpm update --latest` は依存のみで pnpm 本体の版は更新しないため、両者を組にして依存とランナーを揃える。
+# pnpm 本体を先に更新してから依存を更新することで、新しい pnpm の依存解決規則を
+# 反映した状態でロックファイルを再生成する。
+# `CI=true` は pnpm の対話プロンプトを抑止し、TTY が無い非対話実行でもエラーにせず進める。
+# `mise lock --bump` は `latest`・`lts` 指定の開発ツールを再解決して mise.lock を更新する。
 # rust は rust-toolchain.toml・Cargo.toml の `rust-version` と揃えて固定しているため
 # `mise upgrade --bump` で書き換えず、固定版を手で変えたときも本コマンドがロックへ反映する。
-# pnpm 本体を先に更新して導入してから、新しい pnpm を `mise exec` で起動して依存を更新し、
-# 新しい pnpm の依存解決規則を反映した状態でロックファイルを再生成する。
-# `CI=true` は pnpm の対話プロンプトを抑止し、TTY が無い非対話実行でもエラーにせず進める。
 env = { CI = "true" }
 run = [
   "cargo upgrade --incompatible",
   "cargo update",
-  "mise lock --bump",
-  "mise install",
-  "mise exec -- pnpm update --latest",
+  "pnpm self-update",
+  "pnpm update --latest",
   "pinact run --update --min-age 1",
+  "mise lock --bump",
 ]
 
 [tasks.bench]
