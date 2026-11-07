@@ -1,4 +1,6 @@
 packages: []
+# pnpm本体はmiseが導入・固定する。pnpm側の版照合とlockfile先頭への版の記録を止め、Dependency Graphが解釈できる単一文書のlockfileを保つ。
+pmOnFail: ignore
 allowBuilds:
   esbuild: true
 minimumReleaseAge: 1440

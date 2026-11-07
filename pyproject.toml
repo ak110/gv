@@ -21,6 +21,8 @@ extend-exclude = [
     "target",
     "node_modules",
     "dist",
+    # miseが生成するnpmツールのlock（mise.lockが内容のdigestを持つ）。整形すると導入済みの版を見失う。
+    ".mise",
 ]
 
 [tool.typos.default.extend-identifiers]

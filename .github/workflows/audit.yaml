@@ -15,7 +15,7 @@ jobs:
       GITHUB_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+      - uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
       - name: セットアップ
         run: mise run setup-ci
       - name: advisory DBのCRLF変換を防止
@@ -24,4 +24,4 @@ jobs:
         run: mise exec -- cargo-deny --locked check advisories
       - name: pnpmの脆弱性監査（開発依存を含む）
         if: ${{ !cancelled() }}
-        run: mise exec -- corepack pnpm audit
+        run: mise exec -- pnpm audit

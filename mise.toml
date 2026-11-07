@@ -13,11 +13,15 @@ uv = "latest"
 # Cargo.toml の `[lints.clippy]` で対象 lint を allow 指定して許容している。
 rust = { version = "1.95.0", components = "rustfmt,clippy" }
 node = "lts"
-# pnpm は各コマンドで corepack を明示し、`package.json` の `packageManager`
-# フィールドに従って解決する。PATH 上の別の pnpm 実装へ依存させないためである。
+# pnpm は mise の npm バックエンドで導入し、版を mise.lock、各プラットフォームの
+# integrity を `.mise/locks/npm-pnpm/` で固定する。Node.js 25 以降は Corepack を同梱しない。
 # mise registry 既定 (`aqua:pnpm/pnpm`) は aqua-registry の Windows アセット命名
 # (`pnpm-win-x64`) と上流リリース (`pnpm-win32-x64.zip`) の齟齬で pnpm 11.x の
-# Windows runner インストールが失敗するため、ツール定義からは外す。
+# Windows runner インストールが失敗したため、npm バックエンドを明示する。
+# `package.json` の `packageManager` で固定すると pnpm-lock.yaml の先頭に版の記録
+# （boot 文書）が加わり、GitHub の Dependency Graph が lockfile を解釈できなくなるため、
+# 版の照合は `pnpm-workspace.yaml` の `pmOnFail: ignore` で mise 側へ任せる。
+"npm:pnpm" = "latest"
 pinact = "latest"
 git-cliff = "latest"
 typos = "latest"
@@ -55,14 +59,14 @@ description = "開発環境のセットアップ"
 # ホスト向けのツール導入ではこれを外す（外さないと`cargo install`もWindows向けにビルドする）。
 run = [
   "env -u CARGO_BUILD_TARGET cargo install cargo-edit",
-  "corepack pnpm install",
+  "pnpm install",
   "git config --unset core.hooksPath || true",
   "uvx prek install -c .pre-commit-config.yaml",
   "git config --local commit.template .gitmessage",
 ]
 run_windows = [
   "cargo install cargo-edit",
-  "corepack pnpm install",
+  "pnpm install",
   "git config --unset core.hooksPath & exit /b 0",
   "uvx prek install -c .pre-commit-config.yaml",
   "git config --local commit.template .gitmessage",
@@ -87,7 +91,7 @@ description = "CI環境のセットアップ (cargo install をスキップ)"
 # mise が設定する RUSTUP_TOOLCHAIN を使い rustup から明示的に冪等補強する。
 run = [
   "rustup component add rustfmt clippy",
-  "corepack pnpm install",
+  "pnpm install",
 ]
 
 [tasks.build]
@@ -114,24 +118,20 @@ run = [
 
 [tasks.update]
 description = "依存パッケージの更新"
-# `corepack use pnpm@latest` は package.json の `packageManager` フィールドを
-# 最新 pnpm のバージョン+ハッシュに書き換える。`pnpm update --latest` は依存のみで
-# pnpm 本体のバージョンは更新しないため、両者を組にして依存とランナーを揃える。
-# pnpm 本体の更新を先に行ってから依存を更新することで、新しい pnpm の依存解決規則を
-# 反映した状態でロックファイルを再生成する。
-# `CI=true` は pnpm 11 以降で `corepack use` が実行する node_modules 削除確認の
-# プロンプトを抑止する。非対話実行で TTY が無くてもエラーにせず進める。
-# `mise lock --bump` は `latest`・`lts` 指定の開発ツールを再解決して mise.lock を更新する。
+# `mise lock --bump` は pnpm を含む `latest`・`lts` 指定の開発ツールを再解決して mise.lock を更新する。
 # rust は rust-toolchain.toml・Cargo.toml の `rust-version` と揃えて固定しているため
 # `mise upgrade --bump` で書き換えず、固定版を手で変えたときも本コマンドがロックへ反映する。
+# pnpm 本体を先に更新して導入してから、新しい pnpm を `mise exec` で起動して依存を更新し、
+# 新しい pnpm の依存解決規則を反映した状態でロックファイルを再生成する。
+# `CI=true` は pnpm の対話プロンプトを抑止し、TTY が無い非対話実行でもエラーにせず進める。
 env = { CI = "true" }
 run = [
   "cargo upgrade --incompatible",
   "cargo update",
-  "corepack use pnpm@latest",
-  "corepack pnpm update --latest",
-  "pinact run --update --min-age 1",
   "mise lock --bump",
+  "mise install",
+  "mise exec -- pnpm update --latest",
+  "pinact run --update --min-age 1",
 ]
 
 [tasks.bench]
@@ -149,4 +149,4 @@ run = "cargo test --release --locked -- --ignored --exact app::benchmark::tests:
 
 [tasks.docs]
 description = "ドキュメントのローカルプレビュー"
-run = "corepack pnpm run docs:dev"
+run = "pnpm run docs:dev"
