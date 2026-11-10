@@ -22,6 +22,8 @@ node = "lts"
 "npm:pnpm" = "latest"
 pinact = "latest"
 git-cliff = "latest"
+# actionlint がワークフローの run ステップのシェルスクリプトを確かめるために子プロセスとして起動する。
+shellcheck = "latest"
 typos = "latest"
 # cargo-deny は mise の core registry に存在しない (2026-04-29 時点で
 # `mise registry cargo-deny` は "tool not found in registry" を返す) ため、
