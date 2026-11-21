@@ -65,6 +65,16 @@ impl ErrorNotice {
     }
 }
 
+/// 展開結果が破棄された場合も、その結果が作成したディレクトリを回収する。
+pub(super) struct ExtractedDirectory(pub(super) PathBuf);
+
+impl Drop for ExtractedDirectory {
+    fn drop(&mut self) {
+        // 先読みがファイルを保持している間は削除できない場合がある。
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 /// コンテナ (ZIP/PDF/RAR/7z) の読み込み結果 (同期展開とバックグラウンド展開で共通、失敗を含む)
 pub(super) enum ContainerResult {
     Pdf {
@@ -78,7 +88,7 @@ pub(super) enum ContainerResult {
     },
     TempExtracted {
         path: PathBuf,
-        temp_dir: PathBuf,
+        temp_dir: ExtractedDirectory,
         entries: Vec<crate::archive::ExtractedEntry>,
     },
     Error {

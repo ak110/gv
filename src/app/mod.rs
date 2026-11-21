@@ -64,6 +64,60 @@ use slideshow::TIMER_ID_SLIDESHOW;
 /// 上限到達後は利用者の次の操作による再描画で再試行する。
 const MAX_RENDER_RECOVERY_ATTEMPTS: u32 = 3;
 
+#[derive(Default, Debug, PartialEq, Eq)]
+enum TitleNotice {
+    #[default]
+    None,
+    UserError(String),
+    RenderError(String),
+}
+
+#[derive(Default)]
+struct TitleState {
+    notice: TitleNotice,
+    recovery_attempts: u32,
+}
+
+impl TitleState {
+    fn message(&self) -> Option<&str> {
+        match &self.notice {
+            TitleNotice::None => None,
+            TitleNotice::UserError(message) | TitleNotice::RenderError(message) => Some(message),
+        }
+    }
+
+    fn user_error(&mut self, message: String) {
+        self.notice = TitleNotice::UserError(message);
+    }
+
+    fn render_error(&mut self, message: String) -> bool {
+        // 自動描画の失敗で利用者操作の失敗を上書きすると、次の描画成功で表示が消える。
+        if matches!(self.notice, TitleNotice::UserError(_)) {
+            return false;
+        }
+        self.notice = TitleNotice::RenderError(message);
+        true
+    }
+
+    fn begin_user_operation(&mut self) -> bool {
+        std::mem::take(&mut self.notice) != TitleNotice::None
+    }
+
+    fn drawn(&mut self) -> bool {
+        self.recovery_attempts = 0;
+        if matches!(self.notice, TitleNotice::RenderError(_)) {
+            self.notice = TitleNotice::None;
+            return true;
+        }
+        false
+    }
+
+    fn target_lost(&mut self) -> bool {
+        self.recovery_attempts = self.recovery_attempts.saturating_add(1);
+        self.recovery_attempts <= MAX_RENDER_RECOVERY_ATTEMPTS
+    }
+}
+
 /// メインウィンドウ (View 層)
 ///
 /// Win32 メッセージループから呼び出され、`Document` モデルへの操作と `D2DRenderer`
@@ -107,13 +161,7 @@ pub(crate) struct AppWindow {
     // 値はコンテナ識別キーと前回採用したブックマークファイル名の組。
     // コンテナ切り替え時はコンテナ識別キーの不一致で初期名が自動リセットされる。
     pub(crate) last_bookmark: Option<(PathBuf, String)>,
-    // タイトルバーに表示中のエラー。利用者の次の操作の開始まで通常タイトルより優先する。
-    // 同じ処理内のリスト更新や選択更新がエラー表示を直後に上書きしないようにするため。
-    error_message: Option<String>,
-    // 描画資源の失効から連続して描画に成功していない回数
-    render_recovery_attempts: u32,
-    // 表示中のエラーが描画の失敗か。描画が成功した時点でそのエラーだけを解除する
-    render_error_shown: bool,
+    title_state: TitleState,
     // このウィンドウが貼り付けで作成した一時ファイル (ウィンドウ破棄時に回収する)
     pasted_images: file_ops::PastedImageFiles,
     // 試験用: 再描画要求の回数 (非表示ウィンドウでは無効領域を観測できないため)
@@ -262,9 +310,7 @@ impl AppWindow {
             slideshow_interval_ms: config.slideshow.interval_ms,
             slideshow_repeat: config.slideshow.repeat,
             last_bookmark: None,
-            error_message: None,
-            render_recovery_attempts: 0,
-            render_error_shown: false,
+            title_state: TitleState::default(),
             pasted_images: file_ops::PastedImageFiles::new(std::env::temp_dir()),
             #[cfg(test)]
             redraw_request_count: std::cell::Cell::new(0),
@@ -372,7 +418,7 @@ impl AppWindow {
     ///
     /// エラー表示中は通常タイトルで上書きせず、エラーを表示し続ける。
     fn update_title(&self) {
-        let title = if let Some(msg) = &self.error_message {
+        let title = if let Some(msg) = self.title_state.message() {
             format!("ぐらびゅ - エラー: {msg}")
         } else if let Some(source) = self.document.current_source() {
             // PendingContainer 上にいる場合は「読み込み中」プレフィックスを付ける
@@ -430,8 +476,8 @@ impl AppWindow {
     /// 利用者が次の行動を選べるよう、次の操作（続行の可否、再操作、代替手段）を必ず指定する。
     /// 表示は利用者の次の操作の開始（`begin_user_operation`）まで保持する。
     fn show_error_title(&mut self, summary: &str, next_action: &str, detail: Option<&str>) {
-        self.error_message = Some(crate::util::format_error_text(summary, next_action, detail));
-        self.render_error_shown = false;
+        self.title_state
+            .user_error(crate::util::format_error_text(summary, next_action, detail));
         self.update_title();
     }
 
@@ -446,13 +492,15 @@ impl AppWindow {
 
     /// 描画の失敗を表示する。描画が次に成功した時点で自動的に解除する
     fn show_render_error(&mut self, summary: &str, detail: Option<&str>) {
-        self.show_error_title(summary, next_action::RENDER_RETRY, detail);
-        self.render_error_shown = true;
+        let message = crate::util::format_error_text(summary, next_action::RENDER_RETRY, detail);
+        if self.title_state.render_error(message) {
+            self.update_title();
+        }
     }
 
     /// 利用者の操作の開始時に呼ぶ。前の操作のエラー表示を解除して通常タイトルへ戻す
     fn begin_user_operation(&mut self) {
-        if self.error_message.take().is_some() {
+        if self.title_state.begin_user_operation() {
             self.update_title();
         }
     }
@@ -718,16 +766,12 @@ impl AppWindow {
     fn handle_paint_outcome(&mut self, outcome: Result<DrawOutcome>) {
         match outcome {
             Ok(DrawOutcome::Drawn) => {
-                self.render_recovery_attempts = 0;
-                // 復旧した描画エラーは表示し続けない (他の操作のエラーは残す)
-                if std::mem::take(&mut self.render_error_shown) {
-                    self.error_message = None;
+                if self.title_state.drawn() {
                     self.update_title();
                 }
             }
             Ok(DrawOutcome::TargetLost) => {
-                self.render_recovery_attempts += 1;
-                if self.render_recovery_attempts <= MAX_RENDER_RECOVERY_ATTEMPTS {
+                if self.title_state.target_lost() {
                     self.invalidate();
                 } else {
                     self.show_render_error("描画を復旧できませんでした", None);
@@ -892,6 +936,76 @@ impl AppWindow {
             // --- 終了 ---
             Action::Exit => self.action_exit(),
             _ => self.action_filter_for_action(action),
+        }
+    }
+}
+
+#[cfg(test)]
+mod title_state_tests {
+    use super::{MAX_RENDER_RECOVERY_ATTEMPTS, TitleNotice, TitleState};
+    use std::mem::discriminant;
+
+    #[test]
+    fn title_notice_operation_sequences_follow_legal_edges() {
+        // 5種類の操作を6回適用する全操作列。再試行の上限超過からの回復も含む。
+        for sequence in 0..5_u32.pow(6) {
+            let mut state = TitleState::default();
+            let mut operations = sequence;
+            for _ in 0..6 {
+                let before = discriminant(&state.notice);
+                let old_user_error = match &state.notice {
+                    TitleNotice::UserError(message) => Some(message.clone()),
+                    _ => None,
+                };
+                let operation = operations % 5;
+                operations /= 5;
+                match operation {
+                    0 => {
+                        state.begin_user_operation();
+                    }
+                    1 => state.user_error("操作に失敗".into()),
+                    2 => {
+                        state.render_error("描画に失敗".into());
+                    }
+                    3 => {
+                        state.drawn();
+                    }
+                    _ => {
+                        if !state.target_lost() {
+                            state.render_error("描画回復の上限".into());
+                        }
+                    }
+                }
+
+                let after = discriminant(&state.notice);
+                let none = discriminant(&TitleNotice::None);
+                let user = discriminant(&TitleNotice::UserError(String::new()));
+                let render = discriminant(&TitleNotice::RenderError(String::new()));
+                let legal_edges = [
+                    (none, user),
+                    (none, render),
+                    (user, none),
+                    (render, none),
+                    (render, user),
+                ];
+                assert!(before == after || legal_edges.contains(&(before, after)));
+
+                if let Some(message) = old_user_error
+                    && !matches!(operation, 0 | 1)
+                {
+                    assert_eq!(state.notice, TitleNotice::UserError(message));
+                }
+                if operation == 3 {
+                    assert_ne!(after, render);
+                    assert_eq!(state.recovery_attempts, 0);
+                }
+                if operation == 0 {
+                    assert_eq!(after, none);
+                }
+                if operation == 4 && state.recovery_attempts > MAX_RENDER_RECOVERY_ATTEMPTS {
+                    assert!(after == render || after == user);
+                }
+            }
         }
     }
 }

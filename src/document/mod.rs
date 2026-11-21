@@ -38,6 +38,64 @@ use self::container::process_single_container;
 use self::types::{ContainerExpandEvent, ContainerResult, ContainerState};
 use self::utils::{build_expansion_pool, collect_folder_files_recursive, sort_paths_natural};
 
+struct ActiveExpansion {
+    rx: Receiver<ContainerExpandEvent>,
+    cancel: Arc<AtomicBool>,
+}
+
+#[derive(Default)]
+struct ExpansionJob {
+    generation: u64,
+    active: Option<ActiveExpansion>,
+}
+
+impl ExpansionJob {
+    fn start(&mut self, rx: Receiver<ContainerExpandEvent>) -> Arc<AtomicBool> {
+        debug_assert!(self.active.is_none());
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.active = Some(ActiveExpansion {
+            rx,
+            cancel: Arc::clone(&cancel),
+        });
+        cancel
+    }
+
+    fn cancel_and_advance(&mut self) {
+        if let Some(active) = self.active.take() {
+            // 処理中の1件は完走するが、残りのキューは消費しない。
+            active.cancel.store(true, Ordering::Relaxed);
+        }
+        self.generation += 1;
+    }
+
+    fn poll(&mut self) -> Option<(PathBuf, ContainerResult)> {
+        loop {
+            match self.active.as_ref()?.rx.try_recv() {
+                Ok(ContainerExpandEvent::AllDone { generation }) => {
+                    if generation == self.generation {
+                        self.active = None;
+                        return None;
+                    }
+                }
+                Ok(ContainerExpandEvent::Expanded {
+                    container_path,
+                    result,
+                    generation,
+                }) => {
+                    if generation == self.generation {
+                        return Some((container_path, result));
+                    }
+                }
+                Err(crossbeam_channel::TryRecvError::Empty) => return None,
+                Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                    self.active = None;
+                    return None;
+                }
+            }
+        }
+    }
+}
+
 /// ドキュメント本体（画像・ファイルリスト管理、アーカイブハンドリング）
 pub struct Document {
     event_sender: Sender<DocumentEvent>,
@@ -48,22 +106,14 @@ pub struct Document {
     prefetch_coord: PrefetchCoordinator,
     // アーカイブ対応
     archive_manager: Arc<ArchiveManager>,
-    archive_temp_dirs: Vec<PathBuf>,
+    archive_temp_dirs: Vec<types::ExtractedDirectory>,
     /// ZIPファイルのバッファキャッシュ (オンデマンド取得用、先読みスレッドと共有)
     zip_buffers: Arc<RwLock<HashMap<PathBuf, ZipBuffer>>>,
     /// 表示中の画像へ編集を適用したか
     edited: bool,
     /// 永続フィルタ設定
     persistent_filter: PersistentFilter,
-    /// バックグラウンド展開の受信チャネル
-    expand_rx: Option<Receiver<ContainerExpandEvent>>,
-    /// バックグラウンド展開の世代番号 (openごとにインクリメント)
-    expand_generation: u64,
-    /// バックグラウンド展開の現世代に紐づくキャンセルフラグ。
-    /// 旧世代を無効化する経路から `cancel_expansion` を呼んで `true` をセットすると、
-    /// rayon ワーカーは進行中の1件を完走したのち、残りのキューを消費せずに終了する。
-    /// これにより並列度を1に抑えても再スケジュール時に旧世代の I/O が残存しない。
-    expansion_cancel: Option<Arc<AtomicBool>>,
+    expansion: ExpansionJob,
     /// コンテナの展開状態
     container_states: HashMap<PathBuf, ContainerState>,
     /// 直近のナビゲーション操作の方向 (PendingContainer 到達時の intent 構築に使う)
@@ -97,13 +147,11 @@ impl Document {
             zip_buffers: Arc::new(RwLock::new(HashMap::new())),
             edited: false,
             persistent_filter: PersistentFilter::new(),
-            expand_rx: None,
-            expand_generation: 0,
+            expansion: ExpansionJob::default(),
             container_states: HashMap::new(),
             last_navigation_direction: NavigationDirection::Forward,
             pending_navigation_intent: None,
             ui_notify: None,
-            expansion_cancel: None,
         }
     }
 
@@ -232,9 +280,7 @@ impl Document {
 
     /// 新しい一覧の開始時に、旧一覧の展開・進捗・画像・編集状態を全て破棄する。
     fn reset_document_state(&mut self) {
-        self.cancel_expansion();
-        self.expand_rx = None;
-        self.expand_generation += 1;
+        self.expansion.cancel_and_advance();
         self.cleanup_archive_temp();
         self.invalidate_cache();
         self.file_list.clear();
@@ -598,25 +644,10 @@ impl Document {
         entries
     }
 
-    /// 現世代のバックグラウンド展開を無効化する。
-    ///
-    /// 旧世代を破棄する全経路 ( `open_containers` / `open_multiple` /
-    /// `expand_all_pending_sync` / `reschedule_background_expansion` ) から呼び、
-    /// rayon ワーカーに「次の `for_each` エントリから処理を止めろ」と指示する。
-    /// 進行中の1件は完走するが、それ以降のキューは消費されない。
-    fn cancel_expansion(&mut self) {
-        if let Some(flag) = self.expansion_cancel.take() {
-            flag.store(true, Ordering::Relaxed);
-        }
-    }
-
     /// バックグラウンドコンテナ展開を起動する
     /// Pending状態のコンテナを全てInFlightに遷移させてからスレッドに投入する。
     /// 既に Expanded 状態のコンテナはスキップする (再起動時の二重展開防止)。
     fn start_background_expansion(&mut self) {
-        // 呼び出し側が cancel_expansion を怠った場合の二重保険
-        self.cancel_expansion();
-
         // Pending状態のコンテナパスを収集し、現在位置からの距離でソート
         let current_idx = self.file_list.current_index().unwrap_or(0);
         let mut pending_paths: Vec<(usize, PathBuf)> = Vec::new();
@@ -649,15 +680,8 @@ impl Document {
         }
 
         let (tx, rx) = crossbeam_channel::unbounded();
-        self.expand_rx = Some(rx);
-
-        // 現世代用のキャンセルフラグを作成してフィールドに保持する。
-        // 次に cancel_expansion が呼ばれた時点で true に遷移し、以降の par_iter
-        // エントリは処理されずに終了する。
-        let cancel = Arc::new(AtomicBool::new(false));
-        self.expansion_cancel = Some(Arc::clone(&cancel));
-
-        let generation = self.expand_generation;
+        let cancel = self.expansion.start(rx);
+        let generation = self.expansion.generation;
         let archive_manager = Arc::clone(&self.archive_manager);
         let ui_notify = self.ui_notify.clone();
         // rayon プール作成失敗を UI に通知するため、event_sender をワーカースレッドへ複製する
@@ -712,15 +736,13 @@ impl Document {
     /// バックグラウンド展開を再起動して優先度を再計算する
     /// シャッフル等でリスト並べ替えが起きた後や、ユーザーが PendingContainer
     /// に到達して特定コンテナを最優先で待ち始めたタイミングで呼ぶ。
-    /// 旧 rayon ジョブは `cancel_expansion` でキューの消費を停止させ、
+    /// 旧 rayon ジョブはキューの消費を停止し、
     /// 進行中の1件だけ完走させてから終了する。結果は世代不一致で破棄される。
     fn reschedule_background_expansion(&mut self) {
         if !self.file_list.has_pending() {
             return;
         }
-        self.cancel_expansion();
-        self.expand_rx = None; // 古い結果は世代不一致で破棄
-        self.expand_generation += 1;
+        self.expansion.cancel_and_advance();
         self.start_background_expansion();
     }
 
@@ -730,59 +752,26 @@ impl Document {
     /// 統合対象が `pending_navigation_intent` と一致したら direction を渡し、
     /// 解決時に `load_current()` をリトライして表示を更新する。
     pub fn process_expand_results(&mut self) {
-        let current_gen = self.expand_generation;
         let mut applied = false;
         let mut intent_resolved = false;
 
-        loop {
-            let Some(rx) = &self.expand_rx else {
-                break;
-            };
-            let Ok(event) = rx.try_recv() else {
-                break;
+        while let Some((container_path, result)) = self.expansion.poll() {
+            // file_list 内で該当 PendingContainer を探して統合
+            let Some(idx) = self.find_pending_index(&container_path) else {
+                continue;
             };
 
-            match event {
-                ContainerExpandEvent::Expanded {
-                    container_path,
-                    result,
-                    generation,
-                } => {
-                    if generation != current_gen {
-                        if let ContainerResult::TempExtracted { temp_dir, .. } = &result {
-                            let _ = std::fs::remove_dir_all(temp_dir);
-                        }
-                        continue;
-                    }
+            // intent と一致するなら direction を引き出し、解決済みフラグを立てる
+            let (direction, was_intent) = match &self.pending_navigation_intent {
+                Some((p, d)) if *p == container_path => (*d, true),
+                _ => (NavigationDirection::Forward, false),
+            };
 
-                    // file_list 内で該当 PendingContainer を探して統合
-                    let Some(idx) = self.find_pending_index(&container_path) else {
-                        // プレースホルダがもう存在しない (リスト変更等) → 結果を破棄する
-                        if let ContainerResult::TempExtracted { temp_dir, .. } = &result {
-                            let _ = std::fs::remove_dir_all(temp_dir);
-                        }
-                        continue;
-                    };
-
-                    // intent と一致するなら direction を引き出し、解決済みフラグを立てる
-                    let (direction, was_intent) = match &self.pending_navigation_intent {
-                        Some((p, d)) if *p == container_path => (*d, true),
-                        _ => (NavigationDirection::Forward, false),
-                    };
-
-                    let _ = self.apply_container_result(idx, &container_path, result, direction);
-                    applied = true;
-                    if was_intent {
-                        self.pending_navigation_intent = None;
-                        intent_resolved = true;
-                    }
-                }
-                ContainerExpandEvent::AllDone { generation } => {
-                    if generation == current_gen {
-                        self.expand_rx = None;
-                    }
-                    break;
-                }
+            let _ = self.apply_container_result(idx, &container_path, result, direction);
+            applied = true;
+            if was_intent {
+                self.pending_navigation_intent = None;
+                intent_resolved = true;
             }
         }
 
@@ -865,7 +854,9 @@ impl Document {
                         .write()
                         .expect("zip_buffers lock poisoned")
                         .insert(path, buffer);
-                } else if let ContainerResult::TempExtracted { temp_dir, .. } = result {
+                } else if let ContainerResult::TempExtracted { temp_dir, .. } = result
+                    && !entries.is_empty()
+                {
                     self.archive_temp_dirs.push(temp_dir);
                 }
 
@@ -884,10 +875,7 @@ impl Document {
     /// 残った PendingContainer を1つずつ直接同期展開する。
     pub fn expand_all_pending_sync(&mut self) {
         // 旧バックグラウンドジョブを即座に停止させて HDD 帯域を譲ってもらう。
-        // 結果自体は expand_rx の drop と世代加算で次回 process_expand_results が破棄する。
-        self.cancel_expansion();
-        self.expand_rx = None;
-        self.expand_generation += 1;
+        self.expansion.cancel_and_advance();
 
         // 全プレースホルダを順に同期展開
         while self.file_list.has_pending() {
@@ -945,11 +933,7 @@ impl Document {
 
     /// アーカイブ用tempディレクトリとZIPバッファをクリーンアップする
     fn cleanup_archive_temp(&mut self) {
-        for temp_dir in self.archive_temp_dirs.drain(..) {
-            // ワーカーのin-flight fs::readがファイルを掴んでいる可能性があるため、
-            // 削除失敗は無視する (ユニークdir名なので次回openに影響しない)
-            let _ = std::fs::remove_dir_all(&temp_dir);
-        }
+        self.archive_temp_dirs.clear();
         self.zip_buffers
             .write()
             .expect("zip_buffers lock poisoned")
@@ -1466,6 +1450,7 @@ impl Document {
 
 impl Drop for Document {
     fn drop(&mut self) {
+        self.expansion.cancel_and_advance();
         self.cleanup_archive_temp();
     }
 }
@@ -1477,6 +1462,110 @@ mod tests {
     use std::io::Write;
 
     use crate::test_helpers::test_document;
+
+    #[test]
+    fn background_expansion_operations_discard_old_results_and_resolve_navigation() {
+        let (mut doc, _events) = test_document();
+        let root = setup_test_dir("expansion_sequence", 0);
+        let path = PathBuf::from("current.zip");
+        doc.file_list
+            .push(crate::test_helpers::make_pending_container_info(
+                "current.zip",
+            ));
+        assert!(doc.file_list.navigate_to(0));
+        doc.pending_navigation_intent = Some((path.clone(), NavigationDirection::Backward));
+
+        let stale_result = |name: &str, generation| {
+            let temp_dir = root.join(name);
+            std::fs::create_dir(&temp_dir).unwrap();
+            let event = ContainerExpandEvent::Expanded {
+                container_path: path.clone(),
+                result: ContainerResult::TempExtracted {
+                    path: path.clone(),
+                    temp_dir: types::ExtractedDirectory(temp_dir.clone()),
+                    entries: Vec::new(),
+                },
+                generation,
+            };
+            (event, temp_dir)
+        };
+
+        let phase = |doc: &Document| (doc.expansion.generation, doc.expansion.active.is_some());
+        let legal_edges = [
+            ((0, false), (0, true)),
+            ((0, true), (1, false)),
+            ((1, false), (1, true)),
+            ((1, true), (1, false)),
+        ];
+        let mut before = phase(&doc);
+        let mut check = |doc: &Document, expected| {
+            let after = phase(doc);
+            assert_eq!(after, expected);
+            assert!(before == after || legal_edges.contains(&(before, after)));
+            before = after;
+        };
+
+        let (old_tx, rx) = crossbeam_channel::unbounded();
+        let old_cancel = doc.expansion.start(rx);
+        check(&doc, (0, true));
+        let (queued, queued_dir) = stale_result("queued", 0);
+        old_tx.send(queued).unwrap();
+
+        doc.expansion.cancel_and_advance();
+        check(&doc, (1, false));
+        assert!(old_cancel.load(Ordering::Relaxed));
+        assert!(!queued_dir.exists());
+        let (late, late_dir) = stale_result("late", 0);
+        assert!(old_tx.send(late).is_err());
+        assert!(!late_dir.exists());
+
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let cancel = doc.expansion.start(rx);
+        check(&doc, (1, true));
+        let (stale, stale_dir) = stale_result("stale", 0);
+        tx.send(ContainerExpandEvent::AllDone { generation: 0 })
+            .unwrap();
+        tx.send(stale).unwrap();
+        doc.process_expand_results();
+        check(&doc, (1, true));
+        assert!(!stale_dir.exists());
+        assert!(doc.archive_temp_dirs.is_empty());
+        assert_eq!(doc.find_pending_index(&path), Some(0));
+        assert!(doc.pending_navigation_intent.is_some());
+
+        let current_dir = root.join("current");
+        std::fs::create_dir(&current_dir).unwrap();
+        let entries = ["first.png", "last.png"].map(|name| {
+            let file = current_dir.join(name);
+            std::fs::write(&file, create_1x1_white_png()).unwrap();
+            (file, name.into(), std::time::SystemTime::UNIX_EPOCH)
+        });
+        tx.send(ContainerExpandEvent::Expanded {
+            container_path: path.clone(),
+            result: ContainerResult::TempExtracted {
+                path: path.clone(),
+                temp_dir: types::ExtractedDirectory(current_dir.clone()),
+                entries: entries.into(),
+            },
+            generation: 1,
+        })
+        .unwrap();
+        doc.process_expand_results();
+        check(&doc, (1, true));
+        assert!(doc.pending_navigation_intent.is_none());
+        assert!(!doc.file_list.has_pending());
+        assert_eq!(doc.file_list.files().len(), 2);
+        assert_eq!(doc.file_list.current_index(), Some(1));
+        assert!(doc.current_image.is_some());
+        assert!(current_dir.is_dir());
+
+        tx.send(ContainerExpandEvent::AllDone { generation: 1 })
+            .unwrap();
+        doc.process_expand_results();
+        check(&doc, (1, false));
+        assert!(!cancel.load(Ordering::Relaxed));
+        assert_eq!(Arc::strong_count(&cancel), 1);
+    }
 
     #[test]
     fn new_initial_state() {
@@ -1675,16 +1764,14 @@ mod tests {
             });
             let old = dir.join("old.zip");
             let other_old = dir.join("other_old.zip");
-            let flag = Arc::new(AtomicBool::new(false));
-            doc.expansion_cancel = Some(Arc::clone(&flag));
             let (sender, receiver) = crossbeam_channel::unbounded();
-            doc.expand_rx = Some(receiver);
+            let flag = doc.expansion.start(receiver);
             doc.container_states
                 .insert(old.clone(), ContainerState::InFlight);
             doc.container_states
                 .insert(other_old.clone(), ContainerState::InFlight);
             doc.pending_navigation_intent = Some((old.clone(), NavigationDirection::Forward));
-            let generation = doc.expand_generation;
+            let generation = doc.expansion.generation;
             assert_eq!(doc.expand_progress(), Some((0, 2)));
             match entrance {
                 0 => doc.open(&image).unwrap(),
@@ -1703,12 +1790,12 @@ mod tests {
                 _ => doc.open_folder(&dir).unwrap(),
             }
             assert!(flag.load(Ordering::Relaxed));
-            assert!(doc.expand_generation > generation);
+            assert!(doc.expansion.generation > generation);
             assert!(!doc.container_states.contains_key(&old));
             assert!(!doc.container_states.contains_key(&other_old));
             if entrance <= 3 {
                 assert!(doc.expand_progress().is_none());
-                assert!(doc.expand_rx.is_none());
+                assert!(doc.expansion.active.is_none());
             }
             assert!(doc.pending_navigation_intent.is_none());
             assert!(!doc.has_unsaved_edit());
@@ -1763,7 +1850,7 @@ mod tests {
         let image = dir.join("image_000.png");
         let extracted = Document::build_container_entries(&ContainerResult::TempExtracted {
             path: path.clone(),
-            temp_dir: dir.path().to_path_buf(),
+            temp_dir: types::ExtractedDirectory(dir.join("extracted")),
             entries: vec![(image, "inside.png".into(), expected)],
         });
         assert_eq!(extracted[0].modified, expected);

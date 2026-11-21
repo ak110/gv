@@ -70,16 +70,11 @@ pub(super) fn process_single_container(
                 }
             };
         match archive_manager.extract_images(path, &temp_dir) {
-            Ok(entries) => {
-                if entries.is_empty() {
-                    let _ = std::fs::remove_dir_all(&temp_dir);
-                }
-                ContainerResult::TempExtracted {
-                    path: path.to_path_buf(),
-                    temp_dir,
-                    entries,
-                }
-            }
+            Ok(entries) => ContainerResult::TempExtracted {
+                path: path.to_path_buf(),
+                temp_dir: super::types::ExtractedDirectory(temp_dir),
+                entries,
+            },
             Err(e) => {
                 let _ = std::fs::remove_dir_all(&temp_dir);
                 ContainerResult::Error {

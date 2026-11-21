@@ -272,8 +272,8 @@ impl AppWindow {
             let notice = format!("対象外 {skipped} 件を処理しませんでした: {reason}");
             // 同じ操作の失敗を表示中なら、上書きせずに並べて示す
             let notice = self
-                .error_message
-                .as_ref()
+                .title_state
+                .message()
                 .map_or_else(|| notice.clone(), |error| format!("{error} / {notice}"));
             self.show_error_title(&notice, next_action, None);
         }

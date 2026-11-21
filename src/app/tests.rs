@@ -389,6 +389,12 @@ fn operation_failure_is_shown_and_survives_title_update() {
     app.with_app(super::AppWindow::process_document_events);
     assert_eq!(app.title(), title);
 
+    app.with_app(|state| {
+        state.handle_paint_outcome(Err(anyhow::anyhow!("描画エラー")));
+        state.handle_paint_outcome(Ok(super::DrawOutcome::Drawn));
+    });
+    assert_eq!(app.title(), title);
+
     app.with_app(super::AppWindow::begin_user_operation);
     assert!(!app.title().contains("エラー"), "{}", app.title());
 
