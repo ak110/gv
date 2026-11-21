@@ -96,6 +96,14 @@ impl ExpansionJob {
     }
 }
 
+#[cfg(test)]
+struct ExpansionDispatch {
+    paths: Vec<PathBuf>,
+    tx: Sender<ContainerExpandEvent>,
+    cancel: Arc<AtomicBool>,
+    generation: u64,
+}
+
 /// ドキュメント本体（画像・ファイルリスト管理、アーカイブハンドリング）
 pub struct Document {
     event_sender: Sender<DocumentEvent>,
@@ -124,6 +132,9 @@ pub struct Document {
     pending_navigation_intent: Option<(PathBuf, NavigationDirection)>,
     /// UIスレッド通知コールバック (PostMessageW経由でUIを起こす)
     ui_notify: Option<Arc<dyn Fn() + Send + Sync>>,
+    // 状態遷移は実経路を通し、ワーカーに渡す入力と応答だけをテストで制御する。
+    #[cfg(test)]
+    expansion_dispatch: Option<Sender<ExpansionDispatch>>,
 }
 
 impl Document {
@@ -152,6 +163,8 @@ impl Document {
             last_navigation_direction: NavigationDirection::Forward,
             pending_navigation_intent: None,
             ui_notify: None,
+            #[cfg(test)]
+            expansion_dispatch: None,
         }
     }
 
@@ -682,6 +695,21 @@ impl Document {
         let (tx, rx) = crossbeam_channel::unbounded();
         let cancel = self.expansion.start(rx);
         let generation = self.expansion.generation;
+        #[cfg(test)]
+        if let Some(dispatch) = &self.expansion_dispatch {
+            assert!(
+                dispatch
+                    .send(ExpansionDispatch {
+                        paths,
+                        tx,
+                        cancel,
+                        generation
+                    })
+                    .is_ok()
+            );
+            return;
+        }
+
         let archive_manager = Arc::clone(&self.archive_manager);
         let ui_notify = self.ui_notify.clone();
         // rayon プール作成失敗を UI に通知するため、event_sender をワーカースレッドへ複製する
@@ -1472,8 +1500,8 @@ mod tests {
             .push(crate::test_helpers::make_pending_container_info(
                 "current.zip",
             ));
-        assert!(doc.file_list.navigate_to(0));
-        doc.pending_navigation_intent = Some((path.clone(), NavigationDirection::Backward));
+        let (dispatch, worker) = crossbeam_channel::unbounded();
+        doc.expansion_dispatch = Some(dispatch);
 
         let stale_result = |name: &str, generation| {
             let temp_dir = root.join(name);
@@ -1493,8 +1521,7 @@ mod tests {
         let phase = |doc: &Document| (doc.expansion.generation, doc.expansion.active.is_some());
         let legal_edges = [
             ((0, false), (0, true)),
-            ((0, true), (1, false)),
-            ((1, false), (1, true)),
+            ((0, true), (1, true)),
             ((1, true), (1, false)),
         ];
         let mut before = phase(&doc);
@@ -1505,23 +1532,35 @@ mod tests {
             before = after;
         };
 
-        let (old_tx, rx) = crossbeam_channel::unbounded();
-        let old_cancel = doc.expansion.start(rx);
+        doc.start_background_expansion();
         check(&doc, (0, true));
+        let old = worker.try_recv().unwrap();
+        assert_eq!(old.paths, std::slice::from_ref(&path));
+        assert_eq!(old.generation, 0);
         let (queued, queued_dir) = stale_result("queued", 0);
-        old_tx.send(queued).unwrap();
+        old.tx.send(queued).unwrap();
 
-        doc.expansion.cancel_and_advance();
-        check(&doc, (1, false));
-        assert!(old_cancel.load(Ordering::Relaxed));
+        doc.navigate_last();
+        check(&doc, (1, true));
+        assert_eq!(
+            doc.pending_navigation_intent,
+            Some((path.clone(), NavigationDirection::Backward))
+        );
+        assert!(old.cancel.load(Ordering::Relaxed));
         assert!(!queued_dir.exists());
         let (late, late_dir) = stale_result("late", 0);
-        assert!(old_tx.send(late).is_err());
+        assert!(old.tx.send(late).is_err());
         assert!(!late_dir.exists());
 
-        let (tx, rx) = crossbeam_channel::unbounded();
-        let cancel = doc.expansion.start(rx);
-        check(&doc, (1, true));
+        let ExpansionDispatch {
+            paths,
+            tx,
+            cancel,
+            generation,
+        } = worker.try_recv().unwrap();
+        assert_eq!(paths, std::slice::from_ref(&path));
+        assert_eq!(generation, 1);
+        assert!(!Arc::ptr_eq(&cancel, &old.cancel));
         let (stale, stale_dir) = stale_result("stale", 0);
         tx.send(ContainerExpandEvent::AllDone { generation: 0 })
             .unwrap();
