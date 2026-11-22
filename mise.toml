@@ -33,6 +33,8 @@ typos = "latest"
 # `mise exec -- cargo-deny` を組み立てる。
 # core registry へ登録されたら本指定を撤去し既定の mise exec 経由に戻すことができる。
 "aqua:EmbarkStudios/cargo-deny" = "latest"
+# Gitフックに記録されるprekのパスをuvの取得キャッシュに依存させないため、miseから導入する。
+prek = "latest"
 
 # actionlint の配布物はインストール root へ実行ファイルと並んで `man`・`docs` の
 # ディレクトリを展開する。mise は `bin` サブディレクトリを持たないツールのインストール
@@ -61,14 +63,14 @@ run = [
   "env -u CARGO_BUILD_TARGET cargo install cargo-edit",
   "pnpm install",
   "git config --unset core.hooksPath || true",
-  "uvx prek install -c .pre-commit-config.yaml",
+  "mise exec -- prek install -c .pre-commit-config.yaml",
   "git config --local commit.template .gitmessage",
 ]
 run_windows = [
   "cargo install cargo-edit",
   "pnpm install",
   "git config --unset core.hooksPath & exit /b 0",
-  "uvx prek install -c .pre-commit-config.yaml",
+  "mise exec -- prek install -c .pre-commit-config.yaml",
   "git config --local commit.template .gitmessage",
 ]
 
