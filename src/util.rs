@@ -91,20 +91,15 @@ mod tests {
 
     #[test]
     fn ascii_string() {
-        let result = to_wide("hello");
-        let expected: Vec<u16> = "hello".encode_utf16().chain(std::iter::once(0)).collect();
-        assert_eq!(result, expected);
+        assert_eq!(
+            to_wide("hello"),
+            [0x0068, 0x0065, 0x006C, 0x006C, 0x006F, 0]
+        );
     }
 
     #[test]
     fn japanese_string() {
-        let result = to_wide("画像ビューア");
-        let expected: Vec<u16> = "画像ビューア"
-            .encode_utf16()
-            .chain(std::iter::once(0))
-            .collect();
-        assert_eq!(result, expected);
-        assert_eq!(*result.last().unwrap(), 0);
+        assert_eq!(to_wide("画😀"), [0x753B, 0xD83D, 0xDE00, 0]);
     }
 
     #[test]

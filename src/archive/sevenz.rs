@@ -76,19 +76,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn supported_extensions() {
-        let reg = Arc::new(ExtensionRegistry::new());
-        let handler = SevenZHandler::new(reg);
-        assert!(handler.supported_extensions().contains(&".7z".to_string()));
-    }
-
-    #[test]
     fn nonexistent_7z_returns_error() {
         let reg = Arc::new(ExtensionRegistry::new());
-        let handler = SevenZHandler::new(reg);
+        let manager = super::super::ArchiveManager::new(reg);
         let dir = crate::test_helpers::TempDir::new("7z_noexist");
-        let result: Result<Vec<super::ExtractedEntry>> =
-            handler.extract_images(Path::new("nonexistent.7z"), &dir);
-        assert!(result.is_err());
+        let error = manager
+            .extract_images(&dir.join("missing.7z"), &dir)
+            .unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<std::io::Error>().unwrap().kind(),
+            std::io::ErrorKind::NotFound
+        );
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
     }
 }

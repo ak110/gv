@@ -90,13 +90,16 @@ fn temp_dir_is_unique_and_removed_during_unwind() {
     assert_ne!(first.path(), second.path());
     let path = second.to_path_buf();
     let created_file = path.join("image.png");
+    let marker = first.join("marker");
+    std::fs::write(&marker, b"keep").unwrap();
+    std::fs::write(created_file, b"partial").unwrap();
     let result = std::panic::catch_unwind(move || {
         let _owned = second;
-        std::fs::write(created_file, b"partial").unwrap();
         panic!("テスト失敗の巻き戻し");
     });
-    assert!(result.is_err());
-    assert!(first.exists());
+    let panic = result.expect_err("intentional unwind");
+    assert_eq!(panic.downcast_ref::<&str>(), Some(&"テスト失敗の巻き戻し"));
+    assert_eq!(std::fs::read(marker).unwrap(), b"keep");
     assert!(!path.exists());
 }
 

@@ -88,15 +88,17 @@ mod tests {
     fn page_cache_crud_scenario() {
         let mut cache = PageCache::new(1024);
 
-        assert!(cache.insert(0, make_image(100)));
+        assert!(cache.insert(0, crate::test_helpers::solid_image(5, 5, [1, 2, 3, 255])));
         assert!(cache.contains(0));
         assert!(cache.get(0).is_some());
 
-        assert!(cache.insert(0, make_image(150)));
-        assert_eq!(cache.current_memory, 150);
+        let replacement = crate::test_helpers::solid_image(5, 8, [4, 5, 6, 255]);
+        assert!(cache.insert(0, replacement));
+        assert_eq!(cache.current_memory, 160);
 
-        let taken = cache.take(0);
-        assert!(taken.is_some());
+        let taken = cache.take(0).unwrap();
+        assert_eq!((taken.width, taken.height), (5, 8));
+        assert_eq!(taken.data, [4, 5, 6, 255].repeat(40));
         assert!(!cache.contains(0));
         assert_eq!(cache.current_memory, 0);
 

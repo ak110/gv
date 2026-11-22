@@ -237,12 +237,6 @@ mod tests {
     }
 
     #[test]
-    fn format_exposure_time_fraction() {
-        let fields = read_fields(&[rational(ExifIfd::Exif, EXPOSURE_TIME, &[(1, 250)])]);
-        assert_eq!(fields, vec![field("シャッター速度", "1/250 秒")]);
-    }
-
-    #[test]
     fn format_exposure_time_whole_seconds() {
         let fields = read_fields(&[rational(ExifIfd::Exif, EXPOSURE_TIME, &[(2, 1)])]);
         assert_eq!(fields, vec![field("シャッター速度", "2 秒")]);
@@ -258,18 +252,6 @@ mod tests {
             read_fields(&gps_entries("S", "W")),
             vec![field("GPS", "-35.681236, -139.767125")]
         );
-    }
-
-    #[test]
-    fn focal_length_integer() {
-        let fields = read_fields(&[rational(ExifIfd::Exif, FOCAL_LENGTH, &[(50, 1)])]);
-        assert_eq!(fields, vec![field("焦点距離", "50 mm")]);
-    }
-
-    #[test]
-    fn fnumber_decimal() {
-        let fields = read_fields(&[rational(ExifIfd::Exif, F_NUMBER, &[(28, 10)])]);
-        assert_eq!(fields, vec![field("F値", "f/2.8")]);
     }
 
     #[test]

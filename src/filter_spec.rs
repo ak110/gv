@@ -385,6 +385,41 @@ mod tests {
 
     #[test]
     fn all_parameter_dialogs_validate_the_displayed_bounds() {
+        let fill = FILTER_SPECS
+            .iter()
+            .find(|spec| spec.kind == FilterKind::Fill)
+            .unwrap();
+        assert!(matches!(
+            fill.operation(&["255".into(), "64".into(), "0".into()]),
+            Ok(FilterOperation::Fill {
+                red: 255,
+                green: 64,
+                blue: 0
+            })
+        ));
+        for field in fill.fields() {
+            for input in ["0", "255"] {
+                assert!(field.rule.accepts(input));
+            }
+            for input in ["-1", "256"] {
+                assert!(!field.rule.accepts(input));
+            }
+        }
+        let gamma = FILTER_SPECS
+            .iter()
+            .find(|spec| spec.kind == FilterKind::Gamma)
+            .unwrap();
+        let fields = gamma.fields();
+        for (input, expected) in [("0.1", 0.1_f64), ("10", 10.0)] {
+            assert!(fields[0].rule.accepts(input));
+            assert!(
+                matches!(gamma.operation(&[input.into()]), Ok(FilterOperation::Gamma { value }) if value.to_bits() == expected.to_bits())
+            );
+        }
+        for input in ["0.09", "10.01"] {
+            assert!(!fields[0].rule.accepts(input));
+            assert!(gamma.operation(&[input.into()]).is_err());
+        }
         for spec in FILTER_SPECS
             .iter()
             .filter(|spec| !spec.parameters.is_empty())

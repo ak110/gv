@@ -68,12 +68,12 @@ mod tests {
     #[test]
     fn levels_narrow_range() {
         let img = DecodedImage {
-            data: vec![128, 128, 128, 255],
+            data: vec![127, 128, 150, 255],
             width: 1,
             height: 1,
         };
         let result = levels(&img, None, 100, 200);
-        assert!((result.data[0] as i32 - 71).abs() <= 1);
+        assert_eq!(result.data, [69, 71, 128, 255]);
     }
 
     #[test]

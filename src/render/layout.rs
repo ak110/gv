@@ -142,10 +142,14 @@ mod tests {
             margin_amount: 64.0,
         };
         let rect = layout.calculate(2000, 1000, 800.0, 600.0);
-        assert!(rect.width <= 800.0);
-        assert!(rect.height <= 600.0);
-        assert!(rect.x >= 0.0);
-        assert!(rect.y >= 0.0);
+        for (actual, expected) in [
+            (rect.width, 800.0),
+            (rect.height, 400.0),
+            (rect.x, 0.0),
+            (rect.y, 100.0),
+        ] {
+            assert!((actual - expected).abs() < 0.01);
+        }
     }
 
     #[test]
@@ -222,28 +226,28 @@ mod tests {
     #[test]
     fn zoom_in_increases_scale() {
         let mut layout = Layout::new();
-        let scale_before = layout.effective_scale(200, 200, 800.0, 600.0);
         layout.zoom_in(200, 200, 800.0, 600.0);
-        let scale_after = layout.effective_scale(200, 200, 800.0, 600.0);
-        assert!(scale_after > scale_before);
+        let rect = layout.calculate(200, 200, 800.0, 600.0);
+        assert!((rect.width - 840.0).abs() < 0.01);
     }
 
     #[test]
     fn zoom_out_decreases_scale() {
         let mut layout = Layout::new();
-        let scale_before = layout.effective_scale(200, 200, 800.0, 600.0);
         layout.zoom_out(200, 200, 800.0, 600.0);
-        let scale_after = layout.effective_scale(200, 200, 800.0, 600.0);
-        assert!(scale_after < scale_before);
+        let rect = layout.calculate(200, 200, 800.0, 600.0);
+        assert!((rect.width - 420.0).abs() < 0.01);
     }
 
     #[test]
     fn zoom_reset_sets_1x() {
         let mut layout = Layout {
-            mode: DisplayMode::AutoFit,
+            mode: DisplayMode::Fixed(2.0),
             ..Layout::new()
         };
         layout.zoom_reset();
-        assert_eq!(layout.mode, DisplayMode::Fixed(1.0));
+        let rect = layout.calculate(200, 100, 800.0, 600.0);
+        assert!((rect.width - 200.0).abs() < 0.01);
+        assert!((rect.height - 100.0).abs() < 0.01);
     }
 }

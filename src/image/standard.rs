@@ -109,8 +109,10 @@ mod tests {
 
     #[test]
     fn all_standard_extensions_decode_an_image() {
-        let decoder = StandardDecoder::new();
-        for extension in StandardDecoder::extensions() {
+        let registry = crate::extension_registry::ExtensionRegistry::new();
+        let decoder = crate::image::DecoderChain::new(vec![Box::new(StandardDecoder::new())]);
+        for extension in [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"] {
+            assert!(registry.is_image_extension(&format!("sample{extension}")));
             let format = image::ImageFormat::from_extension(extension.trim_start_matches('.'))
                 .expect("標準拡張子には画像形式がある");
             let sample = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
@@ -129,9 +131,15 @@ mod tests {
 
     #[test]
     fn decode_invalid_data_returns_error() {
-        let decoder = StandardDecoder::new();
-        let result = decoder.decode(&[0, 1, 2, 3], "test.jpg");
-        assert!(result.is_err());
+        let decoder = crate::image::DecoderChain::new(vec![Box::new(StandardDecoder::new())]);
+        let Err(unknown) = decoder.decode(&[0, 1, 2, 3], "test.png") else {
+            panic!("non-image accepted");
+        };
+        assert!(unknown.downcast_ref::<image::ImageError>().is_none());
+        let Err(corrupt) = decoder.decode(b"\x89PNG\r\n\x1a\n", "test.png") else {
+            panic!("truncated PNG accepted");
+        };
+        assert!(corrupt.downcast_ref::<image::ImageError>().is_some());
     }
 
     #[test]
@@ -154,28 +162,11 @@ mod tests {
     }
 
     #[test]
-    fn metadata_minimal_png() {
-        let png_data = create_1x1_white_png();
-        let decoder = StandardDecoder::new();
-        let meta = decoder.metadata(&png_data, "test.png").unwrap();
-        assert!(meta.format.contains("Png"));
-    }
-
-    #[test]
     fn metadata_png_with_text_chunks() {
         let png_data = create_1x1_png_with_text();
         let decoder = StandardDecoder::new();
         let meta = decoder.metadata(&png_data, "test.png").unwrap();
-        assert!(
-            meta.comments.iter().any(|c| c.contains("Author")),
-            "tEXtチャンクが取得できること: {:?}",
-            meta.comments
-        );
-        assert!(
-            meta.comments.iter().any(|c| c.contains("TestAuthor")),
-            "tEXtチャンクの値が正しいこと: {:?}",
-            meta.comments
-        );
+        assert_eq!(meta.comments, ["Author: TestAuthor"]);
     }
 
     #[test]

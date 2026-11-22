@@ -382,14 +382,6 @@ mod tests {
     }
 
     #[test]
-    fn version_comparison() {
-        assert!(parse_version("1.1.0").unwrap() > parse_version("1.0.0").unwrap());
-        assert!(parse_version("2.0.0").unwrap() > parse_version("1.9.9").unwrap());
-        assert!(parse_version("0.2.0").unwrap() > parse_version("0.1.0").unwrap());
-        assert!(parse_version("0.1.0").unwrap() <= parse_version("0.1.0").unwrap());
-    }
-
-    #[test]
     fn parse_update_info_compares_versions() {
         let body = r#"{"tag_name":"v1.2.0","download_url":"https://example.com/gv.zip"}"#;
         let info = parse_update_info(body, "1.1.9").unwrap();
@@ -404,13 +396,25 @@ mod tests {
             parse_update_info(body, "1.0.0").unwrap().latest_version,
             "1.2.0"
         );
+        assert!(!parse_update_info(body, "2.0.0").unwrap().is_newer);
     }
 
     #[test]
     fn parse_update_info_rejects_invalid_response() {
-        assert!(parse_update_info(r#"{"download_url":"u"}"#, "1.0.0").is_err());
-        assert!(parse_update_info(r#"{"tag_name":"v1.0.0"}"#, "1.0.0").is_err());
-        assert!(parse_update_info("not json", "1.0.0").is_err());
+        for (body, field) in [
+            (r#"{"download_url":"u"}"#, "tag_name"),
+            (r#"{"tag_name":"v1.0.0"}"#, "download_url"),
+        ] {
+            let error = parse_update_info(body, "1.0.0").err().unwrap();
+            assert!(error.to_string().contains(field), "{error}");
+        }
+        let error = parse_update_info("not json", "1.0.0").err().unwrap();
+        assert!(
+            error
+                .downcast_ref::<serde_json::Error>()
+                .unwrap()
+                .is_syntax()
+        );
     }
 
     #[test]

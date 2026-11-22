@@ -258,7 +258,14 @@ mod tests {
 
     #[test]
     fn bitmap_info_header_size() {
-        assert_eq!(std::mem::size_of::<BitmapInfoHeader>(), 40);
+        use std::mem::{offset_of, size_of};
+
+        assert_eq!(size_of::<BitmapInfoHeader>(), 40);
+        assert_eq!(offset_of!(BitmapInfoHeader, bi_width), 4);
+        assert_eq!(offset_of!(BitmapInfoHeader, bi_height), 8);
+        assert_eq!(offset_of!(BitmapInfoHeader, bi_bit_count), 14);
+        assert_eq!(offset_of!(BitmapInfoHeader, bi_compression), 16);
+        assert_eq!(offset_of!(BitmapInfoHeader, bi_clr_used), 32);
     }
 
     #[test]

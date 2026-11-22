@@ -286,17 +286,29 @@ mod tests {
                 );
             }
             let buffers = std::sync::RwLock::new(contents);
-            assert!(source.read_bytes(&manager, &buffers).is_err());
+            let missing_index = "オンデマンド取得用のエントリ番号がない";
+            assert_eq!(
+                source
+                    .read_bytes(&manager, &buffers)
+                    .unwrap_err()
+                    .to_string(),
+                missing_index
+            );
             for synchronous in [false, true] {
+                let result = crate::image::decode_source(
+                    &source,
+                    &crate::test_helpers::test_decoder(),
+                    &manager,
+                    &buffers,
+                    synchronous,
+                );
+                let Err(error) = result else {
+                    panic!("missing index accepted");
+                };
                 assert!(
-                    crate::image::decode_source(
-                        &source,
-                        &crate::test_helpers::test_decoder(),
-                        &manager,
-                        &buffers,
-                        synchronous,
-                    )
-                    .is_err()
+                    error
+                        .chain()
+                        .any(|cause| cause.to_string() == missing_index)
                 );
             }
 
@@ -313,7 +325,12 @@ mod tests {
             if let FileSource::ArchiveEntry { entry_index, .. } = &mut invalid {
                 *entry_index = Some(9);
             }
-            assert!(invalid.read_bytes(&manager, &buffers).is_err());
+            let error = invalid.read_bytes(&manager, &buffers).unwrap_err();
+            assert!(
+                error
+                    .chain()
+                    .any(|cause| cause.to_string() == "エントリが見つからない: index=9")
+            );
         }
 
         let extracted = dir.join("extracted.png");
@@ -443,8 +460,16 @@ mod tests {
 
     #[test]
     fn from_path_nonexistent() {
-        let result = FileInfo::from_path(Path::new("nonexistent_file_xyz.png"));
-        assert!(result.is_err());
+        let dir = crate::test_helpers::TempDir::new("missing_image");
+        let path = dir.join("missing.png");
+        let Err(error) = FileInfo::from_path(&path) else {
+            panic!("missing file accepted");
+        };
+        assert_eq!(
+            error.downcast_ref::<std::io::Error>().unwrap().kind(),
+            std::io::ErrorKind::NotFound
+        );
+        assert!(error.to_string().contains(&path.display().to_string()));
     }
 
     #[test]
@@ -593,7 +618,21 @@ mod tests {
         let temp_path = dir.join("unrelated.tmp");
         let png = crate::test_helpers::create_1x1_white_png();
         std::fs::write(&image_path, &png).unwrap();
-        std::fs::write(&temp_path, &png).unwrap();
+        let extracted = image::RgbaImage::from_pixel(1, 1, image::Rgba([0, 0, 0, 255]));
+        let archived = image::RgbaImage::from_pixel(1, 1, image::Rgba([255, 0, 0, 255]));
+        let extracted = crate::image::encode_png(&crate::image::DecodedImage {
+            data: extracted.into_raw(),
+            width: 1,
+            height: 1,
+        })
+        .unwrap();
+        let archived = crate::image::encode_png(&crate::image::DecodedImage {
+            data: archived.into_raw(),
+            width: 1,
+            height: 1,
+        })
+        .unwrap();
+        std::fs::write(&temp_path, &extracted).unwrap();
         let archive = dir.join("archive.zip");
         let mut writer = ::zip::ZipWriter::new(std::fs::File::create(&archive).unwrap());
         writer
@@ -602,7 +641,7 @@ mod tests {
                 ::zip::write::SimpleFileOptions::default(),
             )
             .unwrap();
-        writer.write_all(&png).unwrap();
+        writer.write_all(&archived).unwrap();
         writer.finish().unwrap();
         let pdf_path = dir.join("document.pdf");
         std::fs::write(&pdf_path, crate::test_helpers::minimal_pdf()).unwrap();
@@ -627,12 +666,15 @@ mod tests {
                 entry_index: Some(0),
             },
         ];
-        for (index, source) in sources.iter().enumerate() {
+        let zip_before = std::fs::read(&archive).unwrap();
+        for (index, (source, expected)) in
+            sources.iter().zip([png, extracted, archived]).enumerate()
+        {
             assert!(source.can_copy());
             assert_eq!(source.can_delete(), index == 0);
             assert_eq!(source.can_move(), index == 0);
             assert_eq!(source.filename_hint(), "original.png");
-            assert_eq!(source.read_bytes(&manager, &buffers).unwrap(), png);
+            assert_eq!(source.read_bytes(&manager, &buffers).unwrap(), expected);
         }
         let page = FileSource::PdfPage {
             pdf_path,
@@ -644,6 +686,7 @@ mod tests {
         assert_eq!((rendered.width(), rendered.height()), (6, 3));
         assert_eq!(page.default_save_name(), "document_page1.png");
         assert!(!page.can_move());
+        assert_eq!(std::fs::read(&archive).unwrap(), zip_before);
         let pending = FileSource::PendingContainer {
             container_path: archive,
         };

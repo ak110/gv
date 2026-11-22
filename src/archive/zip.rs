@@ -215,15 +215,21 @@ mod tests {
         let reg = Arc::new(ExtensionRegistry::new());
         let buffer = create_test_zip_buffer(&[
             ("a.jpg", b"jpg-data"),
-            ("b.png", b"png-data"),
             ("c.txt", b"text"),
+            ("b.png", b"png-data"),
         ]);
         let entries = ZipHandler::list_images_from_buffer(&buffer, &reg).unwrap();
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].file_name, "a.jpg");
         assert_eq!(entries[0].entry_index, 0);
         assert_eq!(entries[1].file_name, "b.png");
-        assert_eq!(entries[1].entry_index, 1);
+        assert_eq!(entries[1].entry_index, 2);
+        for (entry, expected) in entries.iter().zip([b"jpg-data", b"png-data"]) {
+            assert_eq!(
+                ZipHandler::read_entry_from_buffer_at(&buffer, entry.entry_index).unwrap(),
+                expected
+            );
+        }
     }
 
     #[test]
@@ -261,16 +267,8 @@ mod tests {
     }
 
     #[test]
-    fn decode_cp932_name() {
-        let cp932: &[u8] = &[0x89, 0xE6, 0x91, 0x9C, b'.', b'j', b'p', b'g'];
-        assert_eq!(decode_zip_entry_name(cp932), "画像.jpg");
-    }
-
-    #[test]
-    fn decode_invalid_bytes_falls_back_to_lossy() {
-        let bytes: &[u8] = &[0xFF, 0xFE, 0xFD];
-        let s = decode_zip_entry_name(bytes);
-        assert!(!s.is_empty());
+    fn decode_non_utf8_halfwidth_kana_uses_cp932() {
+        assert_eq!(decode_zip_entry_name(b"a\xA6.png"), "aｦ.png");
     }
 
     #[test]

@@ -197,25 +197,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_config_values() {
-        let config = Config::default();
-        assert_eq!(config.display.auto_scale, DisplayModeConfig::Fit);
-        assert_eq!(config.display.fixed_scale, 1.0);
-        assert_eq!(config.display.margin, 64.0);
-        assert_eq!(config.display.alpha_background, AlphaBackground::Checker);
-        assert_eq!(config.prefetch.cache_base_width, 1024);
-        assert_eq!(config.prefetch.cache_base_height, 1536);
-        assert_eq!(config.list.default_sort, SortOrder::Natural);
-        assert!(!config.window.always_on_top);
-        assert!(!config.window.keep_titlebar_in_fullscreen);
-        assert_eq!(config.susie.plugin_dir, "spi");
-    }
-
-    #[test]
     fn parse_full_toml() {
         let toml_str = r#"
 [display]
-auto_scale = "fit"
+auto_scale = "fixed"
 fixed_scale = 2.0
 margin = 10.0
 alpha_background = "black"
@@ -225,7 +210,7 @@ cache_base_width = 800
 cache_base_height = 600
 
 [list]
-default_sort = "natural"
+default_sort = "size"
 
 [window]
 always_on_top = true
@@ -235,12 +220,13 @@ keep_titlebar_in_fullscreen = true
 plugin_dir = "plugins"
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
-        assert_eq!(config.display.auto_scale, DisplayModeConfig::Fit);
+        assert_eq!(config.display.auto_scale, DisplayModeConfig::Fixed);
         assert_eq!(config.display.fixed_scale, 2.0);
         assert_eq!(config.display.margin, 10.0);
         assert_eq!(config.display.alpha_background, AlphaBackground::Black);
         assert_eq!(config.prefetch.cache_base_width, 800);
-        assert_eq!(config.list.default_sort, SortOrder::Natural);
+        assert_eq!(config.prefetch.cache_base_height, 600);
+        assert_eq!(config.list.default_sort, SortOrder::Size);
         assert!(config.window.always_on_top);
         assert!(config.window.keep_titlebar_in_fullscreen);
         assert_eq!(config.susie.plugin_dir, "plugins");
@@ -332,15 +318,21 @@ default_sort = "bogus"
             "{}",
             String::from_utf8_lossy(&output.stdout)
         );
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(
+            stdout.contains("test config::tests::invalid_enum_warning_child ... ok"),
+            "{stdout}"
+        );
         let stderr = String::from_utf8(output.stderr).unwrap();
         for (field, default) in [
             ("auto_scale", "fit"),
             ("alpha_background", "checker"),
             ("default_sort", "natural"),
         ] {
-            assert!(stderr.contains(field), "{stderr}");
             assert!(
-                stderr.contains(&format!("デフォルト ({default})")),
+                stderr.lines().any(|line| line.contains(field)
+                    && line.contains("'invalid'")
+                    && line.contains(&format!("デフォルト ({default})"))),
                 "{stderr}"
             );
         }
@@ -360,8 +352,8 @@ default_sort = "bogus"
 
     #[test]
     fn prefetch_base_image_size() {
-        let p = PrefetchConfig::default();
-        assert_eq!(p.base_image_size(), 1024 * 1536 * 4);
+        let config: Config = toml::from_str(include_str!("../ぐらびゅ.default.toml")).unwrap();
+        assert_eq!(config.prefetch.base_image_size(), 6_291_456);
     }
 
     #[test]
@@ -380,36 +372,6 @@ default_sort = "bogus"
             cache_base_height: 0,
         };
         assert_eq!(p.base_image_size(), 4);
-    }
-
-    #[test]
-    fn invalid_auto_scale_fallback() {
-        let toml_str = r#"
-[display]
-auto_scale = "zoom"
-"#;
-        let config: Config = toml::from_str(toml_str).unwrap();
-        assert_eq!(config.display.auto_scale, DisplayModeConfig::Fit);
-    }
-
-    #[test]
-    fn invalid_alpha_background_fallback() {
-        let toml_str = r#"
-[display]
-alpha_background = "red"
-"#;
-        let config: Config = toml::from_str(toml_str).unwrap();
-        assert_eq!(config.display.alpha_background, AlphaBackground::Checker);
-    }
-
-    #[test]
-    fn invalid_sort_order_fallback() {
-        let toml_str = r#"
-[list]
-default_sort = "random"
-"#;
-        let config: Config = toml::from_str(toml_str).unwrap();
-        assert_eq!(config.list.default_sort, SortOrder::Natural);
     }
 
     #[test]
@@ -476,24 +438,18 @@ default_sort = "random"
     #[test]
     fn empty_toml_uses_all_defaults() {
         let config: Config = toml::from_str("").unwrap();
-        let default = Config::default();
-        assert_eq!(config.display.auto_scale, default.display.auto_scale);
-        assert_eq!(config.display.fixed_scale, default.display.fixed_scale);
-        assert_eq!(config.display.margin, default.display.margin);
-        assert_eq!(
-            config.prefetch.cache_base_width,
-            default.prefetch.cache_base_width
-        );
-        assert_eq!(
-            config.prefetch.cache_base_height,
-            default.prefetch.cache_base_height
-        );
-        assert_eq!(config.list.default_sort, default.list.default_sort);
+        let distributed: toml::Value =
+            toml::from_str(include_str!("../ぐらびゅ.default.toml")).unwrap();
+        assert_eq!(toml::Value::try_from(config).unwrap(), distributed);
     }
 
     #[test]
     fn load_from_nonexistent_file_returns_error() {
-        let result = Config::load_from(Path::new("nonexistent_file_xyz.toml"));
-        assert!(result.is_err());
+        let dir = crate::test_helpers::TempDir::new("missing_config");
+        let error = Config::load_from(&dir.join("missing.toml")).unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<std::io::Error>().unwrap().kind(),
+            std::io::ErrorKind::NotFound
+        );
     }
 }

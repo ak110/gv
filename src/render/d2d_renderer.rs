@@ -820,7 +820,9 @@ mod tests {
 
     #[test]
     fn fir_resize_shrink_output_size() {
-        let src: Vec<u8> = [100, 150, 200, 255].repeat(16);
+        let src = [[200, 40, 80, 255].repeat(2), [40, 200, 80, 255].repeat(2)]
+            .concat()
+            .repeat(4);
         let result = fir_resize(
             &src,
             4,
@@ -831,11 +833,21 @@ mod tests {
         )
         .unwrap();
         assert_eq!(result.len(), 2 * 2 * 4);
+        for row in result.chunks_exact(2 * 4) {
+            let left = &row[..4];
+            let right = &row[row.len() - 4..];
+            assert!(
+                i16::from(left[0]) - i16::from(left[1]) > 40
+                    && i16::from(right[1]) - i16::from(right[0]) > 40
+            );
+            assert!(left[2].abs_diff(80) <= 1 && right[2].abs_diff(80) <= 1);
+            assert_eq!((left[3], right[3]), (255, 255));
+        }
     }
 
     #[test]
     fn fir_resize_enlarge_output_size() {
-        let src: Vec<u8> = [100, 150, 200, 255].repeat(4);
+        let src = [200, 40, 80, 255, 40, 200, 80, 255].repeat(2);
         let result = fir_resize(
             &src,
             2,
@@ -846,6 +858,16 @@ mod tests {
         )
         .unwrap();
         assert_eq!(result.len(), 4 * 4 * 4);
+        for row in result.chunks_exact(4 * 4) {
+            let left = &row[..4];
+            let right = &row[row.len() - 4..];
+            assert!(
+                i16::from(left[0]) - i16::from(left[1]) > 40
+                    && i16::from(right[1]) - i16::from(right[0]) > 40
+            );
+            assert!(left[2].abs_diff(80) <= 1 && right[2].abs_diff(80) <= 1);
+            assert_eq!((left[3], right[3]), (255, 255));
+        }
     }
 
     #[test]
@@ -899,9 +921,21 @@ mod tests {
 
     #[test]
     fn fir_resize_multistage_output_size() {
-        let src: Vec<u8> = [100, 150, 200, 255].repeat(16 * 16);
+        let src = [[200, 40, 80, 255].repeat(8), [40, 200, 80, 255].repeat(8)]
+            .concat()
+            .repeat(16);
         let result = fir_resize_multistage(&src, 16, 16, 2, 2).unwrap();
         assert_eq!(result.len(), 2 * 2 * 4);
+        for row in result.chunks_exact(2 * 4) {
+            let left = &row[..4];
+            let right = &row[row.len() - 4..];
+            assert!(
+                i16::from(left[0]) - i16::from(left[1]) > 40
+                    && i16::from(right[1]) - i16::from(right[0]) > 40
+            );
+            assert!(left[2].abs_diff(80) <= 1 && right[2].abs_diff(80) <= 1);
+            assert_eq!((left[3], right[3]), (255, 255));
+        }
     }
 
     #[test]

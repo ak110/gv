@@ -539,39 +539,52 @@ mod tests {
     #[test]
     fn unsupported_standard_formats_need_plugin_registration() {
         let dir = crate::test_helpers::TempDir::new("supported_formats");
-        let unsupported = [".tiff", ".tif", ".tga", ".ico", ".cur"];
-        for extension in crate::image::StandardDecoder::extensions().chain(unsupported) {
-            std::fs::write(dir.join(format!("image{extension}")), b"fixture").unwrap();
-        }
-        let registry = std::sync::Arc::new(crate::extension_registry::ExtensionRegistry::new());
-        let mut list = super::FileList::new(registry.clone());
-        list.populate_from_folder(dir.path()).unwrap();
-        assert_eq!(
-            list.len(),
-            crate::image::StandardDecoder::extensions().count()
+        let standard = [
+            "image.bmp",
+            "image.gif",
+            "image.jpeg",
+            "image.jpg",
+            "image.png",
+            "image.webp",
+        ];
+        create_test_files(&dir, &standard);
+        create_test_files(
+            &dir,
+            &[
+                "image.tiff",
+                "image.tif",
+                "image.tga",
+                "image.ico",
+                "image.cur",
+            ],
         );
-        for file in list.files() {
-            assert!(
-                !unsupported
-                    .iter()
-                    .any(|extension| file.file_name.ends_with(extension))
-            );
+        for registered in [false, true] {
+            let mut registry = crate::extension_registry::ExtensionRegistry::new();
+            let mut expected = standard.to_vec();
+            if registered {
+                registry.register_image_extensions(&[".tiff".to_string()]);
+                expected.push("image.tiff");
+            }
+            expected.sort_unstable();
+            let mut list = FileList::new(std::sync::Arc::new(registry));
+            list.populate_from_folder(&dir).unwrap();
+            let mut names = names(&list);
+            names.sort_unstable();
+            assert_eq!(names, expected);
         }
-        let mut plugin_registry = crate::extension_registry::ExtensionRegistry::new();
-        plugin_registry.register_image_extensions(&[".tiff".to_string()]);
-        let mut list = super::FileList::new(std::sync::Arc::new(plugin_registry));
-        list.populate_from_folder(dir.path()).unwrap();
-        assert!(
-            list.files()
-                .iter()
-                .any(|file| file.file_name == "image.tiff")
-        );
     }
     use super::*;
     use crate::test_helpers::{
         create_test_files, make_archive_file_info, make_file_info_with_source,
         make_pending_container_info, test_registry,
     };
+
+    fn names(list: &FileList) -> Vec<&str> {
+        list.files()
+            .iter()
+            .map(|file| file.file_name.as_str())
+            .collect()
+    }
 
     #[test]
     fn populate_filters_by_extension() {
@@ -581,7 +594,7 @@ mod tests {
         let mut fl = FileList::new(test_registry());
         fl.populate_from_folder(&dir).unwrap();
 
-        assert_eq!(fl.len(), 3);
+        assert_eq!(names(&fl), ["a.jpg", "b.png", "d.bmp"]);
     }
 
     #[test]
@@ -673,15 +686,16 @@ mod tests {
 
     #[test]
     fn sort_preserves_current_position() {
-        let dir = crate::test_helpers::TempDir::new("fl_sortpreserve");
-        create_test_files(&dir, &["c.png", "a.png", "b.png"]);
-
         let mut fl = FileList::new(test_registry());
-        fl.populate_from_folder(&dir).unwrap();
-        fl.set_current_by_path(&dir.join("b.png"));
+        for name in ["c.png", "b.png", "a.png"] {
+            fl.push(make_archive_file_info("order.zip", name, name));
+        }
+        fl.navigate_to(0);
 
         fl.sort(SortOrder::Name);
-        assert_eq!(fl.current().unwrap().file_name, "b.png");
+        assert_eq!(names(&fl), ["a.png", "b.png", "c.png"]);
+        assert_eq!(fl.current_index(), Some(2));
+        assert_eq!(fl.current().unwrap().file_name, "c.png");
     }
 
     #[test]
@@ -751,13 +765,12 @@ mod tests {
         fl.populate_from_folder(&dir).unwrap();
         fl.navigate_to(2);
 
-        fl.remove_at(0);
-        assert_eq!(fl.current_index(), Some(1));
-        assert_eq!(fl.len(), 2);
-
-        fl.remove_at(1);
-        assert_eq!(fl.current_index(), Some(0));
-        assert_eq!(fl.len(), 1);
+        assert_eq!(fl.remove_at(0).unwrap().file_name, "a.png");
+        assert_eq!(names(&fl), ["b.png", "c.png"]);
+        assert_eq!(fl.current().unwrap().file_name, "c.png");
+        assert_eq!(fl.remove_at(1).unwrap().file_name, "c.png");
+        assert_eq!(names(&fl), ["b.png"]);
+        assert_eq!(fl.current().unwrap().file_name, "b.png");
     }
 
     #[test]
@@ -803,24 +816,17 @@ mod tests {
 
     #[test]
     fn sorted_navigate_forward_backward() {
-        let dir = crate::test_helpers::TempDir::new("fl_sortnav");
-        create_test_files(&dir, &["c.png", "a.png", "b.png"]);
-
         let mut fl = FileList::new(test_registry());
-        fl.populate_from_folder(&dir).unwrap();
+        for name in ["c.png", "b.png", "a.png"] {
+            fl.push(make_archive_file_info("order.zip", name, name));
+        }
         fl.navigate_to(0);
 
-        assert!(fl.sorted_navigate(1, SortOrder::Natural));
-        assert_eq!(fl.current().unwrap().file_name, "b.png");
-
-        assert!(fl.sorted_navigate(1, SortOrder::Natural));
-        assert_eq!(fl.current().unwrap().file_name, "c.png");
-
-        assert!(fl.sorted_navigate(1, SortOrder::Natural));
-        assert_eq!(fl.current().unwrap().file_name, "a.png");
-
-        assert!(fl.sorted_navigate(-1, SortOrder::Natural));
-        assert_eq!(fl.current().unwrap().file_name, "c.png");
+        for (direction, expected) in [(1, "a.png"), (1, "b.png"), (1, "c.png"), (-1, "b.png")] {
+            assert!(fl.sorted_navigate(direction, SortOrder::Natural));
+            assert_eq!(fl.current().unwrap().file_name, expected);
+            assert_eq!(names(&fl), ["c.png", "b.png", "a.png"]);
+        }
     }
 
     #[test]
@@ -833,7 +839,10 @@ mod tests {
         fl.navigate_to(0);
 
         assert!(!fl.navigate_next_mark());
+        assert_eq!(fl.current().unwrap().file_name, "a.png");
         assert!(!fl.navigate_prev_mark());
+        assert_eq!(fl.current().unwrap().file_name, "a.png");
+        assert!(fl.marked_indices().is_empty());
     }
 
     #[test]
@@ -999,7 +1008,9 @@ mod tests {
         fl.navigate_to(0);
 
         assert!(!fl.sorted_navigate(1, SortOrder::Natural));
+        assert_eq!(fl.current().unwrap().file_name, "only.png");
         assert!(!fl.sorted_navigate(-1, SortOrder::Natural));
+        assert_eq!(fl.current().unwrap().file_name, "only.png");
     }
 
     #[test]
@@ -1040,10 +1051,12 @@ mod tests {
 
         fl.push(make_archive_file_info("only.zip", "x1.png", "x1.png"));
         fl.push(make_archive_file_info("only.zip", "x2.png", "x2.png"));
-        fl.navigate_to(0);
+        fl.navigate_to(1);
 
         assert!(!fl.navigate_next_folder());
+        assert_eq!(fl.current().unwrap().file_name, "x2.png");
         assert!(!fl.navigate_prev_folder());
+        assert_eq!(fl.current().unwrap().file_name, "x2.png");
     }
 
     #[test]
@@ -1099,6 +1112,7 @@ mod tests {
         fl.mark_failed(1);
 
         assert!(!fl.navigate_relative(1));
+        assert_eq!(fl.current().unwrap().file_name, "a.png");
     }
 
     #[test]

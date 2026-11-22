@@ -92,7 +92,11 @@ def _check_prepare_resume(repository: pathlib.Path) -> None:
     first = _prepare_cli(repository, source)
     assert first == {"version": "1.2.4", "tag": "v1.2.4", "rerun": "false"}
     after = tomllib.loads((repository / "Cargo.lock").read_text(encoding="utf-8"))
-    before["package"][0]["version"] = "1.2.4"
+    next(
+        package
+        for package in before["package"]
+        if package["name"] == "gv" and "source" not in package
+    )["version"] = "1.2.4"
     assert before == after
     subprocess.run(
         ["cargo", "metadata", "--locked", "--offline", "--format-version", "1"],
@@ -128,6 +132,7 @@ def test_prepare_rejects_unrelated_existing_tag() -> None:
         _git(repository, "add", "Cargo.toml", "Cargo.lock")
         _git(repository, "commit", "-m", "別の起動元からのリリース")
         _git(repository, "tag", "v1.2.4")
+        original_tag = _git(repository, "rev-parse", "v1.2.4")
         _git(repository, "checkout", "--detach", source)
         with (
             contextlib.chdir(repository),
@@ -136,18 +141,44 @@ def test_prepare_rejects_unrelated_existing_tag() -> None:
             ),
         ):
             release.prepare(source, "PATCH")
+        assert _git(repository, "rev-parse", "v1.2.4") == original_tag
         assert _git(repository, "rev-parse", "HEAD") == source
         assert _git(repository, "status", "--porcelain") == ""
 
 
 def test_prepare_preserves_minor_and_major_updates() -> None:
+    def fake_run(args: tuple[str, ...], **_kwargs: typing.Any) -> types.SimpleNamespace:
+        match args:
+            case ("git", "rev-parse", *rest):
+                assert rest in [
+                    ["HEAD"],
+                    ["--verify", "--end-of-options", "source^{commit}"],
+                ]
+                stdout = "source"
+            case ("git", "show", "source:Cargo.toml"):
+                stdout = '[package]\nname = "gv"\nversion = "1.2.3"\n'
+            case ("git", "tag", "--list") | ("cargo", "update", "--workspace"):
+                stdout = ""
+            case _:
+                raise AssertionError(args)
+        return types.SimpleNamespace(stdout=stdout)
+
     for bump, version in [("MINOR", "1.3.0"), ("MAJOR", "2.0.0")]:
-        with tempfile.TemporaryDirectory(prefix="gv_release_bump_") as work:
-            repository = _repository(pathlib.Path(work))
-            source = _git(repository, "rev-parse", "HEAD")
-            result = _prepare_cli(repository, source, bump)
-            assert result["version"] == version
-            assert result["tag"] == f"v{version}"
+        with (
+            tempfile.TemporaryDirectory(prefix="gv_release_bump_") as work,
+            contextlib.chdir(work),
+            unittest.mock.patch.object(subprocess, "run", fake_run),
+        ):
+            pathlib.Path("Cargo.toml").write_text(
+                'version = "1.2.3"\n', encoding="utf-8"
+            )
+            pathlib.Path("Cargo.lock").write_text("package = []\n", encoding="utf-8")
+            result = release.prepare("source", bump)
+            assert result == {
+                "version": version,
+                "tag": f"v{version}",
+                "rerun": "false",
+            }
 
 
 def test_publish_completes_missing_asset_without_overwriting() -> None:
@@ -173,6 +204,14 @@ def _check_publish(tmp_path: pathlib.Path, has_release: bool, has_asset: bool) -
             )
             stdout = json.dumps({"assets": assets})
         elif args[2] in {"create", "upload"}:
+            assert args[3:7] == ("v1.2.4", str(asset), "--repo", "ak110/gv") or (
+                args[2] == "create"
+                and args[3:8]
+                == ("v1.2.4", str(asset), "--verify-tag", "--repo", "ak110/gv")
+            )
+            assert "--clobber" not in args
+            assert not state["asset"]
+            assert state["release"] == (args[2] == "upload")
             writes.append(args[2])
             state.update(release=True, asset=True)
             stdout = ""
@@ -184,7 +223,7 @@ def _check_publish(tmp_path: pathlib.Path, has_release: bool, has_asset: bool) -
         release.publish("ak110/gv", "v1.2.4", asset, tmp_path / "notes.md")
         release.publish("ak110/gv", "v1.2.4", asset, tmp_path / "notes.md")
     assert state == {"release": True, "asset": True}
-    assert len(writes) == int(not has_asset)
+    assert writes == ([] if has_asset else ["upload" if has_release else "create"])
 
 
 def test_publish_does_not_treat_network_failure_as_missing_release() -> None:
@@ -199,28 +238,62 @@ def test_publish_does_not_treat_network_failure_as_missing_release() -> None:
         asset.write_bytes(b"distribution")
         with (
             unittest.mock.patch.object(subprocess, "run", fail_run),
-            unittest.TestCase().assertRaises(subprocess.CalledProcessError),
+            unittest.TestCase().assertRaises(subprocess.CalledProcessError) as raised,
         ):
             release.publish(
                 "ak110/gv", "v1.2.4", asset, pathlib.Path(work) / "notes.md"
             )
+    assert raised.exception.returncode == 1
+    assert raised.exception.stderr == "通信失敗"
     assert len(calls) == 1
     assert calls[0][1] == "api"
 
 
 def test_publish_requires_asset_after_upload() -> None:
-
-    def fake_run(args: tuple[str, ...], **_kwargs: typing.Any) -> types.SimpleNamespace:
-        stdout = "v1.2.4" if args[1] == "api" else json.dumps({"assets": []})
-        return types.SimpleNamespace(stdout=stdout)
-
     with tempfile.TemporaryDirectory(prefix="gv_release_verify_") as work:
         asset = pathlib.Path(work) / "gv-v1.2.4.zip"
         asset.write_bytes(b"distribution")
-        with (
-            unittest.mock.patch.object(subprocess, "run", fake_run),
-            unittest.TestCase().assertRaisesRegex(ValueError, "ZIPを確認できない"),
-        ):
-            release.publish(
-                "ak110/gv", "v1.2.4", asset, pathlib.Path(work) / "notes.md"
+        tag = "v1.2.4"
+        repository = "ak110/gv"
+        for after_upload in ([], [{"name": asset.name, "size": 0}]):
+            api = (
+                "gh",
+                "api",
+                "--paginate",
+                "repos/ak110/gv/releases",
+                "--jq",
+                ".[].tag_name",
             )
+            view = (
+                "gh",
+                "release",
+                "view",
+                tag,
+                "--repo",
+                repository,
+                "--json",
+                "assets",
+            )
+            upload = ("gh", "release", "upload", tag, str(asset), "--repo", repository)
+            with (
+                unittest.mock.patch.object(
+                    subprocess,
+                    "run",
+                    side_effect=[
+                        types.SimpleNamespace(stdout=tag),
+                        types.SimpleNamespace(stdout='{"assets": []}'),
+                        types.SimpleNamespace(stdout=""),
+                        types.SimpleNamespace(
+                            stdout=json.dumps({"assets": after_upload})
+                        ),
+                    ],
+                ) as run,
+                unittest.TestCase().assertRaisesRegex(ValueError, "ZIPを確認できない"),
+            ):
+                release.publish(repository, tag, asset, pathlib.Path(work) / "notes.md")
+            assert [call.args[0] for call in run.call_args_list] == [
+                api,
+                view,
+                upload,
+                view,
+            ]

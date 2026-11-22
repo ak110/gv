@@ -304,21 +304,32 @@ mod tests {
         let destination = dir.join("保存先.dat");
         std::fs::write(&destination, b"original").unwrap();
 
-        let result = save_atomic(&destination, |file| {
+        let err = save_atomic(&destination, |file| {
             file.write_all(b"partial")?;
-            anyhow::bail!("書き込み途中の障害");
-        });
-        assert!(result.is_err());
+            Err(std::io::Error::from(std::io::ErrorKind::Interrupted).into())
+        })
+        .unwrap_err();
+        assert_eq!(
+            err.downcast_ref::<std::io::Error>().unwrap().kind(),
+            std::io::ErrorKind::Interrupted
+        );
         assert_eq!(std::fs::read(&destination).unwrap(), b"original");
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
 
         let locked = OpenOptions::new()
             .read(true)
             .share_mode(0)
             .open(&destination)
             .unwrap();
-        assert!(write_atomic(&destination, b"replacement").is_err());
+        let err = write_atomic(&destination, b"replacement").unwrap_err();
         drop(locked);
+        assert!(err.to_string().starts_with("保存先を置換できませんでした:"));
+        assert_eq!(
+            err.downcast_ref::<std::io::Error>().unwrap().raw_os_error(),
+            Some(windows::Win32::Foundation::ERROR_SHARING_VIOLATION.0 as i32)
+        );
         assert_eq!(std::fs::read(&destination).unwrap(), b"original");
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
         write_atomic(&destination, b"replacement").unwrap();
         assert_eq!(std::fs::read(&destination).unwrap(), b"replacement");
 
@@ -326,8 +337,13 @@ mod tests {
         copy_atomic(&destination, &copy).unwrap();
         copy_atomic(&copy, &copy).unwrap();
         assert_eq!(std::fs::read(&copy).unwrap(), b"replacement");
-        assert!(copy_atomic(&dir.join("missing"), &copy).is_err());
+        let err = copy_atomic(&dir.join("missing"), &copy).unwrap_err();
+        assert_eq!(
+            err.downcast_ref::<std::io::Error>().unwrap().kind(),
+            std::io::ErrorKind::NotFound
+        );
         assert_eq!(std::fs::read(&copy).unwrap(), b"replacement");
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 2);
         let original_permissions = std::fs::metadata(&destination).unwrap().permissions();
         let mut readonly_permissions = original_permissions.clone();
         readonly_permissions.set_readonly(true);

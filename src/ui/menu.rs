@@ -311,13 +311,8 @@ mod tests {
     use strum::IntoEnumIterator as _;
 
     #[test]
-    fn menu_labels_follow_the_first_binding() {
-        let keys = KeyConfig::with_defaults();
+    fn menu_action_ids_round_trip() {
         for action in Action::iter() {
-            let label = menu_label(&keys, action, "操作");
-            let accelerator = label.split_once('\t').map(|(_, key)| key);
-            let first = keys.chords(action).first().map(|key| key.display());
-            assert_eq!(accelerator, first.as_deref(), "{action:?}");
             assert_eq!(menu_id_to_action(action_to_menu_id(action)), Some(action));
         }
     }

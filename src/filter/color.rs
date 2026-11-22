@@ -62,24 +62,26 @@ mod tests {
     #[test]
     fn grayscale_strict_bt709() {
         let img = DecodedImage {
-            data: vec![255, 0, 0, 255],
-            width: 1,
+            data: vec![255, 0, 0, 255, 0, 255, 0, 128, 0, 0, 255, 64],
+            width: 3,
             height: 1,
         };
         let result = grayscale_strict(&img, None);
-        assert_eq!(result.data[0], 54);
+        assert_eq!(
+            result.data,
+            [54, 54, 54, 255, 182, 182, 182, 128, 18, 18, 18, 64]
+        );
     }
 
     #[test]
     fn apply_alpha_white_bg() {
         let img = DecodedImage {
-            data: vec![100, 100, 100, 128],
+            data: vec![0, 128, 255, 128],
             width: 1,
             height: 1,
         };
         let result = apply_alpha(&img, None);
-        assert!((result.data[0] as i32 - 177).abs() <= 1);
-        assert_eq!(result.data[3], 255);
+        assert_eq!(result.data, [127, 191, 255, 255]);
     }
 
     #[test]
@@ -92,7 +94,6 @@ mod tests {
             height: 1,
         };
         let result = invert_colors(&img, Some(&region));
-        assert_eq!(result.data[0], 155);
-        assert_eq!(result.data[4], 50);
+        assert_eq!(result.data, [155, 105, 55, 255, 50, 100, 150, 128]);
     }
 }

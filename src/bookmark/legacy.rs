@@ -250,10 +250,14 @@ mod tests {
         assert_eq!(data.index, 1);
         assert!(matches!(
             &data.entries[0],
-            FileSource::PendingContainer { .. }
+            FileSource::PendingContainer { container_path } if container_path == Path::new("vol1.zip")
         ));
-        assert!(matches!(&data.entries[1], FileSource::ArchiveEntry { .. }));
-        assert!(matches!(&data.entries[2], FileSource::ArchiveEntry { .. }));
+        for (source, expected) in data.entries[1..].iter().zip(["01.jpg", "02.jpg"]) {
+            assert!(
+                matches!(source, FileSource::ArchiveEntry { archive, entry, .. }
+                if archive == Path::new("vol2.zip") && entry == expected)
+            );
+        }
     }
 
     #[test]
@@ -284,11 +288,14 @@ mod tests {
 
     #[test]
     fn parse_missing_header() {
-        let text = "current:\r\ntest.jpg\r\nfiles:\r\ntest.jpg\r\ntest2.jpg\r\n";
+        let text = "current:\r\ntest2.jpg\r\nfiles:\r\ntest.jpg\r\ntest2.jpg\r\n";
         let bytes = to_utf16le(text);
         let data = parse_legacy_bookmark_utf16le(&bytes, &test_is_archive);
         assert_eq!(data.entries.len(), 2);
-        assert_eq!(data.index, 0);
+        assert_eq!(data.index, 1);
+        for (source, expected) in data.entries.iter().zip(["test.jpg", "test2.jpg"]) {
+            assert!(matches!(source, FileSource::File(path) if path == Path::new(expected)));
+        }
     }
 
     #[test]
@@ -311,10 +318,10 @@ mod tests {
 
     #[test]
     fn parse_index_matching_case_insensitive() {
-        let text = "[gvbookmark/ver:1]\r\ncurrent:\r\nc:\\Foo.jpg\r\nfiles:\r\nC:\\foo.jpg\r\nC:\\bar.jpg\r\n";
+        let text = "[gvbookmark/ver:1]\r\ncurrent:\r\nc:\\Foo.jpg\r\nfiles:\r\nC:\\bar.jpg\r\nC:\\foo.jpg\r\n";
         let bytes = to_utf16le(text);
         let data = parse_legacy_bookmark_utf16le(&bytes, &test_is_archive);
-        assert_eq!(data.index, 0);
+        assert_eq!(data.index, 1);
     }
 
     #[test]
@@ -328,17 +335,23 @@ mod tests {
 
     #[test]
     fn parse_empty_after_bom() {
-        let data = parse_legacy_bookmark_utf16le(&[], &test_is_archive);
+        let dir = crate::test_helpers::TempDir::new("legacy_bom");
+        let path = dir.join("bookmark.txt");
+        std::fs::write(&path, [0xFF, 0xFE]).unwrap();
+        let data = crate::bookmark::load_bookmark_from_path(&path, &test_is_archive).unwrap();
         assert!(data.entries.is_empty());
         assert_eq!(data.index, 0);
     }
 
     #[test]
     fn parse_odd_byte_count() {
-        let mut bytes = to_utf16le("files:\r\na.jpg\r\n");
+        let mut bytes = to_utf16le("files:\r\na.jpg");
         bytes.push(0xFF);
         let data = parse_legacy_bookmark_utf16le(&bytes, &test_is_archive);
         assert_eq!(data.entries.len(), 1);
+        for (source, expected) in data.entries.iter().zip(["a.jpg"]) {
+            assert!(matches!(source, FileSource::File(path) if path == Path::new(expected)));
+        }
     }
 
     #[test]
@@ -347,6 +360,9 @@ mod tests {
         let bytes = to_utf16le(text);
         let data = parse_legacy_bookmark_utf16le(&bytes, &test_is_archive);
         assert_eq!(data.entries.len(), 2);
+        for (source, expected) in data.entries.iter().zip(["a.jpg", "b.jpg"]) {
+            assert!(matches!(source, FileSource::File(path) if path == Path::new(expected)));
+        }
     }
 
     #[test]
@@ -375,24 +391,6 @@ mod tests {
     fn split_archive_itself_returns_none() {
         let result = split_archive_path(r"C:\data\test.zip", &test_is_archive);
         assert!(result.is_none());
-    }
-
-    #[test]
-    fn classify_archive_body_becomes_pending() {
-        let source = classify_raw_path(r"E:\manga\vol21.zip", &test_is_archive);
-        assert!(matches!(source, FileSource::PendingContainer { .. }));
-    }
-
-    #[test]
-    fn classify_archive_entry() {
-        let source = classify_raw_path(r"E:\manga\vol21.zip\page001.jpg", &test_is_archive);
-        assert!(matches!(source, FileSource::ArchiveEntry { .. }));
-    }
-
-    #[test]
-    fn classify_normal_file() {
-        let source = classify_raw_path(r"C:\images\photo.jpg", &test_is_archive);
-        assert!(matches!(source, FileSource::File(_)));
     }
 
     #[test]
@@ -428,11 +426,11 @@ mod tests {
         assert_eq!(data.entries.len(), 2);
         assert!(matches!(
             &data.entries[0],
-            FileSource::PendingContainer { .. }
+            FileSource::PendingContainer { container_path } if container_path == Path::new(r"E:ol1.zip")
         ));
         assert!(matches!(
             &data.entries[1],
-            FileSource::PendingContainer { .. }
+            FileSource::PendingContainer { container_path } if container_path == Path::new(r"E:ol2.zip")
         ));
     }
 }

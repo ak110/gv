@@ -85,20 +85,49 @@ mod tests {
 
     #[test]
     fn help_uses_loaded_bindings_and_format_definitions() {
-        let keys = KeyConfig::with_defaults();
-        let text = build_help(&keys);
-        for &(action, _) in MAJOR_ACTIONS {
-            for key in keys.key_labels(action) {
-                assert!(text.contains(&key), "{action:?}: {key}");
-            }
+        let dir = crate::test_helpers::TempDir::new("help_formats");
+        let path = dir.join("keys.toml");
+        std::fs::write(
+            &path,
+            "[navigate]\nforward = \"Ctrl+F12\"\nback = \"Shift+F11\"\n",
+        )
+        .unwrap();
+        let text = build_help(&KeyConfig::load(Some(&path)));
+        let (_, sections) = text.split_once("主要キーバインド:\n").unwrap();
+        let (bindings, formats) = sections.split_once("\n対応フォーマット:\n").unwrap();
+        assert!(
+            bindings
+                .lines()
+                .any(|line| line == "  Ctrl+F12  次の画像へ")
+        );
+        assert!(
+            bindings
+                .lines()
+                .any(|line| line == "  Shift+F11  前の画像へ")
+        );
+
+        let mut rows = formats.lines();
+        let images = rows.next().unwrap().strip_prefix("  画像: ").unwrap();
+        let image_names: Vec<_> = images.split(", ").collect();
+        assert_eq!(
+            image_names,
+            crate::image::StandardDecoder::formats()
+                .iter()
+                .map(|&(name, _)| name)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(rows.next(), Some("  ドキュメント: PDF"));
+        let archives = rows.next().unwrap().strip_prefix("  アーカイブ: ").unwrap();
+        let mut formats = archives.strip_suffix(')').unwrap().split("), ");
+        for (name, extensions) in crate::archive::builtin_formats() {
+            let (actual_name, actual_extensions) =
+                formats.next().unwrap().split_once(" (").unwrap();
+            assert_eq!(actual_name, name);
+            assert_eq!(
+                actual_extensions.split(", ").collect::<Vec<_>>(),
+                extensions
+            );
         }
-        for &(name, _) in crate::image::StandardDecoder::formats() {
-            assert!(text.contains(name));
-        }
-        for (_, extensions) in crate::archive::builtin_formats() {
-            for extension in extensions {
-                assert!(text.contains(extension));
-            }
-        }
+        assert_eq!(formats.next(), None);
     }
 }

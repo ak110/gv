@@ -248,7 +248,16 @@ mod tests {
         );
         let data = parse_bookmark(&content);
         assert_eq!(data.index, 2);
-        assert_eq!(format_bookmark(&data.entries, Some(data.index)), content);
+        assert!(matches!(
+            data.entries.as_slice(),
+            [FileSource::File(file), FileSource::ArchiveEntry {
+                archive, entry, on_demand: false, temp_path: None, entry_index: None,
+            }, FileSource::PdfPage { pdf_path, page_index: 2 }]
+                if file == Path::new(r"C:\images\a.jpg")
+                    && archive == Path::new(r"C:\archive.zip")
+                    && entry == "folder/b.png"
+                    && pdf_path == Path::new(r"C:\docs\c.pdf")
+        ));
     }
 
     #[test]
@@ -302,9 +311,8 @@ pdf	C:\docs\test.pdf	2
 
     #[test]
     fn parse_bookmark_index_clamp() {
-        let content = "# index: 999\nfile\ttest.jpg\n";
-        let data = parse_bookmark(content);
-        assert_eq!(data.index, 0);
+        let content = "# index: 999\nfile\ta.jpg\nfile\tb.jpg\nfile\tc.jpg\n";
+        assert_eq!(parse_bookmark(content).index, 2);
     }
 
     #[test]
@@ -332,17 +340,14 @@ pdf	C:\docs\test.pdf	2
 
     #[test]
     fn parse_bookmark_invalid_index_value() {
-        let content = "# index: abc\nfile\ttest.jpg\n";
-        let data = parse_bookmark(content);
-        assert_eq!(data.index, 0);
-        assert_eq!(data.entries.len(), 1);
+        let content = "# index: 1\n# index: abc\nfile\ta.jpg\nfile\tb.jpg\nfile\tc.jpg\n";
+        assert_eq!(parse_bookmark(content).index, 1);
     }
 
     #[test]
     fn parse_bookmark_negative_index() {
-        let content = "# index: -1\nfile\ttest.jpg\n";
-        let data = parse_bookmark(content);
-        assert_eq!(data.index, 0);
+        let content = "# index: -1\nfile\ta.jpg\nfile\tb.jpg\nfile\tc.jpg\n";
+        assert_eq!(parse_bookmark(content).index, 0);
     }
 
     #[test]
@@ -362,10 +367,9 @@ pdf	C:\docs\test.pdf	2
 
     #[test]
     fn parse_bookmark_unknown_type_falls_back_to_file() {
-        let content = "unknown\tpath\textra\n";
-        let data = parse_bookmark(content);
-        assert_eq!(data.entries.len(), 1);
-        assert!(matches!(&data.entries[0], FileSource::File(_)));
+        let data = parse_bookmark("unknown\tpath\textra\n");
+        assert!(matches!(data.entries.as_slice(), [FileSource::File(path)]
+            if path == Path::new("unknown\tpath\textra")));
     }
 
     #[test]
@@ -415,13 +419,16 @@ file	C:\images\c.bmp
         let data = parse_bookmark(content);
         assert_eq!(data.entries.len(), 4);
         assert_eq!(data.index, 2);
-        assert!(matches!(&data.entries[0], FileSource::File(_)));
-        assert!(matches!(&data.entries[1], FileSource::ArchiveEntry { .. }));
         assert!(matches!(
-            &data.entries[2],
-            FileSource::PdfPage { page_index, .. } if *page_index == 3
+            data.entries.as_slice(),
+            [FileSource::File(first), FileSource::ArchiveEntry { archive, entry, .. },
+             FileSource::PdfPage { pdf_path, page_index: 3 }, FileSource::File(last)]
+                if first == Path::new(r"C:\images\a.jpg")
+                    && archive == Path::new(r"C:\archive.zip")
+                    && entry == "inner/b.png"
+                    && pdf_path == Path::new(r"C:\docs\doc.pdf")
+                    && last == Path::new(r"C:\images\c.bmp")
         ));
-        assert!(matches!(&data.entries[3], FileSource::File(_)));
     }
 
     #[test]

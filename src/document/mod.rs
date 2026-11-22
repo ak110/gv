@@ -1407,8 +1407,33 @@ mod tests {
         let registry = Arc::new(ExtensionRegistry::new());
         let decoder = crate::test_helpers::test_decoder();
         let archive_manager = crate::test_helpers::test_archive_manager(&registry);
-        let doc2 = Document::new(sender, decoder, registry, archive_manager, SortOrder::Date);
-        assert_eq!(doc2.file_list().sort_order(), SortOrder::Date);
+        let mut doc2 = Document::new(sender, decoder, registry, archive_manager, SortOrder::Date);
+        let dir = setup_test_dir("date_sort", 2);
+        for (name, seconds) in [
+            ("image_000.png", 1_600_000_100),
+            ("image_001.png", 1_600_000_000),
+        ] {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(dir.join(name))
+                .unwrap()
+                .set_modified(
+                    std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(seconds),
+                )
+                .unwrap();
+        }
+        doc2.open_folder(&dir).unwrap();
+        let names: Vec<_> = doc2
+            .file_list()
+            .files()
+            .iter()
+            .map(|file| file.file_name.as_str())
+            .collect();
+        assert_eq!(names, ["image_001.png", "image_000.png"]);
+        assert_eq!(
+            doc2.file_list().current().unwrap().file_name,
+            "image_001.png"
+        );
     }
 
     #[test]
@@ -1417,43 +1442,82 @@ mod tests {
         let (mut doc, _rx) = test_document();
         doc.open_folder(&dir).unwrap();
 
-        assert_eq!(doc.file_list().len(), 3);
+        let names: Vec<_> = doc
+            .file_list()
+            .files()
+            .iter()
+            .map(|file| file.file_name.as_str())
+            .collect();
+        assert_eq!(names, ["image_000.png", "image_001.png", "image_002.png"]);
+        assert_eq!(doc.current_image().unwrap().data, [255; 4]);
         assert_eq!(doc.file_list().current_index(), Some(0));
+    }
+
+    fn write_test_pixel(path: &Path, rgba: [u8; 4]) {
+        image::RgbaImage::from_pixel(1, 1, image::Rgba(rgba))
+            .save(path)
+            .unwrap();
     }
 
     #[test]
     fn navigate_relative_forward_backward() {
         let dir = setup_test_dir("navigate", 5);
-        let (mut doc, _rx) = test_document();
+        write_test_pixel(&dir.join("image_002.png"), [20, 255, 255, 255]);
+        write_test_pixel(&dir.join("image_001.png"), [10, 255, 255, 255]);
+        let (mut doc, events) = test_document();
         doc.open_folder(&dir).unwrap();
+        events.try_iter().for_each(drop);
 
         assert_eq!(doc.file_list().current_index(), Some(0));
         doc.navigate_relative(2);
         assert_eq!(doc.file_list().current_index(), Some(2));
+        assert!(
+            events
+                .try_iter()
+                .any(|event| matches!(event, DocumentEvent::NavigationChanged { index: 2 }))
+        );
+        assert_eq!(doc.current_image().unwrap().data, [20, 255, 255, 255]);
         doc.navigate_relative(-1);
         assert_eq!(doc.file_list().current_index(), Some(1));
+        assert!(
+            events
+                .try_iter()
+                .any(|event| matches!(event, DocumentEvent::NavigationChanged { index: 1 }))
+        );
+        assert_eq!(doc.current_image().unwrap().data, [10, 255, 255, 255]);
     }
 
     #[test]
     fn navigate_first_last() {
         let dir = setup_test_dir("first_last", 5);
+        write_test_pixel(&dir.join("image_004.png"), [40, 255, 255, 255]);
         let (mut doc, _rx) = test_document();
         doc.open_folder(&dir).unwrap();
 
         doc.navigate_last();
         assert_eq!(doc.file_list().current_index(), Some(4));
+        assert_eq!(doc.current_image().unwrap().data, [40, 255, 255, 255]);
         doc.navigate_first();
         assert_eq!(doc.file_list().current_index(), Some(0));
+        assert_eq!(doc.current_image().unwrap().data, [255, 255, 255, 255]);
     }
 
     #[test]
     fn navigate_to_index() {
         let dir = setup_test_dir("to_index", 5);
-        let (mut doc, _rx) = test_document();
+        write_test_pixel(&dir.join("image_003.png"), [30, 255, 255, 255]);
+        let (mut doc, events) = test_document();
         doc.open_folder(&dir).unwrap();
+        events.try_iter().for_each(drop);
 
         doc.navigate_to(3);
         assert_eq!(doc.file_list().current_index(), Some(3));
+        assert!(
+            events
+                .try_iter()
+                .any(|event| matches!(event, DocumentEvent::NavigationChanged { index: 3 }))
+        );
+        assert_eq!(doc.current_image().unwrap().data, [30, 255, 255, 255]);
     }
 
     #[test]
@@ -1466,17 +1530,26 @@ mod tests {
 
         doc.mark_current();
         assert_eq!(doc.file_list().current_index(), Some(0));
-        assert_eq!(doc.file_list().marked_count(), 1);
+        assert_eq!(doc.file_list().marked_indices(), [0]);
 
         doc.invert_all_marks();
-        let marked = doc.file_list().marked_count();
-        assert!(marked > 0 && marked < 3);
+        assert_eq!(doc.file_list().marked_indices(), [1, 2]);
     }
 
     #[test]
     fn is_pdf_detection() {
-        assert!(Document::is_pdf(Path::new("test.pdf")));
-        assert!(Document::is_pdf(Path::new("test.PDF")));
+        let dir = setup_test_dir("pdf_detection", 0);
+        for name in ["first.pdf", "second.PDF"] {
+            let path = dir.join(name);
+            std::fs::write(&path, crate::test_helpers::minimal_pdf()).unwrap();
+            let (mut doc, _rx) = test_document();
+            doc.open(&path).unwrap();
+            assert!(matches!(
+                &doc.file_list().current().unwrap().source,
+                FileSource::PdfPage { pdf_path, page_index: 0 } if pdf_path.ends_with(name)
+            ));
+            assert!(doc.current_image().is_some());
+        }
         assert!(!Document::is_pdf(Path::new("test.png")));
         assert!(!Document::is_pdf(Path::new("test.pdf.txt")));
     }
@@ -1631,13 +1704,15 @@ mod tests {
         std::fs::rename(dir.join("image_000.png"), dir.join("moved.png")).unwrap();
         doc.remove_indices_from_list(&[0]);
         assert_eq!(doc.file_list().len(), 2);
-        assert_eq!(doc.file_list().marked_count(), 1);
+        assert_eq!(doc.file_list().marked_indices(), [1]);
+        assert_eq!(doc.file_list().files()[0].file_name, "image_001.png");
         assert_eq!(doc.file_list().files()[1].file_name, "image_002.png");
         doc.navigate_to(1);
         std::fs::rename(dir.join("image_002.png"), dir.join("moved2.png")).unwrap();
         doc.remove_current_from_list();
         assert_eq!(doc.file_list().len(), 1);
-        assert_eq!(doc.file_list().marked_count(), 0);
+        assert!(doc.file_list().marked_indices().is_empty());
+        assert_eq!(doc.file_list().files()[0].file_name, "image_001.png");
     }
 
     #[test]
@@ -1653,14 +1728,14 @@ mod tests {
             .unwrap()
             .set_modified(expected)
             .unwrap();
-        let pdf = Document::build_container_entries(&ContainerResult::Pdf {
-            path: path.clone(),
-            page_count: 1,
-        });
         assert_eq!(
-            pdf[0].modified,
-            std::fs::metadata(&path).unwrap().modified().unwrap()
+            std::fs::metadata(&path).unwrap().modified().unwrap(),
+            expected,
+            "fixture"
         );
+        let (mut doc, _rx) = test_document();
+        doc.open(&path).unwrap();
+        assert_eq!(doc.file_list().current().unwrap().modified, expected);
         let image = dir.join("image_000.png");
         let extracted = Document::build_container_entries(&ContainerResult::TempExtracted {
             path: path.clone(),
@@ -1668,18 +1743,6 @@ mod tests {
             entries: vec![(image, "inside.png".into(), expected)],
         });
         assert_eq!(extracted[0].modified, expected);
-        let zipped = Document::build_container_entries(&ContainerResult::Zip {
-            path,
-            buffer: ZipBuffer::Memory(Vec::new()),
-            entries: vec![crate::archive::ArchiveImageEntry {
-                entry_name: "inside.png".into(),
-                file_name: "inside.png".into(),
-                file_size: 4,
-                entry_index: 0,
-                modified: expected,
-            }],
-        });
-        assert_eq!(zipped[0].modified, expected);
     }
 
     #[test]

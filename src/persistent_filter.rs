@@ -144,12 +144,6 @@ mod tests {
     use crate::test_helpers::persistent_filter_image as test_image;
 
     #[test]
-    fn disabled_returns_none() {
-        let pf = PersistentFilter::new();
-        assert!(pf.apply(&test_image()).is_none());
-    }
-
-    #[test]
     fn enabled_with_no_ops_returns_none() {
         let mut pf = PersistentFilter::new();
         pf.toggle_enabled();
@@ -170,10 +164,13 @@ mod tests {
         let mut pf = PersistentFilter::new();
         pf.toggle_enabled();
         pf.add_operation(FilterOperation::InvertColors);
-        pf.add_operation(FilterOperation::InvertColors);
+        pf.add_operation(FilterOperation::Levels {
+            low: 100,
+            high: 200,
+        });
         let img = test_image();
         let result = pf.apply(&img).unwrap();
-        assert_eq!(result.data[0], img.data[0]);
+        assert_eq!(result.data, [140, 13, 0, 255]);
     }
 
     #[test]
@@ -198,13 +195,16 @@ mod tests {
         pf.toggle_enabled();
         pf.add_operation(FilterOperation::GrayscaleStrict);
         pf.add_operation(FilterOperation::InvertColors);
-        pf.add_operation(FilterOperation::Levels { low: 0, high: 255 });
+        pf.add_operation(FilterOperation::Levels {
+            low: 100,
+            high: 200,
+        });
 
-        let result = pf.apply(&test_image()).unwrap();
+        let img = crate::test_helpers::solid_image(1, 1, [0, 180, 0, 77]);
+        let result = pf.apply(&img).unwrap();
         assert_eq!(result.width, 1);
         assert_eq!(result.height, 1);
-        assert_eq!(result.data.len(), 4);
-        assert_eq!(result.data[3], 255);
+        assert_eq!(result.data, [66, 66, 66, 77]);
     }
 
     #[test]
@@ -221,6 +221,7 @@ mod tests {
         let result = pf.apply(&img).unwrap();
         assert_eq!(result.width, 1);
         assert_eq!(result.height, 2);
+        assert_eq!(result.data, [255, 0, 0, 255, 0, 255, 0, 255]);
     }
 
     #[test]
@@ -237,47 +238,61 @@ mod tests {
         let result = pf.apply(&img).unwrap();
         assert_eq!(result.width, 1);
         assert_eq!(result.height, 2);
+        assert_eq!(result.data, [0, 255, 0, 255, 255, 0, 0, 255]);
     }
 
     #[test]
     fn rotate_180_preserves_dimensions() {
         let img = DecodedImage {
-            data: vec![255, 0, 0, 255, 0, 255, 0, 255],
+            data: [10, 20, 30, 40]
+                .into_iter()
+                .flat_map(|r| [r, 0, 0, 255])
+                .collect(),
             width: 2,
-            height: 1,
+            height: 2,
         };
         let mut pf = PersistentFilter::new();
         pf.toggle_enabled();
         pf.add_operation(FilterOperation::Rotate180);
 
         let result = pf.apply(&img).unwrap();
-        assert_eq!(result.width, 2);
-        assert_eq!(result.height, 1);
-        assert_eq!(&result.data[0..4], &[0, 255, 0, 255]);
-        assert_eq!(&result.data[4..8], &[255, 0, 0, 255]);
+        assert_eq!((result.width, result.height), (2, 2));
+        assert_eq!(
+            result.data,
+            [40, 0, 0, 255, 30, 0, 0, 255, 20, 0, 0, 255, 10, 0, 0, 255]
+        );
     }
 
     #[test]
     fn flip_horizontal_swaps_pixels() {
         let img = DecodedImage {
-            data: vec![255, 0, 0, 255, 0, 255, 0, 255],
+            data: [10, 20, 30, 40]
+                .into_iter()
+                .flat_map(|r| [r, 0, 0, 255])
+                .collect(),
             width: 2,
-            height: 1,
+            height: 2,
         };
         let mut pf = PersistentFilter::new();
         pf.toggle_enabled();
         pf.add_operation(FilterOperation::FlipHorizontal);
 
         let result = pf.apply(&img).unwrap();
-        assert_eq!(&result.data[0..4], &[0, 255, 0, 255]);
-        assert_eq!(&result.data[4..8], &[255, 0, 0, 255]);
+        assert_eq!((result.width, result.height), (2, 2));
+        assert_eq!(
+            result.data,
+            [20, 0, 0, 255, 10, 0, 0, 255, 40, 0, 0, 255, 30, 0, 0, 255]
+        );
     }
 
     #[test]
     fn flip_vertical_swaps_rows() {
         let img = DecodedImage {
-            data: vec![255, 0, 0, 255, 0, 0, 255, 255],
-            width: 1,
+            data: [10, 20, 30, 40]
+                .into_iter()
+                .flat_map(|r| [r, 0, 0, 255])
+                .collect(),
+            width: 2,
             height: 2,
         };
         let mut pf = PersistentFilter::new();
@@ -285,22 +300,22 @@ mod tests {
         pf.add_operation(FilterOperation::FlipVertical);
 
         let result = pf.apply(&img).unwrap();
-        assert_eq!(&result.data[0..4], &[0, 0, 255, 255]);
-        assert_eq!(&result.data[4..8], &[255, 0, 0, 255]);
+        assert_eq!((result.width, result.height), (2, 2));
+        assert_eq!(
+            result.data,
+            [30, 0, 0, 255, 40, 0, 0, 255, 10, 0, 0, 255, 20, 0, 0, 255]
+        );
     }
 
     #[test]
     fn gamma_correction_adjusts_brightness() {
         let mut pf = PersistentFilter::new();
         pf.toggle_enabled();
-        pf.add_operation(FilterOperation::Gamma { value: 1.0 });
+        pf.add_operation(FilterOperation::Gamma { value: 2.0 });
 
-        let img = test_image();
+        let img = crate::test_helpers::solid_image(1, 1, [64, 0, 255, 77]);
         let result = pf.apply(&img).unwrap();
-        assert_eq!(result.data[0], img.data[0]);
-        assert_eq!(result.data[1], img.data[1]);
-        assert_eq!(result.data[2], img.data[2]);
-        assert_eq!(result.data[3], img.data[3]);
+        assert_eq!(result.data, [128, 0, 255, 77]);
     }
 
     #[test]
@@ -308,14 +323,13 @@ mod tests {
         let mut pf = PersistentFilter::new();
         pf.toggle_enabled();
         pf.add_operation(FilterOperation::BrightnessContrast {
-            brightness: 0,
-            contrast: 0,
+            brightness: 28,
+            contrast: 64,
         });
 
-        let img = test_image();
+        let img = crate::test_helpers::solid_image(1, 1, [100, 120, 72, 77]);
         let result = pf.apply(&img).unwrap();
-        assert_eq!(result.data[0], img.data[0]);
-        assert_eq!(result.data[3], 255);
+        assert_eq!(result.data, [128, 168, 72, 77]);
     }
 
     #[test]
@@ -324,9 +338,9 @@ mod tests {
         pf.toggle_enabled();
         pf.add_operation(FilterOperation::GrayscaleSimple);
 
-        let result = pf.apply(&test_image()).unwrap();
-        assert_eq!(result.data[0], result.data[1]);
-        assert_eq!(result.data[1], result.data[2]);
+        let img = crate::test_helpers::solid_image(1, 1, [30, 90, 180, 77]);
+        let result = pf.apply(&img).unwrap();
+        assert_eq!(result.data, [100, 100, 100, 77]);
     }
 
     #[test]
@@ -341,63 +355,48 @@ mod tests {
         pf.add_operation(FilterOperation::ApplyAlpha);
 
         let result = pf.apply(&img).unwrap();
-        assert!(result.data[0] > 128);
-        assert!(result.data[1] > 0);
-        assert_eq!(result.data[3], 255);
+        assert_eq!(result.data, [255, 127, 127, 255]);
     }
 
     #[test]
     fn gaussian_blur_runs_without_panic() {
-        let img = DecodedImage {
-            data: vec![
-                100, 150, 200, 255, 50, 80, 120, 255, 200, 100, 50, 255, 150, 180, 210, 255,
-            ],
-            width: 2,
-            height: 2,
-        };
+        let mut img = crate::test_helpers::solid_image(7, 7, [0, 0, 0, 77]);
+        img.data[96..99].fill(243);
         let mut pf = PersistentFilter::new();
         pf.toggle_enabled();
         pf.add_operation(FilterOperation::GaussianBlur { radius: 1.0 });
 
         let result = pf.apply(&img).unwrap();
-        assert_eq!(result.width, 2);
-        assert_eq!(result.height, 2);
+        assert_eq!((result.width, result.height), (7, 7));
+        assert_eq!(&result.data[96..100], &[16, 16, 16, 77]);
+        assert_eq!(&result.data[100..104], &[14, 14, 14, 77]);
     }
 
     #[test]
     fn unsharp_mask_runs_without_panic() {
-        let img = DecodedImage {
-            data: vec![
-                100, 150, 200, 255, 50, 80, 120, 255, 200, 100, 50, 255, 150, 180, 210, 255,
-            ],
-            width: 2,
-            height: 2,
-        };
+        let mut img = crate::test_helpers::solid_image(7, 7, [100, 100, 100, 77]);
+        img.data[96..99].fill(127);
         let mut pf = PersistentFilter::new();
         pf.toggle_enabled();
         pf.add_operation(FilterOperation::UnsharpMask { radius: 1.0 });
 
         let result = pf.apply(&img).unwrap();
-        assert_eq!(result.width, 2);
-        assert_eq!(result.height, 2);
+        assert_eq!((result.width, result.height), (7, 7));
+        assert_eq!(&result.data[96..100], &[153, 153, 153, 77]);
+        assert_eq!(&result.data[100..104], &[99, 99, 99, 77]);
     }
 
     #[test]
     fn median_filter_runs_without_panic() {
-        let img = DecodedImage {
-            data: vec![
-                100, 150, 200, 255, 50, 80, 120, 255, 200, 100, 50, 255, 150, 180, 210, 255,
-            ],
-            width: 2,
-            height: 2,
-        };
+        let mut img = crate::test_helpers::solid_image(7, 7, [0, 0, 0, 77]);
+        img.data[96..99].fill(255);
         let mut pf = PersistentFilter::new();
         pf.toggle_enabled();
         pf.add_operation(FilterOperation::MedianFilter);
 
         let result = pf.apply(&img).unwrap();
-        assert_eq!(result.width, 2);
-        assert_eq!(result.height, 2);
+        assert_eq!((result.width, result.height), (7, 7));
+        assert_eq!(&result.data[96..100], &[0, 0, 0, 77]);
     }
 
     #[test]
@@ -411,7 +410,7 @@ mod tests {
 
         let result = pf.apply(&test_image()).unwrap();
         assert_eq!(result.data[0], 0);
-        assert!(result.data[1] > 100);
+        assert_eq!(result.data[1], 128);
         assert_eq!(result.data[2], 255);
     }
 
@@ -449,32 +448,19 @@ mod tests {
 
     #[test]
     fn blur_and_sharpen_variants() {
-        let img = DecodedImage {
-            data: vec![
-                100, 150, 200, 255, 50, 80, 120, 255, 200, 100, 50, 255, 150, 180, 210, 255,
-            ],
-            width: 2,
-            height: 2,
-        };
-
-        let mut pf = PersistentFilter::new();
-        pf.toggle_enabled();
-        pf.add_operation(FilterOperation::Blur);
-        assert!(pf.apply(&img).is_some());
-
-        let mut pf = PersistentFilter::new();
-        pf.toggle_enabled();
-        pf.add_operation(FilterOperation::BlurStrong);
-        assert!(pf.apply(&img).is_some());
-
-        let mut pf = PersistentFilter::new();
-        pf.toggle_enabled();
-        pf.add_operation(FilterOperation::Sharpen);
-        assert!(pf.apply(&img).is_some());
-
-        let mut pf = PersistentFilter::new();
-        pf.toggle_enabled();
-        pf.add_operation(FilterOperation::SharpenStrong);
-        assert!(pf.apply(&img).is_some());
+        let mut img = crate::test_helpers::solid_image(5, 5, [100, 100, 100, 77]);
+        img.data[48..51].fill(125);
+        for (operation, expected) in [
+            (FilterOperation::Blur, 102),
+            (FilterOperation::BlurStrong, 101),
+            (FilterOperation::Sharpen, 225),
+            (FilterOperation::SharpenStrong, 255),
+        ] {
+            let mut pf = PersistentFilter::new();
+            pf.toggle_enabled();
+            pf.add_operation(operation);
+            let result = pf.apply(&img).unwrap();
+            assert_eq!(&result.data[48..52], &[expected, expected, expected, 77]);
+        }
     }
 }

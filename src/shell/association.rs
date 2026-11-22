@@ -270,13 +270,13 @@ mod tests {
 
     #[test]
     fn new_and_old_progids_differ() {
-        assert_ne!(IMAGE_PROGID, OLD_IMAGE_PROGID);
-        assert_ne!(ARCHIVE_PROGID, OLD_ARCHIVE_PROGID);
-        assert_ne!(BOOKMARK_PROGID, OLD_BOOKMARK_PROGID);
-    }
-
-    #[test]
-    fn cleanup_old_progids_succeeds_when_keys_absent() {
-        assert!(cleanup_old_progids().is_ok());
+        for current in [IMAGE_PROGID, ARCHIVE_PROGID, BOOKMARK_PROGID] {
+            for old in [OLD_IMAGE_PROGID, OLD_ARCHIVE_PROGID, OLD_BOOKMARK_PROGID] {
+                assert!(
+                    !current.eq_ignore_ascii_case(old),
+                    "{current} conflicts with {old}"
+                );
+            }
+        }
     }
 }

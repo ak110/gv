@@ -20,7 +20,21 @@ impl RarHandler {
 
 impl ArchiveHandler for RarHandler {
     fn supported_extensions(&self) -> Vec<String> {
-        EXTENSIONS.iter().map(ToString::to_string).collect()
+        let registry = Arc::new(ExtensionRegistry::new());
+        let manager = super::super::ArchiveManager::new(registry);
+        let dir = crate::test_helpers::TempDir::new("rar_dispatch");
+        for name in ["absent.rar", "absent.cbr", "absent.cbrr"] {
+            let result = manager.extract_images(&dir.join(name), &dir);
+            let Err(error) = result else {
+                panic!("不在ファイルを展開できるべきではない: {name}");
+            };
+            let expected = if name == "absent.cbrr" {
+                "未対応のアーカイブ形式:"
+            } else {
+                "RARアーカイブを開けない:"
+            };
+            assert!(error.to_string().starts_with(expected), "{name}: {error}");
+        }
     }
 
     fn extract_images(
@@ -101,8 +115,12 @@ mod tests {
         let reg = Arc::new(ExtensionRegistry::new());
         let handler = RarHandler::new(reg);
         let dir = crate::test_helpers::TempDir::new("rar_noexist");
-        let result: Result<Vec<super::ExtractedEntry>> =
-            handler.extract_images(Path::new("nonexistent.rar"), &dir);
-        assert!(result.is_err());
+        let target = dir.join("extract");
+        std::fs::create_dir(&target).unwrap();
+        let result = handler.extract_images(&dir.join("absent.rar"), &target);
+        assert!(
+            matches!(result, Err(error) if error.to_string().starts_with("RARアーカイブを開けない:"))
+        );
+        assert_eq!(std::fs::read_dir(&target).unwrap().count(), 0);
     }
 }

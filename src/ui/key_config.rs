@@ -496,6 +496,34 @@ mod tests {
             .split("### キー名の記法")
             .nth(1)
             .expect("customization.mdに「キー名の記法」の節がある");
+        let mut rows = guide.lines().skip_while(|line| !line.starts_with('|'));
+        for row in rows
+            .by_ref()
+            .skip(2)
+            .take_while(|line| line.starts_with('|'))
+        {
+            let notation = row.split('|').nth(1).unwrap();
+            let tokens: Vec<_> = notation.split('`').skip(1).step_by(2).collect();
+            let examples: Vec<String> = match tokens.as_slice() {
+                ["A", "Z"] => ('A'..='Z').map(|key| key.to_string()).collect(),
+                ["0", "9"] => ('0'..='9').map(|key| key.to_string()).collect(),
+                ["F1", "F12"] => (1..=12).map(|key| format!("F{key}")).collect(),
+                ["Num0", "Num9"] => (0..=9).map(|key| format!("Num{key}")).collect(),
+                _ => tokens
+                    .iter()
+                    .map(|key| {
+                        if matches!(*key, "Ctrl+" | "Shift+" | "Alt+") {
+                            format!("{key}A")
+                        } else {
+                            key.to_string()
+                        }
+                    })
+                    .collect(),
+            };
+            for example in examples {
+                assert!(parse_chord(&example).is_ok(), "{example}");
+            }
+        }
         let toml_notation: String = DEFAULT_KEYS_TOML
             .lines()
             .take_while(|line| line.starts_with('#'))
@@ -718,7 +746,12 @@ mod tests {
 
     #[test]
     fn parse_unknown_key_returns_error() {
-        assert!(parse_chord("UnknownKey").is_err());
+        let error = parse_chord("UnknownKey").unwrap_err().to_string();
+        assert!(
+            error.contains("不明なキー名") && error.contains("UnknownKey"),
+            "{error}"
+        );
+        assert!(parse_chord("Ctrl+PageUp").is_ok());
     }
 
     #[test]
@@ -726,52 +759,92 @@ mod tests {
         let config = KeyConfig::with_defaults();
 
         assert_eq!(
-            config.lookup(parse_chord("←").unwrap()),
+            config.lookup(InputChord::Key {
+                vk: 0x25,
+                modifiers: Modifiers::default()
+            }),
             Some(Action::NavigateBack)
         );
         assert_eq!(
-            config.lookup(parse_chord("→").unwrap()),
+            config.lookup(InputChord::Key {
+                vk: 0x27,
+                modifiers: Modifiers::default()
+            }),
             Some(Action::NavigateForward)
         );
         assert_eq!(
-            config.lookup(parse_chord("PageUp").unwrap()),
+            config.lookup(InputChord::Key {
+                vk: 0x21,
+                modifiers: Modifiers::default()
+            }),
             Some(Action::Navigate5Back)
         );
         assert_eq!(
-            config.lookup(parse_chord("Ctrl+Home").unwrap()),
+            config.lookup(InputChord::Key {
+                vk: 0x24,
+                modifiers: Modifiers {
+                    ctrl: true,
+                    ..Modifiers::default()
+                }
+            }),
             Some(Action::NavigateFirst)
         );
 
         assert_eq!(
-            config.lookup(parse_chord("Num /").unwrap()),
+            config.lookup(InputChord::Key {
+                vk: 0x6F,
+                modifiers: Modifiers::default()
+            }),
             Some(Action::DisplayAutoShrink)
         );
         assert_eq!(
-            config.lookup(parse_chord("A").unwrap()),
+            config.lookup(InputChord::Key {
+                vk: b'A' as u16,
+                modifiers: Modifiers::default()
+            }),
             Some(Action::CycleAlphaBackground)
         );
 
         assert_eq!(
-            config.lookup(parse_chord("Alt+Enter").unwrap()),
+            config.lookup(InputChord::Key {
+                vk: 0x0D,
+                modifiers: Modifiers {
+                    alt: true,
+                    ..Modifiers::default()
+                }
+            }),
             Some(Action::ToggleFullscreen)
         );
 
         assert_eq!(
-            config.lookup(parse_chord("Ctrl+O").unwrap()),
+            config.lookup(InputChord::Key {
+                vk: b'O' as u16,
+                modifiers: Modifiers {
+                    ctrl: true,
+                    ..Modifiers::default()
+                }
+            }),
             Some(Action::OpenFile)
         );
 
         assert_eq!(
-            config.lookup(parse_chord("Delete").unwrap()),
+            config.lookup(InputChord::Key {
+                vk: 0x2E,
+                modifiers: Modifiers::default()
+            }),
             Some(Action::MarkSet)
         );
 
         assert_eq!(
-            config.lookup(parse_chord("LeftDoubleClick").unwrap()),
+            config.lookup(InputChord::Mouse {
+                button: MouseButton::LeftDoubleClick
+            }),
             Some(Action::ToggleMaximize)
         );
         assert_eq!(
-            config.lookup(parse_chord("MiddleClick").unwrap()),
+            config.lookup(InputChord::Mouse {
+                button: MouseButton::MiddleClick
+            }),
             Some(Action::ShowImageInfo)
         );
     }
@@ -824,39 +897,86 @@ zoom_in = "Ctrl+Num +, Ctrl+WheelDown"
             .expect("配布版ぐらびゅ.keys.default.tomlのパースに失敗");
 
         assert_eq!(
-            config.lookup(parse_chord("←").unwrap()),
+            config.lookup(InputChord::Key {
+                vk: 0x25,
+                modifiers: Modifiers::default()
+            }),
             Some(Action::NavigateBack)
         );
         assert_eq!(
-            config.lookup(parse_chord("Tab").unwrap()),
+            config.lookup(InputChord::Key {
+                vk: 0x09,
+                modifiers: Modifiers::default()
+            }),
             Some(Action::SortNavigateForward)
         );
         assert_eq!(
-            config.lookup(parse_chord("Ctrl+→").unwrap()),
+            config.lookup(InputChord::Key {
+                vk: 0x27,
+                modifiers: Modifiers {
+                    ctrl: true,
+                    ..Modifiers::default()
+                }
+            }),
             Some(Action::Rotate90CW)
         );
         assert_eq!(
-            config.lookup(parse_chord("Ctrl+L").unwrap()),
+            config.lookup(InputChord::Key {
+                vk: b'L' as u16,
+                modifiers: Modifiers {
+                    ctrl: true,
+                    ..Modifiers::default()
+                }
+            }),
             Some(Action::Levels)
         );
         assert_eq!(
-            config.lookup(parse_chord("Ctrl+G").unwrap()),
+            config.lookup(InputChord::Key {
+                vk: b'G' as u16,
+                modifiers: Modifiers {
+                    ctrl: true,
+                    ..Modifiers::default()
+                }
+            }),
             Some(Action::GrayscaleStrict)
         );
         assert_eq!(
-            config.lookup(parse_chord("Ctrl+Shift+L").unwrap()),
+            config.lookup(InputChord::Key {
+                vk: b'L' as u16,
+                modifiers: Modifiers {
+                    ctrl: true,
+                    shift: true,
+                    ..Modifiers::default()
+                }
+            }),
             Some(Action::PFilterLevels)
         );
         assert_eq!(
-            config.lookup(parse_chord("Ctrl+Shift+G").unwrap()),
+            config.lookup(InputChord::Key {
+                vk: b'G' as u16,
+                modifiers: Modifiers {
+                    ctrl: true,
+                    shift: true,
+                    ..Modifiers::default()
+                }
+            }),
             Some(Action::PFilterGrayscaleSimple)
         );
         assert_eq!(
-            config.lookup(parse_chord("F9").unwrap()),
+            config.lookup(InputChord::Key {
+                vk: 0x78,
+                modifiers: Modifiers::default()
+            }),
             Some(Action::BookmarkSave)
         );
         assert_eq!(
-            config.lookup(parse_chord("Shift+Space").unwrap()),
+            config.lookup(InputChord::Key {
+                vk: 0x20,
+                modifiers: Modifiers {
+                    shift: true,
+                    ..Modifiers::default()
+                }
+            }),
             Some(Action::SlideshowToggle)
         );
     }

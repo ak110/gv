@@ -204,8 +204,11 @@ mod tests {
 
     #[test]
     fn invalidate_and_reschedule_advances_generation_once() {
+        let (notify, ready) = crossbeam_channel::unbounded();
         let engine = PrefetchEngine::new(
-            Box::new(|| {}),
+            Box::new(move || {
+                let _ = notify.send(());
+            }),
             test_decoder(),
             Arc::new(test_archive_manager(&Arc::new(
                 crate::extension_registry::ExtensionRegistry::new(),
@@ -215,17 +218,44 @@ mod tests {
         .expect("test PrefetchEngine::new");
         let mut coord = PrefetchCoordinator::new();
         coord.start(engine, 1024, 100);
+        let dir = crate::test_helpers::TempDir::new("prefetch_generation");
+        let old_path = dir.join("old.png");
+        let new_path = dir.join("new.png");
+        std::fs::write(&old_path, crate::test_helpers::create_1x1_white_png()).unwrap();
+        let new_image = DecodedImage {
+            data: vec![40, 80, 120, 255],
+            width: 1,
+            height: 1,
+        };
+        std::fs::write(&new_path, crate::image::encode_png(&new_image).unwrap()).unwrap();
+        let filter = PersistentFilter::new();
+        let mut files = [
+            FileInfo::from_path(&old_path).unwrap(),
+            FileInfo::from_path(&old_path).unwrap(),
+        ];
+        let timeout = std::time::Duration::from_secs(5);
+        coord.reschedule(0, &files, &filter);
+        ready.recv_timeout(timeout).expect("old response queued");
         let before = coord.generation().expect("engine started");
 
-        coord.invalidate_and_reschedule(0, &[], &PersistentFilter::new());
+        files[1] = FileInfo::from_path(&new_path).unwrap();
+        coord.invalidate_and_reschedule(0, &files, &filter);
         assert_eq!(coord.generation(), Some(before + 1));
+        ready.recv_timeout(timeout).expect("new response queued");
+        let events = coord.process_responses(Some(1), false);
+        let [PrefetchEvent::CurrentImageReady(image)] = events.as_slice() else {
+            panic!("expected only the new image, got {} events", events.len());
+        };
+        assert_eq!((image.width, image.height), (1, 1));
+        assert_eq!(image.data, [40, 80, 120, 255]);
     }
 
     #[test]
     fn invalidate_and_reschedule_without_engine_clears_cache() {
         let mut coord = PrefetchCoordinator::new();
         coord.update_cache_range(1024, 100);
-        coord.insert(0, make_image(100));
+        assert!(coord.insert(0, make_image(100)));
+        assert!(coord.contains(0));
 
         coord.invalidate_and_reschedule(0, &[], &PersistentFilter::new());
         assert!(!coord.contains(0));
@@ -236,22 +266,38 @@ mod tests {
     fn cache_operations() {
         let mut coord = PrefetchCoordinator::new();
         coord.update_cache_range(1024, 100);
+        assert!(coord.insert(
+            0,
+            DecodedImage {
+                data: vec![1, 2, 3, 4],
+                width: 1,
+                height: 1
+            }
+        ));
+        assert!(coord.insert(
+            1,
+            DecodedImage {
+                data: vec![5, 6, 7, 8],
+                width: 1,
+                height: 1
+            }
+        ));
 
-        let img = make_image(100);
-        assert!(coord.insert(0, img));
-        assert!(coord.contains(0));
-
-        let taken = coord.take(0);
-        assert!(taken.is_some());
-        assert!(!coord.contains(0));
+        let taken = coord.take(0).expect("requested page");
+        assert_eq!((taken.width, taken.height), (1, 1));
+        assert_eq!(taken.data, [1, 2, 3, 4]);
+        assert!(coord.take(0).is_none());
+        assert_eq!(coord.take(1).expect("other page").data, [5, 6, 7, 8]);
     }
 
     #[test]
     fn invalidate_clears_cache() {
         let mut coord = PrefetchCoordinator::new();
         coord.update_cache_range(1024, 100);
-        coord.insert(0, make_image(100));
-        coord.insert(1, make_image(100));
+        assert!(coord.insert(0, make_image(100)));
+        assert!(coord.insert(1, make_image(100)));
+        assert!(coord.contains(0));
+        assert!(coord.contains(1));
 
         coord.invalidate();
         assert!(!coord.contains(0));

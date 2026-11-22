@@ -258,9 +258,12 @@ mod tests {
         let cropped = output_image(&img, Some(rect));
         assert_eq!(cropped.width, 2);
         assert_eq!(cropped.height, 2);
-        assert_eq!(cropped.data, crop(&img, &rect).data);
-        assert_eq!(cropped.data[0], 60);
-        assert_eq!(cropped.data[1], 60);
+        assert_eq!(
+            cropped.data,
+            [
+                60, 60, 0, 255, 120, 60, 0, 255, 60, 120, 0, 255, 120, 120, 0, 255
+            ]
+        );
     }
 
     #[test]
@@ -275,7 +278,12 @@ mod tests {
         let cropped = output_image(&img, Some(rect));
         assert_eq!(cropped.width, 2);
         assert_eq!(cropped.height, 2);
-        assert_eq!(cropped.data.len(), 2 * 2 * 4);
+        assert_eq!(
+            cropped.data,
+            [
+                120, 120, 0, 255, 180, 120, 0, 255, 120, 180, 0, 255, 180, 180, 0, 255
+            ]
+        );
     }
 
     #[test]
@@ -291,23 +299,6 @@ mod tests {
         assert_eq!(cropped.width, img.width);
         assert_eq!(cropped.height, img.height);
         assert_eq!(cropped.data, img.data);
-    }
-
-    #[test]
-    fn crop_center_2x2() {
-        let img = test_image_4x4();
-        let rect = PixelRect {
-            x: 1,
-            y: 1,
-            width: 2,
-            height: 2,
-        };
-        let cropped = crop(&img, &rect);
-        assert_eq!(cropped.width, 2);
-        assert_eq!(cropped.height, 2);
-        assert_eq!(cropped.data.len(), 2 * 2 * 4);
-        assert_eq!(cropped.data[0], 60);
-        assert_eq!(cropped.data[1], 60);
     }
 
     #[test]
@@ -337,6 +328,12 @@ mod tests {
         let cropped = crop(&img, &rect);
         assert_eq!(cropped.width, 2);
         assert_eq!(cropped.height, 2);
+        assert_eq!(
+            cropped.data,
+            [
+                120, 120, 0, 255, 180, 120, 0, 255, 120, 180, 0, 255, 180, 180, 0, 255
+            ]
+        );
     }
 
     #[test]
@@ -346,11 +343,12 @@ mod tests {
             x: 0,
             y: 0,
             width: 0,
-            height: 0,
+            height: 2,
         };
         let cropped = crop(&img, &rect);
         assert_eq!(cropped.width, img.width);
         assert_eq!(cropped.height, img.height);
+        assert_eq!(cropped.data, img.data);
     }
 
     #[test]
@@ -380,48 +378,81 @@ mod tests {
     #[test]
     fn rotate_90_2x1() {
         let img = DecodedImage {
-            data: vec![255, 0, 0, 255, 0, 255, 0, 255],
+            data: [1, 2, 3, 4, 5, 6]
+                .into_iter()
+                .flat_map(|r| [r, 0, 0, 255])
+                .collect(),
             width: 2,
-            height: 1,
+            height: 3,
         };
         let rotated = rotate_90(&img);
-        assert_eq!(rotated.width, 1);
-        assert_eq!(rotated.height, 2);
+        assert_eq!((rotated.width, rotated.height), (3, 2));
+        let expected: Vec<u8> = [5, 3, 1, 6, 4, 2]
+            .into_iter()
+            .flat_map(|r| [r, 0, 0, 255])
+            .collect();
+        assert_eq!(rotated.data, expected);
     }
 
     #[test]
     fn rotate_180_identity() {
-        let img = test_image_4x4();
-        let r1 = rotate_180(&img);
-        let r2 = rotate_180(&r1);
-        assert_eq!(r2.data, img.data);
+        let img = DecodedImage {
+            data: [1, 2, 3, 4, 5, 6]
+                .into_iter()
+                .flat_map(|r| [r, 0, 0, 255])
+                .collect(),
+            width: 2,
+            height: 3,
+        };
+        let rotated = rotate_180(&img);
+        assert_eq!((rotated.width, rotated.height), (2, 3));
+        let expected: Vec<u8> = [6, 5, 4, 3, 2, 1]
+            .into_iter()
+            .flat_map(|r| [r, 0, 0, 255])
+            .collect();
+        assert_eq!(rotated.data, expected);
     }
 
     #[test]
     fn rotate_270_is_3x_rotate_90() {
-        let img = test_image_4x4();
-        let r270 = rotate_270(&img);
-        let r90_3 = rotate_90(&rotate_90(&rotate_90(&img)));
-        assert_eq!(r270.width, r90_3.width);
-        assert_eq!(r270.height, r90_3.height);
-        assert_eq!(r270.data, r90_3.data);
+        let img = DecodedImage {
+            data: [1, 2, 3, 4, 5, 6]
+                .into_iter()
+                .flat_map(|r| [r, 0, 0, 255])
+                .collect(),
+            width: 2,
+            height: 3,
+        };
+        let rotated = rotate_270(&img);
+        assert_eq!((rotated.width, rotated.height), (3, 2));
+        let expected: Vec<u8> = [2, 4, 6, 1, 3, 5]
+            .into_iter()
+            .flat_map(|r| [r, 0, 0, 255])
+            .collect();
+        assert_eq!(rotated.data, expected);
     }
 
     #[test]
     fn resize_basic() {
-        let img = test_image_4x4();
+        let img = DecodedImage {
+            data: [30, 60, 90, 128].repeat(16),
+            width: 4,
+            height: 4,
+        };
         let resized = resize(&img, 2, 2).expect("resize");
         assert_eq!(resized.width, 2);
         assert_eq!(resized.height, 2);
-        assert_eq!(resized.data.len(), 2 * 2 * 4);
+        assert_eq!(resized.data, [30, 60, 90, 128].repeat(4));
     }
 
     #[test]
     fn resize_zero_returns_original_clone() {
         let img = test_image_4x4();
-        let r = resize(&img, 0, 0).expect("resize zero");
-        assert_eq!(r.width, img.width);
-        assert_eq!(r.height, img.height);
+        for (width, height) in [(0, 2), (2, 0)] {
+            let r = resize(&img, width, height).expect("resize zero");
+            assert_eq!((r.width, r.height), (img.width, img.height));
+            assert_eq!(r.data, img.data);
+        }
     }
 
     #[test]
@@ -430,14 +461,7 @@ mod tests {
         let rotated = rotate_arbitrary(&img, 0.0);
         assert_eq!(rotated.width, img.width);
         assert_eq!(rotated.height, img.height);
-        let center_src = (4 + 1) * 4;
-        let center_dst = (rotated.width as usize + 1) * 4;
-        for ch in 0..4 {
-            assert!(
-                (rotated.data[center_dst + ch] as i32 - img.data[center_src + ch] as i32).abs()
-                    <= 1
-            );
-        }
+        assert_eq!(rotated.data, img.data);
     }
 
     #[test]
@@ -452,8 +476,6 @@ mod tests {
         let cropped = crop(&img, &rect);
         assert_eq!(cropped.width, 1);
         assert_eq!(cropped.height, 1);
-        assert_eq!(cropped.data.len(), 4);
-        assert_eq!(cropped.data[0], 180);
-        assert_eq!(cropped.data[1], 180);
+        assert_eq!(cropped.data, [180, 180, 0, 255]);
     }
 }

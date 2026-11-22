@@ -56,27 +56,42 @@ mod tests {
 
     #[test]
     fn sharpen_uniform_unchanged() {
-        let img = uniform_image(4, 4, 100);
-        let result = sharpen(&img, None);
-        for pixel in result.data.chunks_exact(4) {
-            assert_eq!(pixel[0], 100);
-        }
+        let mut img = uniform_image(3, 3, 100);
+        assert_eq!(sharpen(&img, None).data, img.data);
+
+        img.data[16] = 110;
+        assert_eq!(sharpen(&img, None).data[16], 150);
     }
 
     #[test]
     fn sharpen_strong_uniform_unchanged() {
-        let img = uniform_image(4, 4, 100);
-        let result = sharpen_strong(&img, None);
-        for pixel in result.data.chunks_exact(4) {
-            assert_eq!(pixel[0], 100);
-        }
+        let mut img = uniform_image(3, 3, 100);
+        assert_eq!(sharpen_strong(&img, None).data, img.data);
+
+        img.data[0] = 110;
+        assert_eq!(sharpen_strong(&img, None).data[16], 90);
     }
 
     #[test]
     fn sharpen_preserves_alpha() {
         let mut img = uniform_image(3, 3, 100);
-        img.data[3] = 128;
+        for (pixel, alpha) in img
+            .data
+            .chunks_exact_mut(4)
+            .zip([1, 2, 3, 4, 15, 6, 7, 8, 9])
+        {
+            pixel[3] = alpha;
+        }
+        img.data[16] = 110;
         let result = sharpen(&img, None);
-        assert_eq!(result.data[3], 128);
+        assert_eq!(result.data[16], 150);
+        assert_eq!(
+            result
+                .data
+                .chunks_exact(4)
+                .map(|p| p[3])
+                .collect::<Vec<_>>(),
+            [1, 2, 3, 4, 15, 6, 7, 8, 9]
+        );
     }
 }

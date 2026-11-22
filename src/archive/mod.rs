@@ -246,23 +246,19 @@ mod tests {
     #[test]
     fn resolve_filename_handles_duplicates() {
         let dir = crate::test_helpers::TempDir::new("resolve_fn");
-
-        let path = resolve_filename(&dir, "unique.jpg");
-        assert_eq!(path.file_name().unwrap().to_str().unwrap(), "unique.jpg");
-
-        std::fs::write(dir.join("dup.jpg"), b"").unwrap();
-        let path = resolve_filename(&dir, "dup.jpg");
-        assert_eq!(path.file_name().unwrap().to_str().unwrap(), "dup_2.jpg");
+        assert_eq!(resolve_filename(&dir, "unique.jpg"), dir.join("unique.jpg"));
+        std::fs::write(dir.join("dup.jpg"), b"first").unwrap();
+        assert_eq!(resolve_filename(&dir, "dup.jpg"), dir.join("dup_2.jpg"));
+        assert_eq!(std::fs::read(dir.join("dup.jpg")).unwrap(), b"first");
     }
 
     #[test]
     fn find_handler_returns_error_for_unsupported_extension() {
-        let reg = Arc::new(ExtensionRegistry::new());
-        let mgr = ArchiveManager::new(reg);
-        let result = mgr.find_handler(Path::new("test.xyz"));
-        assert!(result.is_err());
-        let msg = result.err().unwrap().to_string();
-        assert!(msg.contains("未対応のアーカイブ形式"), "got: {msg}");
+        let mgr = ArchiveManager::new(Arc::new(ExtensionRegistry::new()));
+        match mgr.find_handler(Path::new("test.xyz")) {
+            Err(err) => assert_eq!(err.to_string(), "未対応のアーカイブ形式: test.xyz"),
+            Ok(_) => panic!("未対応の拡張子が選択された"),
+        }
     }
 
     #[test]
@@ -275,25 +271,29 @@ mod tests {
 
     #[test]
     fn find_handler_succeeds_for_supported_extensions() {
-        let reg = Arc::new(ExtensionRegistry::new());
-        let mgr = ArchiveManager::new(reg);
-        assert!(mgr.find_handler(Path::new("a.zip")).is_ok());
-        assert!(mgr.find_handler(Path::new("a.cbz")).is_ok());
-        assert!(mgr.find_handler(Path::new("a.7z")).is_ok());
-        assert!(mgr.find_handler(Path::new("a.ZIP")).is_ok());
-        assert_eq!(
-            mgr.find_handler(Path::new("a.rar")).is_ok(),
-            cfg!(not(gv_no_rar))
-        );
-        assert_eq!(
-            mgr.find_handler(Path::new("a.cbr")).is_ok(),
-            cfg!(not(gv_no_rar))
-        );
-        assert_eq!(
-            mgr.find_handler(Path::new("a.Rar")).is_ok(),
-            cfg!(not(gv_no_rar))
-        );
-        assert!(mgr.find_handler(Path::new("noext")).is_err());
+        let mgr = ArchiveManager::new(Arc::new(ExtensionRegistry::new()));
+        let buf = crate::test_helpers::create_test_zip_buffer(&[("a.png", b"png")]);
+        for name in ["a.zip", "a.cbz", "a.ZIP"] {
+            let entries = mgr.list_images_from_buffer(&buf, Path::new(name)).unwrap();
+            assert_eq!(entries.len(), 1, "{name}");
+            assert_eq!(entries[0].file_name, "a.png", "{name}");
+        }
+        let sevenz = mgr
+            .find_handler(Path::new("a.7z"))
+            .unwrap_or_else(|err| panic!("{err}"));
+        assert_eq!(sevenz.supported_extensions(), [".7z"]);
+        for name in ["a.rar", "a.cbr", "a.Rar"] {
+            let result = mgr.find_handler(Path::new(name));
+            #[cfg(not(gv_no_rar))]
+            assert_eq!(
+                result
+                    .unwrap_or_else(|err| panic!("{err}"))
+                    .supported_extensions(),
+                [".rar", ".cbr"]
+            );
+            #[cfg(gv_no_rar)]
+            assert!(result.is_err(), "{name}");
+        }
     }
 
     #[test]
@@ -364,20 +364,27 @@ mod tests {
             writer.finish().unwrap();
             v
         };
-        let entries = mgr
-            .list_images_from_buffer(&buf, Path::new("comic.cbz"))
-            .unwrap();
+        let path = Path::new("comic.cbz");
+        let entries = mgr.list_images_from_buffer(&buf, path).unwrap();
         assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].entry_name, "page1.png");
+        assert_eq!(entries[0].entry_index, 0);
+        assert_eq!(
+            mgr.read_entry_at(path, Some(&buf), entries[0].entry_index)
+                .unwrap(),
+            b"png"
+        );
     }
 
     #[test]
     fn list_images_from_buffer_rejects_non_zip_extension() {
-        let reg = Arc::new(ExtensionRegistry::new());
-        let mgr = ArchiveManager::new(reg);
-        let result = mgr.list_images_from_buffer(b"", Path::new("test.7z"));
-        assert!(result.is_err());
-        let msg = result.err().unwrap().to_string();
-        assert!(msg.contains("オンデマンド列挙未対応"), "got: {msg}");
+        let mgr = ArchiveManager::new(Arc::new(ExtensionRegistry::new()));
+        let buf = crate::test_helpers::create_test_zip_buffer(&[("a.png", b"png")]);
+        let err = mgr
+            .list_images_from_buffer(&buf, Path::new("test.7z"))
+            .err()
+            .expect("7z のバッファ列挙は非対応");
+        assert_eq!(err.to_string(), "オンデマンド列挙未対応");
     }
 
     #[test]
@@ -396,37 +403,49 @@ mod tests {
 
     #[test]
     fn read_entry_fails_for_unsupported_extension() {
-        let reg = Arc::new(ExtensionRegistry::new());
-        let mgr = ArchiveManager::new(reg);
-        let result = mgr.read_entry_at(Path::new("test.xyz"), None, 0);
-        assert!(result.is_err());
+        let mgr = ArchiveManager::new(Arc::new(ExtensionRegistry::new()));
+        let buf = crate::test_helpers::create_test_zip_buffer(&[("a.png", b"png")]);
+        let err = mgr
+            .read_entry_at(Path::new("test.xyz"), Some(&buf), 0)
+            .unwrap_err();
+        assert_eq!(err.to_string(), "未対応のアーカイブ形式: test.xyz");
     }
 
     #[test]
     fn extract_images_fails_for_unsupported_extension() {
-        let reg = Arc::new(ExtensionRegistry::new());
-        let mgr = ArchiveManager::new(reg);
-        let result = mgr.extract_images(Path::new("test.xyz"), Path::new("/tmp"));
-        assert!(result.is_err());
+        let mgr = ArchiveManager::new(Arc::new(ExtensionRegistry::new()));
+        let dir = crate::test_helpers::TempDir::new("extract_unsupported");
+        let path = dir.join("test.xyz");
+        let output = dir.join("output");
+        std::fs::create_dir(&output).unwrap();
+        let sentinel = output.join("a.png");
+        std::fs::write(&sentinel, b"existing").unwrap();
+        crate::test_helpers::create_test_zip(&path, &[("a.png", b"png")]);
+        let err = mgr.extract_images(&path, &output).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            format!("未対応のアーカイブ形式: {}", path.display())
+        );
+        assert_eq!(std::fs::read(&sentinel).unwrap(), b"existing");
+        assert_eq!(std::fs::read_dir(&output).unwrap().count(), 1);
     }
 
     #[test]
     fn resolve_filename_no_extension() {
         let dir = crate::test_helpers::TempDir::new("resolve_noext");
-
-        std::fs::write(dir.join("README"), b"").unwrap();
-        let path = resolve_filename(&dir, "README");
-        assert_eq!(path.file_name().unwrap().to_str().unwrap(), "README_2");
+        std::fs::write(dir.join("README"), b"documentation").unwrap();
+        assert_eq!(resolve_filename(&dir, "README"), dir.join("README_2"));
+        assert_eq!(std::fs::read(dir.join("README")).unwrap(), b"documentation");
     }
 
     #[test]
     fn resolve_filename_multiple_duplicates() {
         let dir = crate::test_helpers::TempDir::new("resolve_multi");
-
-        std::fs::write(dir.join("img.png"), b"").unwrap();
-        std::fs::write(dir.join("img_2.png"), b"").unwrap();
-        let path = resolve_filename(&dir, "img.png");
-        assert_eq!(path.file_name().unwrap().to_str().unwrap(), "img_3.png");
+        std::fs::write(dir.join("img.png"), b"first").unwrap();
+        std::fs::write(dir.join("img_2.png"), b"second").unwrap();
+        assert_eq!(resolve_filename(&dir, "img.png"), dir.join("img_3.png"));
+        assert_eq!(std::fs::read(dir.join("img.png")).unwrap(), b"first");
+        assert_eq!(std::fs::read(dir.join("img_2.png")).unwrap(), b"second");
     }
 
     #[test]

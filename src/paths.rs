@@ -52,14 +52,9 @@ mod tests {
 
     #[test]
     fn plugin_directory_accepts_relative_and_absolute_paths() {
-        let dir = exe_dir().unwrap();
+        let absolute = exe_dir().unwrap().join("custom").join("absolute-spi");
         assert_eq!(
-            resolve_plugin_dir(&dir, "custom-spi"),
-            dir.join("custom-spi")
-        );
-        let absolute = dir.join("absolute-spi");
-        assert_eq!(
-            resolve_plugin_dir(&dir, absolute.to_str().unwrap()),
+            susie_plugin_dir(absolute.to_str().unwrap()).unwrap(),
             absolute
         );
     }

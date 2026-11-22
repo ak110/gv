@@ -34,7 +34,7 @@ mod tests {
 
     #[test]
     fn leading_zero_user_scenario() {
-        let result = sorted(&["018.jpg", "19.jpg", "020.jpg"]);
+        let result = sorted(&["020.jpg", "018.jpg", "19.jpg"]);
         assert_eq!(result, vec!["018.jpg", "19.jpg", "020.jpg"]);
     }
 
@@ -49,8 +49,9 @@ mod tests {
 
     #[test]
     fn case_insensitive_mixed() {
-        let result = sorted(&["IMG1.png", "img2.png", "Img10.png"]);
+        let result = sorted(&["Img10.png", "img2.png", "IMG1.png"]);
         assert_eq!(result, vec!["IMG1.png", "img2.png", "Img10.png"]);
+        assert_eq!(compare_explorer("IMG2.png", "img2.png"), Ordering::Equal);
     }
 
     #[test]

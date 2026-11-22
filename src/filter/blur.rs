@@ -170,31 +170,41 @@ mod tests {
     use crate::test_helpers::checker_image;
     use crate::test_helpers::uniform_image;
 
+    fn gray_pair(left: u8, right: u8) -> DecodedImage {
+        DecodedImage {
+            width: 2,
+            height: 1,
+            data: vec![left, left, left, 255, right, right, right, 255],
+        }
+    }
+
     #[test]
     fn blur_uniform_unchanged() {
         let img = uniform_image(4, 4, 100);
         let result = blur(&img, None);
-        for pixel in result.data.chunks_exact(4) {
-            assert_eq!(pixel[0], 100);
-        }
+        assert_eq!((result.width, result.height), (4, 4));
+        assert_eq!(result.data, img.data);
+        let mut impulse = uniform_image(5, 5, 0);
+        impulse.data[48] = 90;
+        assert_eq!(blur(&impulse, None).data[48], 90 / 9);
     }
 
     #[test]
     fn blur_strong_uniform_unchanged() {
         let img = uniform_image(6, 6, 50);
-        let result = blur_strong(&img, None);
-        for pixel in result.data.chunks_exact(4) {
-            assert_eq!(pixel[0], 50);
-        }
+        assert_eq!(blur_strong(&img, None).data, img.data);
+        let mut impulse = uniform_image(5, 5, 0);
+        impulse.data[48] = 225;
+        assert_eq!(blur_strong(&impulse, None).data[48], 225 / 25);
     }
 
     #[test]
     fn median_uniform_unchanged() {
         let img = uniform_image(4, 4, 200);
-        let result = median_filter(&img, None);
-        for pixel in result.data.chunks_exact(4) {
-            assert_eq!(pixel[0], 200);
-        }
+        assert_eq!(median_filter(&img, None).data, img.data);
+        let mut impulse = uniform_image(3, 3, 0);
+        impulse.data[16] = 90;
+        assert_eq!(median_filter(&impulse, None).data[16], 0);
     }
 
     #[test]
@@ -207,53 +217,34 @@ mod tests {
 
     #[test]
     fn gaussian_blur_uniform_unchanged() {
-        let img = uniform_image(8, 8, 120);
+        let img = crate::test_helpers::translucent_image();
         let result = gaussian_blur(&img, None, 2.0);
-        for pixel in result.data.chunks_exact(4) {
-            assert_eq!(pixel[0], 120);
-        }
+        assert_eq!((result.width, result.height), (8, 6));
+        assert_eq!(result.data, img.data);
     }
 
     #[test]
     fn gaussian_blur_min_radius() {
-        let img = uniform_image(4, 4, 80);
+        let img = gray_pair(60, 141);
         let result = gaussian_blur(&img, None, 0.1);
-        assert_eq!(result.width, 4);
-        assert_eq!(result.height, 4);
-        for pixel in result.data.chunks_exact(4) {
-            assert_eq!(pixel[0], 80);
-        }
+        assert_eq!((result.width, result.height), (2, 1));
+        assert_eq!(result.data, gaussian_blur(&img, None, 1.0).data);
+        assert_eq!(result.data, gray_pair(99, 102).data);
     }
 
     #[test]
     fn gaussian_blur_large_radius() {
-        let img = checker_image(8, 8, 0, 200);
+        let img = gray_pair(40, 103);
         let result = gaussian_blur(&img, None, 10.0);
-        assert_eq!(result.width, 8);
-        assert_eq!(result.height, 8);
-        let center = ((4 * 8 + 4) * 4) as usize;
-        let center_val = result.data[center] as i32;
-        assert!(
-            (center_val - 100).abs() < 30,
-            "中央ピクセルが平均値 (100) に近いはず: got {center_val}"
-        );
+        assert_eq!((result.width, result.height), (2, 1));
+        assert_eq!(result.data, gray_pair(71, 71).data);
     }
 
     #[test]
     fn gaussian_blur_smooths_checker() {
         let img = checker_image(8, 8, 0, 200);
-        let result = gaussian_blur(&img, None, 2.0);
-        let mut min_val = 255u8;
-        let mut max_val = 0u8;
-        for pixel in result.data.chunks_exact(4) {
-            min_val = min_val.min(pixel[0]);
-            max_val = max_val.max(pixel[0]);
-        }
-        let range = max_val - min_val;
-        assert!(
-            range < 200,
-            "ぼかし後のレンジが元の200未満のはず: got {range}"
-        );
+        let result = gaussian_blur(&img, None, 1.0);
+        assert_eq!(&result.data[108..116], &[98, 98, 98, 255, 99, 99, 99, 255]);
     }
 
     #[test]
@@ -266,42 +257,27 @@ mod tests {
 
     #[test]
     fn unsharp_mask_uniform_unchanged() {
-        let img = uniform_image(8, 8, 150);
+        let img = crate::test_helpers::translucent_image();
         let result = unsharp_mask(&img, None, 2.0);
-        for pixel in result.data.chunks_exact(4) {
-            assert_eq!(pixel[0], 150);
-        }
+        assert_eq!((result.width, result.height), (8, 6));
+        assert_eq!(result.data, img.data);
     }
 
     #[test]
     fn unsharp_mask_min_radius() {
-        let img = uniform_image(4, 4, 100);
+        let img = gray_pair(60, 141);
         let result = unsharp_mask(&img, None, 0.1);
-        assert_eq!(result.width, 4);
-        assert_eq!(result.height, 4);
-        for pixel in result.data.chunks_exact(4) {
-            assert_eq!(pixel[0], 100);
-        }
+        assert_eq!((result.width, result.height), (2, 1));
+        assert_eq!(result.data, unsharp_mask(&img, None, 1.0).data);
+        assert_eq!(result.data, gray_pair(21, 180).data);
     }
 
     #[test]
     fn unsharp_mask_large_radius() {
-        let img = checker_image(8, 8, 50, 200);
+        let img = gray_pair(40, 103);
         let result = unsharp_mask(&img, None, 10.0);
-        assert_eq!(result.width, 8);
-        assert_eq!(result.height, 8);
-        let mut min_val = 255u8;
-        let mut max_val = 0u8;
-        for pixel in result.data.chunks_exact(4) {
-            min_val = min_val.min(pixel[0]);
-            max_val = max_val.max(pixel[0]);
-        }
-        let original_range = 150;
-        let result_range = max_val - min_val;
-        assert!(
-            result_range >= original_range as u8,
-            "アンシャープマスクでコントラスト強調されるはず: original={original_range}, result={result_range}"
-        );
+        assert_eq!((result.width, result.height), (2, 1));
+        assert_eq!(result.data, gray_pair(9, 135).data);
     }
 
     #[test]
@@ -314,11 +290,10 @@ mod tests {
 
     #[test]
     fn unsharp_mask_clamps_values() {
-        let img = checker_image(4, 4, 0, 255);
+        let img = gray_pair(0, 255);
         let result = unsharp_mask(&img, None, 2.0);
-        assert_eq!(result.data.len(), (4 * 4 * 4) as usize);
-        assert_eq!(result.width, 4);
-        assert_eq!(result.height, 4);
+        assert_eq!((result.width, result.height), (2, 1));
+        assert_eq!(result.data, img.data);
     }
 
     #[test]
@@ -337,11 +312,18 @@ mod tests {
 
     #[test]
     fn mosaic_uniform_unchanged() {
-        let img = uniform_image(8, 8, 100);
+        let img = crate::test_helpers::translucent_image();
         let result = mosaic(&img, None, 4);
-        for pixel in result.data.chunks_exact(4) {
-            assert_eq!(pixel[0], 100);
-        }
+        assert_eq!((result.width, result.height), (8, 6));
+        assert_eq!(result.data, img.data);
+        let mut strip = uniform_image(4, 1, 0);
+        strip.data[0] = 30;
+        strip.data[12] = 90;
+        let result = mosaic(&strip, None, 3);
+        assert_eq!(
+            result.data,
+            [10, 0, 0, 255, 10, 0, 0, 255, 10, 0, 0, 255, 90, 0, 0, 255]
+        );
     }
 
     #[test]
@@ -358,22 +340,26 @@ mod tests {
 
     #[test]
     fn mosaic_2x2_block_on_checker() {
-        let img = checker_image(4, 4, 0, 200);
-        let result = mosaic(&img, None, 2);
-        for by in (0..4).step_by(2) {
-            for bx in (0..4).step_by(2) {
-                let offset0 = ((by * 4 + bx) * 4) as usize;
-                let block_val = result.data[offset0];
-                for dy in 0..2 {
-                    for dx in 0..2 {
-                        let offset = (((by + dy) * 4 + (bx + dx)) * 4) as usize;
-                        assert_eq!(result.data[offset], block_val);
-                        assert_eq!(result.data[offset + 1], block_val);
-                        assert_eq!(result.data[offset + 2], block_val);
-                    }
-                }
-            }
+        let mut img = uniform_image(4, 2, 0);
+        for (pixel, red) in img
+            .data
+            .chunks_exact_mut(4)
+            .zip([0, 20, 100, 120, 40, 60, 140, 160])
+        {
+            pixel[0] = red;
         }
+        let result = mosaic(&img, None, 2);
+        assert_eq!(
+            result.data,
+            [
+                [30, 0, 0, 255],
+                [30, 0, 0, 255],
+                [130, 0, 0, 255],
+                [130, 0, 0, 255]
+            ]
+            .concat()
+            .repeat(2)
+        );
     }
 
     #[test]

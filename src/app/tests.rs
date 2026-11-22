@@ -21,7 +21,14 @@ fn synchronous_paint_and_size_are_deferred_until_borrow_ends() {
     let hwnd = app.hwnd();
     let listview = app.borrow().file_list_panel.listview_hwnd();
     let before = app.borrow().redraw_request_count.get();
+    let mut rect = RECT::default();
+    let mut panel_dimensions = || {
+        // SAFETY: listviewはTestAppの破棄まで生存し、rectは書き込み可能。
+        unsafe { GetWindowRect(listview, &raw mut rect).unwrap() };
+        (rect.right - rect.left, rect.bottom - rect.top)
+    };
     app.with_app(|state| {
+        let before_dimensions = panel_dimensions();
         unsafe {
             SendMessageW(
                 hwnd,
@@ -37,11 +44,10 @@ fn synchronous_paint_and_size_are_deferred_until_borrow_ends() {
             );
         }
         assert_eq!(state.redraw_request_count.get(), before);
+        assert_eq!(panel_dimensions(), before_dimensions);
     });
     assert!(app.borrow().redraw_request_count.get() > before);
-    let mut rect = RECT::default();
-    unsafe { GetWindowRect(listview, &raw mut rect).unwrap() };
-    assert_eq!(rect.bottom - rect.top, 240);
+    assert_eq!(panel_dimensions().1, 240);
 
     let before_paint = app.borrow().redraw_request_count.get();
     app.with_app(|state| {
@@ -393,12 +399,19 @@ fn document_read_failure_is_shown() {
     let app = TestApp::new();
     app.with_app(|state| state.document.open(&first).unwrap());
     app.with_app(super::AppWindow::process_document_events);
+    assert!(app.borrow().document.current_image().is_some());
     fs::remove_file(&second).unwrap();
+    let expected_error = fs::read(&second).unwrap_err();
+    assert_eq!(expected_error.kind(), std::io::ErrorKind::NotFound);
 
     app.with_app(|state| state.execute_action(Action::NavigateForward));
     let title = app.title();
     assert!(title.contains("エラー"), "{title}");
-    assert!(title.contains("b.png"), "{title}");
+    assert!(title.contains("画像を読み込めませんでした"), "{title}");
+    let (_, detail) = title.split_once("詳細: ").expect("失敗の詳細");
+    assert!(detail.contains("b.png"), "{detail}");
+    assert!(detail.contains("画像読み込み失敗"), "{detail}");
+    assert!(app.borrow().document.current_image().is_none());
 
     app.destroy();
 }
@@ -528,7 +541,7 @@ fn write_png_with_extensionless_path_succeeds() {
 
 #[test]
 fn write_jpg_with_txt_extension_writes_jpeg_bytes() {
-    let image = solid_image(1, 1, [255, 255, 255, 255]);
+    let image = solid_image(8, 4, [40, 120, 200, 255]);
     let (w, h, rgba) = (image.width, image.height, image.data);
     let dir = TempDir::new("export");
     let path = dir.join("mismatch.txt");
@@ -538,12 +551,18 @@ fn write_jpg_with_txt_extension_writes_jpeg_bytes() {
         "txt extension with Jpg format should succeed: {result:?}"
     );
     let bytes = fs::read(&path).unwrap();
-    assert_eq!(&bytes[..2], &[0xFF, 0xD8]);
+    let decoded = image::load_from_memory_with_format(&bytes, image::ImageFormat::Jpeg)
+        .unwrap()
+        .into_rgb8();
+    assert_eq!(decoded.dimensions(), (8, 4));
+    for (&actual, expected) in decoded.get_pixel(4, 2).0.iter().zip([40u8, 120, 200]) {
+        assert!(actual.abs_diff(expected) <= 4, "{actual} vs {expected}");
+    }
 }
 
 #[test]
 fn write_bmp_with_extensionless_path_succeeds() {
-    let image = solid_image(1, 1, [255, 255, 255, 255]);
+    let image = solid_image(3, 2, [40, 120, 200, 255]);
     let (w, h, rgba) = (image.width, image.height, image.data);
     let dir = TempDir::new("export");
     let path = dir.join("bmp_no_ext");
@@ -553,7 +572,11 @@ fn write_bmp_with_extensionless_path_succeeds() {
         "bmp extensionless should succeed: {result:?}"
     );
     let bytes = fs::read(&path).unwrap();
-    assert_eq!(&bytes[..2], b"BM");
+    let decoded = image::load_from_memory_with_format(&bytes, image::ImageFormat::Bmp)
+        .unwrap()
+        .into_rgb8();
+    assert_eq!(decoded.dimensions(), (3, 2));
+    assert_eq!(*decoded.get_pixel(1, 1), image::Rgb([40, 120, 200]));
 }
 
 #[test]
@@ -617,7 +640,9 @@ fn partial_container_failure_shows_next_action() {
         ),
         "{title}"
     );
-    assert!(title.contains("詳細: "), "{title}");
+    let (_, detail) = title.split_once("詳細: ").expect("失敗の詳細");
+    assert!(detail.contains("broken.zip"), "{detail}");
+    assert!(detail.contains("ZIPバッファの読み取りに失敗"), "{detail}");
 
     app.destroy();
 }

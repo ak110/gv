@@ -217,15 +217,23 @@ mod tests {
         for pid in [own, live] {
             for purpose in ["archive", "paste", "update"] {
                 let path = root.join(format!("gv_{purpose}_{pid}_0"));
-                std::fs::write(&path, b"owned").unwrap();
-                preserved.push(path);
+                let file = if purpose == "paste" {
+                    path
+                } else {
+                    std::fs::create_dir(&path).unwrap();
+                    path.join("owned.txt")
+                };
+                std::fs::write(&file, b"owned").unwrap();
+                preserved.push(file);
             }
         }
         let unrelated = root.join("other_4294967295_0");
         std::fs::write(&unrelated, b"unrelated").unwrap();
-        preserved.push(unrelated);
         cleanup_in(&root, own, |pid| pid == live);
         assert!(removed.iter().all(|path| !path.exists()));
-        assert!(preserved.iter().all(|path| path.exists()));
+        for file in preserved {
+            assert_eq!(std::fs::read(file).unwrap(), b"owned");
+        }
+        assert_eq!(std::fs::read(unrelated).unwrap(), b"unrelated");
     }
 }

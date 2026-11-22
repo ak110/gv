@@ -667,7 +667,10 @@ mod tests {
         app_b.destroy();
         assert!(!path_b.exists());
     }
-    fn mixed_source_app(dir: &Path) -> (TestApp, PathBuf, Vec<crate::file_info::FileSource>) {
+    fn mixed_source_app(
+        dir: &Path,
+        pdf_bytes: &[u8],
+    ) -> (TestApp, PathBuf, Vec<crate::file_info::FileSource>) {
         use crate::file_info::{FileInfo, FileSource};
         let dir = crate::util::strip_extended_length_prefix(&std::fs::canonicalize(dir).unwrap());
         let png = crate::test_helpers::create_1x1_white_png();
@@ -681,7 +684,7 @@ mod tests {
         writer.write_all(&png).unwrap();
         writer.finish().unwrap();
         let pdf = dir.join("document.pdf");
-        std::fs::write(&pdf, crate::test_helpers::minimal_pdf()).unwrap();
+        std::fs::write(&pdf, pdf_bytes).unwrap();
         let extracted = dir.join("extracted.png");
         std::fs::write(&extracted, &png).unwrap();
         let mut info = FileInfo::from_path(&extracted).unwrap();
@@ -718,7 +721,7 @@ mod tests {
     fn marked_targets_depend_on_each_source_and_keep_excluded_marks() {
         use crate::file_info::FileSource;
         let dir = TempDir::new("marked_mixed");
-        let (app, image, sources) = mixed_source_app(&dir);
+        let (app, image, sources) = mixed_source_app(&dir, &crate::test_helpers::minimal_pdf());
         let current_indices: Vec<_> = sources
             .iter()
             .enumerate()
@@ -785,7 +788,7 @@ mod tests {
         use std::os::windows::fs::OpenOptionsExt as _;
 
         let dir = TempDir::new("mixed_copy_retry");
-        let (app, _, sources) = mixed_source_app(&dir);
+        let (app, _, sources) = mixed_source_app(&dir, &crate::test_helpers::minimal_pdf());
         let output_dir = dir.join("copies");
         std::fs::create_dir(&output_dir).unwrap();
         let output = output_dir.join("destination.dat");
@@ -827,11 +830,49 @@ mod tests {
         app.close_without_release();
     }
 
+    fn pdf_with_colored_rectangles() -> Vec<u8> {
+        use std::fmt::Write as _;
+        let stream = "1 0 0 rg 0 0 1.5 1.5 re f\n0 0 1 rg 1.5 0 1.5 1.5 re f\n";
+        let content = format!("<< /Length {} >>\nstream\n{stream}endstream", stream.len());
+        let objects = [
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 3 1.5] /Resources << >> /Contents 4 0 R >>",
+            &content,
+        ];
+        let mut pdf = String::from("%PDF-1.4\n");
+        let mut offsets = [0; 4];
+        for (index, object) in objects.into_iter().enumerate() {
+            offsets[index] = pdf.len();
+            writeln!(pdf, "{} 0 obj\n{object}\nendobj", index + 1).unwrap();
+        }
+        let xref = pdf.len();
+        pdf.push_str("xref\n0 5\n0000000000 65535 f \n");
+        for offset in offsets {
+            writeln!(pdf, "{offset:010} 00000 n ").unwrap();
+        }
+        write!(
+            pdf,
+            "trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n"
+        )
+        .unwrap();
+        pdf.into_bytes()
+    }
+
+    fn assert_colored_pdf_png(bytes: &[u8]) {
+        let png = image::load_from_memory_with_format(bytes, image::ImageFormat::Png)
+            .unwrap()
+            .to_rgb8();
+        assert_eq!(png.dimensions(), (6, 3));
+        assert_eq!(png.get_pixel(1, 1).0, [255, 0, 0]);
+        assert_eq!(png.get_pixel(4, 1).0, [0, 0, 255]);
+    }
+
     #[test]
     fn marked_copy_saves_each_source_content_and_pdf_single_copy_is_png() {
         use crate::file_info::FileSource;
         let dir = TempDir::new("mixed_copy");
-        let (app, image, sources) = mixed_source_app(&dir);
+        let (app, image, sources) = mixed_source_app(&dir, &pdf_with_colored_rectangles());
         let normal_index = sources
             .iter()
             .position(|source| matches!(source, FileSource::File(_)))
@@ -850,9 +891,7 @@ mod tests {
         for source in &sources {
             let bytes = std::fs::read(destination.join(source.default_save_name())).unwrap();
             if matches!(source, FileSource::PdfPage { .. }) {
-                assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
-                let png = image::load_from_memory(&bytes).unwrap();
-                assert_eq!((png.width(), png.height()), (6, 3));
+                assert_colored_pdf_png(&bytes);
             } else {
                 assert_eq!(bytes, std::fs::read(&image).unwrap());
             }
@@ -876,9 +915,7 @@ mod tests {
             });
         assert!(captured.is_empty());
         let bytes = std::fs::read(&output).unwrap();
-        assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
-        let png = image::load_from_memory(&bytes).unwrap();
-        assert_eq!((png.width(), png.height()), (6, 3));
+        assert_colored_pdf_png(&bytes);
         assert_eq!(std::fs::read_dir(&single_dir).unwrap().count(), 1);
         assert!(!single_dir.join("document.pdf").exists());
         assert!(!app.title().contains("失敗"), "{}", app.title());

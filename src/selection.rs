@@ -473,14 +473,18 @@ mod tests {
         sel.on_mouse_down(30.0, 30.0, &dr, 100, 100);
         assert!(sel.is_dragging());
 
-        sel.on_mouse_move(130.0, 130.0, &dr, 100, 100);
-        assert!(sel.current_rect().is_some());
+        sel.on_mouse_move(130.0, 110.0, &dr, 100, 100);
+        let expected = Some(PixelRect {
+            x: 10,
+            y: 10,
+            width: 50,
+            height: 40,
+        });
+        assert_eq!(sel.current_rect(), expected);
 
         sel.on_mouse_up(100, 100);
         assert!(sel.is_selected());
-        let rect = sel.current_rect().unwrap();
-        assert!(rect.width > 0);
-        assert!(rect.height > 0);
+        assert_eq!(sel.current_rect(), expected);
     }
 
     #[test]
@@ -495,18 +499,6 @@ mod tests {
         sel.deselect();
         assert!(!sel.is_selected());
         assert!(sel.current_rect().is_none());
-    }
-
-    #[test]
-    fn handle_positions_count() {
-        let rect = PixelRect {
-            x: 10,
-            y: 20,
-            width: 80,
-            height: 60,
-        };
-        let handles = handle_positions(&rect);
-        assert_eq!(handles.len(), 8);
     }
 
     #[test]

@@ -214,49 +214,95 @@ mod tests {
     fn load_and_receive_response() {
         let dir = crate::test_helpers::TempDir::new("prefetch_load");
         let path = dir.join("test.png");
-        {
-            let mut f = std::fs::File::create(&path).unwrap();
-            f.write_all(&create_1x1_white_png()).unwrap();
-        }
-
-        let engine = PrefetchEngine::new(
-            Box::new(|| {}),
+        std::fs::write(&path, create_1x1_white_png()).unwrap();
+        let (notify, notified) = crossbeam_channel::unbounded();
+        let mut engine = PrefetchEngine::new(
+            Box::new(move || {
+                let _ = notify.send(());
+            }),
             test_decoder(),
             Arc::new(test_archive_manager(&Arc::new(
                 crate::extension_registry::ExtensionRegistry::new(),
             ))),
             test_zip_buffers(),
         )
-        .expect("test PrefetchEngine::new");
-        engine.request_load(0, FileSource::File(path), PersistentFilter::new());
-
-        let responses = engine.recv_responses_blocking(std::time::Duration::from_secs(1));
-        let mut loaded = false;
-        for resp in responses {
-            match resp {
-                LoadResponse::Loaded { index, image, .. } => {
-                    assert_eq!(index, 0);
-                    assert_eq!(image.width, 1);
-                    assert_eq!(image.height, 1);
-                    loaded = true;
-                }
-                LoadResponse::Failed { error, .. } => {
-                    panic!("unexpected failure: {error}");
-                }
-            }
-        }
-        assert!(loaded, "レスポンスが受信できなかった");
+        .unwrap();
+        engine.advance_generation();
+        engine.request_load(7, FileSource::File(path), PersistentFilter::new());
+        notified
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        let rx = engine.response_rx.clone();
+        drop(engine);
+        let responses: Vec<_> = rx.try_iter().collect();
+        let [
+            LoadResponse::Loaded {
+                index: 7,
+                generation: 1,
+                image,
+            },
+        ] = responses.as_slice()
+        else {
+            panic!("要求に対応する成功応答が1件必要");
+        };
+        assert_eq!((image.width, image.height), (1, 1));
+        assert_eq!(image.data, [255; 4]);
     }
 
     #[test]
     fn stale_generation_is_skipped() {
+        use std::time::Duration;
         let dir = crate::test_helpers::TempDir::new("prefetch_gen");
         let path = dir.join("test.png");
-        {
-            let mut f = std::fs::File::create(&path).unwrap();
-            f.write_all(&create_1x1_white_png()).unwrap();
-        }
+        std::fs::write(&path, create_1x1_white_png()).unwrap();
+        let (ready, entered) = crossbeam_channel::unbounded();
+        let (resume, resumed) = crossbeam_channel::bounded(1);
+        let timeout = Duration::from_secs(5);
+        let first = std::sync::atomic::AtomicBool::new(true);
+        let mut engine = PrefetchEngine::new(
+            Box::new(move || {
+                if first.swap(false, Ordering::Relaxed) {
+                    let _ = ready.send(());
+                    resumed.recv_timeout(timeout).unwrap();
+                }
+            }),
+            test_decoder(),
+            Arc::new(test_archive_manager(&Arc::new(
+                crate::extension_registry::ExtensionRegistry::new(),
+            ))),
+            test_zip_buffers(),
+        )
+        .unwrap();
+        engine.request_load(0, FileSource::File(path.clone()), PersistentFilter::new());
+        entered.recv_timeout(timeout).unwrap();
+        engine.request_load(1, FileSource::File(path.clone()), PersistentFilter::new());
+        engine.advance_generation();
+        engine.request_load(2, FileSource::File(path), PersistentFilter::new());
+        resume.send(()).unwrap();
+        let rx = engine.response_rx.clone();
+        drop(engine);
+        let responses: Vec<_> = rx.try_iter().collect();
+        assert!(matches!(
+            responses.as_slice(),
+            [
+                LoadResponse::Loaded {
+                    index: 0,
+                    generation: 0,
+                    ..
+                },
+                LoadResponse::Loaded {
+                    index: 2,
+                    generation: 1,
+                    ..
+                },
+            ]
+        ));
+    }
 
+    #[test]
+    fn failed_response_on_nonexistent_file() {
+        let dir = crate::test_helpers::TempDir::new("prefetch_missing");
+        let path = dir.join("missing.png");
         let mut engine = PrefetchEngine::new(
             Box::new(|| {}),
             test_decoder(),
@@ -266,52 +312,23 @@ mod tests {
             test_zip_buffers(),
         )
         .expect("test PrefetchEngine::new");
-
-        engine.request_load(0, FileSource::File(path.clone()), PersistentFilter::new());
         engine.advance_generation();
-
-        engine.request_load(1, FileSource::File(path), PersistentFilter::new());
-
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        let mut has_gen1 = false;
-        while std::time::Instant::now() < deadline {
-            let responses = engine.recv_responses_blocking(std::time::Duration::from_millis(200));
-            if responses.is_empty() {
-                continue;
-            }
-            if responses
-                .iter()
-                .any(|r| matches!(r, LoadResponse::Loaded { generation: 1, .. }))
-            {
-                has_gen1 = true;
-                break;
-            }
-        }
-        assert!(has_gen1, "generation=1のレスポンスが存在するべき");
-    }
-
-    #[test]
-    fn failed_response_on_nonexistent_file() {
-        let engine = PrefetchEngine::new(
-            Box::new(|| {}),
-            test_decoder(),
-            Arc::new(test_archive_manager(&Arc::new(
-                crate::extension_registry::ExtensionRegistry::new(),
-            ))),
-            test_zip_buffers(),
-        )
-        .expect("test PrefetchEngine::new");
-        engine.request_load(
-            0,
-            FileSource::File(PathBuf::from("nonexistent_file_xyz.png")),
-            PersistentFilter::new(),
-        );
+        engine.request_load(0, FileSource::File(path.clone()), PersistentFilter::new());
 
         let responses = engine.recv_responses_blocking(std::time::Duration::from_secs(1));
-        let failed = responses
-            .iter()
-            .any(|resp| matches!(resp, LoadResponse::Failed { .. }));
-        assert!(failed, "失敗レスポンスが受信できなかった");
+        let [
+            LoadResponse::Failed {
+                error,
+                generation: 1,
+            },
+        ] = responses.as_slice()
+        else {
+            panic!("不在ファイルに対応する失敗応答が1件必要");
+        };
+        assert!(
+            error.contains(&*path.to_string_lossy()) && error.contains("画像読み込み失敗"),
+            "{error}"
+        );
     }
 
     #[test]

@@ -824,6 +824,7 @@ mod title_state_tests {
         for sequence in 0..5_u32.pow(6) {
             let mut state = TitleState::default();
             let mut operations = sequence;
+            let mut consecutive_losses = 0;
             for _ in 0..6 {
                 let before = discriminant(&state.notice);
                 let old_user_error = match &state.notice {
@@ -842,9 +843,17 @@ mod title_state_tests {
                     }
                     3 => {
                         state.drawn();
+                        consecutive_losses = 0;
                     }
                     _ => {
-                        if !state.target_lost() {
+                        consecutive_losses += 1;
+                        let recovered = state.target_lost();
+                        assert_eq!(
+                            recovered,
+                            consecutive_losses <= MAX_RENDER_RECOVERY_ATTEMPTS,
+                            "sequence={sequence}"
+                        );
+                        if !recovered {
                             state.render_error("描画回復の上限".into());
                         }
                     }
@@ -875,7 +884,7 @@ mod title_state_tests {
                 if operation == 0 {
                     assert_eq!(after, none);
                 }
-                if operation == 4 && state.recovery_attempts > MAX_RENDER_RECOVERY_ATTEMPTS {
+                if operation == 4 && consecutive_losses > MAX_RENDER_RECOVERY_ATTEMPTS {
                     assert!(after == render || after == user);
                 }
             }
