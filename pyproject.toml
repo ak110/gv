@@ -17,6 +17,8 @@ js-runner = "direct"
 prettier = true
 colloquial-check = true
 comment-check = true
+# `cargo clippy --all-targets`が同じ型検査を含むため、重複する`cargo check`を省く。
+cargo-check = false
 
 extend-exclude = [
     "target",

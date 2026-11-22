@@ -9,6 +9,9 @@ on:
   pull_request:
     branches:
       - master
+  # pushが7日途絶えるとRustのビルドキャッシュが失効し、次のpushのCIが約10分に延びるため、定期の全体検証で保つ。
+  schedule:
+    - cron: "17 18 * * 0,3"
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -22,13 +25,33 @@ jobs:
       GITHUB_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # 変更範囲の判定でpush前のcommitとの差分を取る。
+          fetch-depth: 0
       - uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
+      # Rustのソースが読み込まない文書だけの変更では、Rustのビルドと試験を省く。
+      # 基点が無い・祖先でない・判別できない差分は全体を検査する（scripts/ci_scope.py）。
+      - name: 変更範囲の判定
+        id: scope
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: echo "scope=$(uv run --no-project scripts/ci_scope.py --base "$BASE_SHA")" >> "$GITHUB_OUTPUT"
       # cargo-deny は mise.toml の `aqua:EmbarkStudios/cargo-deny` 指定により
       # mise-action 経由でインストールされ、pyfltr が `mise exec -- cargo-deny` で実行する。
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        if: steps.scope.outputs.scope == 'full'
       - run: mise run setup-ci
       - name: advisory DB の CRLF 変換を防止
         run: git config --global core.autocrlf false
       # pyfltrの推奨ガイドから意図して外れる指定。グローバルuv設定の`exclude-newer`があっても
       # 公開直後のpyfltrを使うため、コマンドラインでpyfltrだけを公開待機から外す。
-      - run: uvx --exclude-newer-package pyfltr=false pyfltr ci --output-format=github-annotations
+      - shell: bash
+        env:
+          SCOPE: ${{ steps.scope.outputs.scope }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          args=()
+          if [ "$SCOPE" = docs ]; then args=(--changed-since="$BASE_SHA"); fi
+          uvx --exclude-newer-package pyfltr=false pyfltr ci --output-format=github-annotations "${args[@]}"
