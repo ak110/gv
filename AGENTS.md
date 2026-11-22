@@ -18,7 +18,7 @@ Windows用画像ビューアー（Rust製）。多形式対応と高速切り替
 
 ## アーキテクチャの参照先
 
-アーキテクチャ概要・モジュール構成・設計判断の根拠は
+実装から読み取りにくい設計判断と不変条件は
 [docs/development/architecture.md](docs/development/architecture.md)を参照する。
 
 ## 共通品質基準

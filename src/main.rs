@@ -97,7 +97,6 @@ fn main() {
         .map(PathBuf::from)
         .collect();
 
-    // メインウィンドウ作成
     // _appはメッセージループ中に生存する必要がある (Box<WindowState>のドロップ防止)
     let _app = match app::AppWindow::create(config, &initial_files) {
         Ok(app) => app,

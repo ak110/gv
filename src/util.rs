@@ -45,8 +45,6 @@ pub fn format_error_box_text(summary: &str, next_action: &str, detail: Option<&s
     }
 }
 
-/// Win32 MessageBoxW のラッパー
-///
 /// # Safety
 /// hwnd は有効なウィンドウハンドル、または `HWND::default()`（NULLに相当）であること。
 pub unsafe fn show_message_box(

@@ -105,8 +105,7 @@
     "/ release版はウィンドウサブシステムで標準エラーの出力先が無いため、ダイアログで伝える。": 1,
     "/ 起動の失敗を理由と次の操作とともにダイアログで示し、非0で終了する": 1,
     "DPI awareness設定 (COM初期化より先に呼ぶ必要がある)": 1,
-    "_appはメッセージループ中に生存する必要がある (Box<WindowState>のドロップ防止)": 1,
-    "メインウィンドウ作成": 1
+    "_appはメッセージループ中に生存する必要がある (Box<WindowState>のドロップ防止)": 1
   },
   "src/pdf_renderer.rs": {
     "!": 2,
@@ -148,12 +147,7 @@
     "Windowsでの後始末・置換の前に必ずハンドルを閉じる。": 1
   },
   "src/susie/ffi.rs": {
-    "/ GetArchiveInfoの関数ポインタ型": 1,
-    "/ GetFileの関数ポインタ型": 1,
-    "/ GetPictureの関数ポインタ型": 1,
-    "/ GetPluginInfoの関数ポインタ型": 1,
     "/ HANDLE* pHBInfo, HANDLE* pHBm, SUSIE_PROGRESS lpPrgressCallback, LONG_PTR lData)": 1,
-    "/ IsSupportedの関数ポインタ型": 1,
     "/ SUSIE_PROGRESS progressCallback, LONG_PTR lData)": 1,
     "/ bit8 = 0:srcはファイル名, 1:srcはメモリイメージ": 1,
     "/ dw: ファイルハンドルまたはファイル先頭データへのポインタ": 1,
@@ -235,30 +229,22 @@
     "LVSICF_NOSCROLL: スクロール位置を維持": 1
   },
   "src/updater.rs": {
-    "/": 4,
+    "/": 2,
     "/ # バッチファイル生成の制約": 1,
     "/ - エンコーディング: UTF-8 BOM + `chcp 65001` で出力する。": 1,
     "/ - 作業フォルダの削除は最後の行で`rmdir`と`exit 0`を連結する。": 1,
     "/ - 制御フロー: `if ( ... )` ブロック内に日本語リテラルを置かない。": 1,
     "/ - 改行: `format!` が出力する LF を `replace('\\n', \"\\r\\n\")` で CRLF に変換する": 1,
-    "/ 1. 親プロセスの終了を待機": 1,
-    "/ 2. 実行中のexeを.oldにリネーム (Windowsはリネームを許可する)": 1,
-    "/ 3. 新しいexeを本来の名前で配置": 1,
-    "/ 4. 新exeを起動": 1,
-    "/ 5. 作業フォルダをバッチ自身ごと削除する": 1,
     "/ DBCSトレイルバイトが cmd.exe の構文解析を破壊する": 1,
     "/ DBCSトレイルバイトが特殊文字と誤認されるため `goto` で制御する": 1,
     "/ GitHub Pages経由のバージョン情報URL(APIレートリミット回避)": 1,
     "/ `cleanup_old_exe()`が次回起動時に.oldを削除する。": 1,
-    "/ rename-then-replaceパターン:": 1,
     "/ ファイル名に日本語（ぐらびゅ.exe等）を含むため CP932 では": 1,
-    "/ 更新用バッチスクリプトを生成する": 1,
+    "/ 実行中のexeはWindowsでも削除できないがリネームはできるため、.oldへリネームしてから新exeを配置する。": 1,
     "/ 自身を削除した後にバッチへ戻らず、所有するcmd.exeを終了する。": 1
   },
   "src/util.rs": {
-    "/": 1,
     "/ # Safety": 1,
-    "/ Win32 MessageBoxW のラッパー": 1,
     "/ hwnd は有効なウィンドウハンドル、または `HWND::default()`（NULLに相当）であること。": 1
   }
 }

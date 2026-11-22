@@ -2,16 +2,13 @@ pub type SusieResult = i32;
 
 pub const SUSIE_SUCCESS: SusieResult = 0;
 
-/// GetPluginInfoの関数ポインタ型
 /// int GetPluginInfo(int infono, LPSTR buf, int buflen)
 pub type GetPluginInfoFn = unsafe extern "system" fn(infono: i32, buf: *mut u8, buflen: i32) -> i32;
 
-/// IsSupportedの関数ポインタ型
 /// int IsSupported(LPCSTR filename, void* dw)
 /// dw: ファイルハンドルまたはファイル先頭データへのポインタ
 pub type IsSupportedFn = unsafe extern "system" fn(filename: *const u8, dw: *const u8) -> i32;
 
-/// GetPictureの関数ポインタ型
 /// int GetPicture(LPCSTR buf, LONG_PTR len, unsigned int flag,
 ///                HANDLE* pHBInfo, HANDLE* pHBm, SUSIE_PROGRESS lpPrgressCallback, LONG_PTR lData)
 /// flag: 0=ファイル名, 1=メモリイメージ
@@ -25,7 +22,6 @@ pub type GetPictureFn = unsafe extern "system" fn(
     l_data: isize,
 ) -> SusieResult;
 
-/// GetArchiveInfoの関数ポインタ型
 /// int GetArchiveInfo(LPCSTR buf, LONG_PTR len, unsigned int flag, HLOCAL* lphInf)
 pub type GetArchiveInfoFn = unsafe extern "system" fn(
     buf: *const u8,
@@ -34,7 +30,6 @@ pub type GetArchiveInfoFn = unsafe extern "system" fn(
     lp_h_inf: *mut isize,
 ) -> SusieResult;
 
-/// GetFileの関数ポインタ型
 /// int GetFile(LPCSTR src, LONG_PTR len, LPSTR dest, unsigned int flag,
 ///             SUSIE_PROGRESS progressCallback, LONG_PTR lData)
 /// flag: bit0 = 0:ファイル出力, 1:メモリ出力
