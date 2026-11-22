@@ -52,6 +52,19 @@ pub fn build_initial_save_name(
     previous_name: Option<&str>,
     first_source: Option<&FileSource>,
 ) -> String {
+    // システムクロックがUNIX epochより前にずれている場合は 0 秒として扱う
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or(std::time::Duration::ZERO)
+        .as_secs();
+    build_initial_save_name_at(previous_name, first_source, now)
+}
+
+fn build_initial_save_name_at(
+    previous_name: Option<&str>,
+    first_source: Option<&FileSource>,
+    now_unix_secs: u64,
+) -> String {
     if let Some(name) = previous_name {
         return name.to_string();
     }
@@ -59,14 +72,7 @@ pub fn build_initial_save_name(
         .and_then(FileSource::bookmark_default_stem)
         .filter(|s| !s.is_empty())
         .map_or_else(
-            || {
-                // システムクロックがUNIX epochより前にずれている場合は 0 秒として扱う
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or(std::time::Duration::ZERO)
-                    .as_secs();
-                format!("bookmark_{now}{BOOKMARK_EXTENSION}")
-            },
+            || format!("bookmark_{now_unix_secs}{BOOKMARK_EXTENSION}"),
             |stem| format!("{stem}{BOOKMARK_EXTENSION}"),
         )
 }
@@ -105,6 +111,14 @@ pub fn save_bookmark(
         return Ok(None); // キャンセル
     };
 
+    let content = format_bookmark(entries, current_index);
+    crate::shell::file_operations::write_atomic(&save_path, content.as_bytes())
+        .with_context(|| format!("ブックマーク保存失敗: {}", save_path.display()))?;
+
+    Ok(Some(save_path))
+}
+
+fn format_bookmark(entries: &[FileSource], current_index: Option<usize>) -> String {
     let mut content = String::new();
     content.push_str("# gv3 bookmark v1\n");
     let _ = writeln!(content, "# index: {}", current_index.unwrap_or(0));
@@ -129,11 +143,7 @@ pub fn save_bookmark(
             }
         }
     }
-
-    crate::shell::file_operations::write_atomic(&save_path, content.as_bytes())
-        .with_context(|| format!("ブックマーク保存失敗: {}", save_path.display()))?;
-
-    Ok(Some(save_path))
+    content
 }
 
 /// 指定パスからブックマークを読み込む (CLI 引数・シェル関連付け経由用)
@@ -239,15 +249,40 @@ mod tests {
 
     #[test]
     fn build_initial_save_name_falls_back_to_timestamp_when_no_source() {
-        // 前回名も先頭ソースも無い場合はタイムスタンプベースの代替名を返す。
-        // 時刻は非決定的なため、前置・拡張子・桁構成のみ検証する
-        let name = build_initial_save_name(None, None);
-        let middle = name
-            .strip_prefix("bookmark_")
-            .and_then(|s| s.strip_suffix(".gvbm"))
-            .expect("expected bookmark_<digits>.gvbm format");
-        assert!(!middle.is_empty());
-        assert!(middle.chars().all(|c| c.is_ascii_digit()));
+        assert_eq!(
+            build_initial_save_name_at(None, None, 1_700_000_000),
+            "bookmark_1700000000.gvbm"
+        );
+    }
+
+    #[test]
+    fn format_bookmark_round_trips_through_parse_bookmark() {
+        let entries = [
+            FileSource::File(PathBuf::from(r"C:\images\a.jpg")),
+            FileSource::ArchiveEntry {
+                archive: PathBuf::from(r"C:\archive.zip"),
+                entry: "folder/b.png".to_string(),
+                on_demand: true,
+                temp_path: None,
+                entry_index: Some(3),
+            },
+            FileSource::PendingContainer {
+                container_path: PathBuf::from(r"C:\pending.zip"),
+            },
+            FileSource::PdfPage {
+                pdf_path: PathBuf::from(r"C:\docs\c.pdf"),
+                page_index: 2,
+            },
+        ];
+        let content = format_bookmark(&entries, Some(2));
+        assert_eq!(
+            content,
+            "# gv3 bookmark v1\n# index: 2\nfile\tC:\\images\\a.jpg\n\
+             archive\tC:\\archive.zip\tfolder/b.png\npdf\tC:\\docs\\c.pdf\t2\n"
+        );
+        let data = parse_bookmark(&content);
+        assert_eq!(data.index, 2);
+        assert_eq!(format_bookmark(&data.entries, Some(data.index)), content);
     }
 
     #[test]

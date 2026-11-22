@@ -29,7 +29,11 @@ pub fn check_for_update() -> Result<UpdateInfo> {
         .body_mut()
         .read_to_string()
         .context("レスポンス読み込み失敗")?;
-    let response: serde_json::Value = serde_json::from_str(&body).context("JSONパース失敗")?;
+    parse_update_info(&body, &current_version)
+}
+
+fn parse_update_info(body: &str, current_version: &str) -> Result<UpdateInfo> {
+    let response: serde_json::Value = serde_json::from_str(body).context("JSONパース失敗")?;
 
     // tag_name から "v" プレフィクスを除去
     let tag = response["tag_name"]
@@ -43,7 +47,7 @@ pub fn check_for_update() -> Result<UpdateInfo> {
         .to_string();
 
     let is_newer = match (
-        parse_version(&current_version),
+        parse_version(current_version),
         parse_version(&latest_version),
     ) {
         (Some(cur), Some(lat)) => lat > cur,
@@ -51,7 +55,7 @@ pub fn check_for_update() -> Result<UpdateInfo> {
     };
 
     Ok(UpdateInfo {
-        current_version,
+        current_version: current_version.to_string(),
         latest_version,
         download_url,
         is_newer,
@@ -209,6 +213,17 @@ fn generate_update_batch(
     extra_files: &[PathBuf],
     pid: u32,
 ) -> Result<()> {
+    let encoded = build_update_batch_bytes(batch_path, update_exe, target_exe, extra_files, pid)?;
+    std::fs::write(batch_path, encoded).context("バッチスクリプト書き込み失敗")
+}
+
+fn build_update_batch_bytes(
+    batch_path: &std::path::Path,
+    update_exe: &std::path::Path,
+    target_exe: &std::path::Path,
+    extra_files: &[PathBuf],
+    pid: u32,
+) -> Result<Vec<u8>> {
     let old_exe = target_exe.with_extension("exe.old");
     let target_dir = target_exe
         .parent()
@@ -330,7 +345,7 @@ rmdir /s /q "{work}" & exit 0
     let mut encoded = Vec::with_capacity(3 + content.len());
     encoded.extend_from_slice(b"\xEF\xBB\xBF");
     encoded.extend_from_slice(content.as_bytes());
-    std::fs::write(batch_path, encoded).context("バッチスクリプト書き込み失敗")
+    Ok(encoded)
 }
 
 /// バッチスクリプトを起動する (コンソールウィンドウ表示)
@@ -385,6 +400,7 @@ pub fn cleanup_old_exe() {
 mod tests {
     use super::*;
     use crate::test_helpers::neutralize_batch_line;
+    use std::path::Path;
 
     #[test]
     fn parse_version_semver() {
@@ -411,6 +427,52 @@ mod tests {
         assert!(parse_version("2.0.0").unwrap() > parse_version("1.9.9").unwrap());
         assert!(parse_version("0.2.0").unwrap() > parse_version("0.1.0").unwrap());
         assert!(parse_version("0.1.0").unwrap() <= parse_version("0.1.0").unwrap());
+    }
+
+    #[test]
+    fn parse_update_info_compares_versions() {
+        let body = r#"{"tag_name":"v1.2.0","download_url":"https://example.com/gv.zip"}"#;
+        let info = parse_update_info(body, "1.1.9").unwrap();
+        assert_eq!(info.current_version, "1.1.9");
+        assert_eq!(info.latest_version, "1.2.0");
+        assert_eq!(info.download_url, "https://example.com/gv.zip");
+        assert!(info.is_newer);
+        assert!(!parse_update_info(body, "1.2.0").unwrap().is_newer);
+        assert!(!parse_update_info(body, "1.3.0").unwrap().is_newer);
+        let body = r#"{"tag_name":"1.2.0","download_url":"u"}"#;
+        assert_eq!(
+            parse_update_info(body, "1.0.0").unwrap().latest_version,
+            "1.2.0"
+        );
+    }
+
+    #[test]
+    fn parse_update_info_rejects_invalid_response() {
+        assert!(parse_update_info(r#"{"download_url":"u"}"#, "1.0.0").is_err());
+        assert!(parse_update_info(r#"{"tag_name":"v1.0.0"}"#, "1.0.0").is_err());
+        assert!(parse_update_info("not json", "1.0.0").is_err());
+    }
+
+    #[test]
+    fn build_update_batch_bytes_encodes_bom_crlf_and_steps() {
+        let work = Path::new(r"C:\tmp\work");
+        let bytes = build_update_batch_bytes(
+            &work.join("update.bat"),
+            &work.join("update.exe"),
+            Path::new(r"C:\app\gv.exe"),
+            &[work.join("README.md")],
+            42,
+        )
+        .unwrap();
+        let text = std::str::from_utf8(bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap()).unwrap();
+        assert!(!text.replace("\r\n", "").contains('\n'));
+        assert!(text.contains(&format!(
+            "copy /y \"{}\" \"{}\"\r\nif errorlevel 1 goto extra_copy_failed\r\n",
+            work.join("README.md").display(),
+            Path::new(r"C:\app").join("README.md").display()
+        )));
+        assert!(text.contains(":extra_copy_failed\r\n"));
+        assert!(text.ends_with(&format!("rmdir /s /q \"{}\" & exit 0\r\n", work.display())));
     }
 
     #[test]
