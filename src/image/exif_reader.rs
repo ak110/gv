@@ -1,13 +1,7 @@
-//! EXIFメタデータの読み取りとフォーマット
-//!
-//! 標準画像とSusieプラグイン画像のメタデータ取得が共通で使うEXIF取得処理。
-
 use std::io::Cursor;
 
 use exif::{In, Tag};
 
-/// EXIFメタデータを読み取り、(日本語ラベル, フォーマット済み値) のペアで返す。
-/// EXIFが存在しない場合やパース失敗時は空のVecを返す。
 pub fn read_exif_fields(data: &[u8]) -> Vec<(String, String)> {
     let reader = exif::Reader::new();
     let Ok(exif) = reader.read_from_container(&mut Cursor::new(data)) else {
@@ -16,35 +10,27 @@ pub fn read_exif_fields(data: &[u8]) -> Vec<(String, String)> {
 
     let mut fields = Vec::new();
 
-    // カメラ
     if let Some(v) = get_string(&exif, Tag::Model) {
         fields.push(("カメラ".to_string(), v));
     }
-    // レンズ
     if let Some(v) = get_string(&exif, Tag::LensModel) {
         fields.push(("レンズ".to_string(), v));
     }
-    // 焦点距離
     if let Some(v) = format_focal_length(&exif) {
         fields.push(("焦点距離".to_string(), v));
     }
-    // F値
     if let Some(v) = format_fnumber(&exif) {
         fields.push(("F値".to_string(), v));
     }
-    // シャッター速度
     if let Some(v) = format_exposure_time(&exif) {
         fields.push(("シャッター速度".to_string(), v));
     }
-    // ISO感度
     if let Some(v) = get_uint(&exif, Tag::PhotographicSensitivity) {
         fields.push(("ISO感度".to_string(), format!("ISO {v}")));
     }
-    // 撮影日時
     if let Some(v) = get_string(&exif, Tag::DateTimeOriginal) {
         fields.push(("撮影日時".to_string(), v));
     }
-    // GPS座標
     if let Some(v) = format_gps(&exif) {
         fields.push(("GPS".to_string(), v));
     }
@@ -52,7 +38,6 @@ pub fn read_exif_fields(data: &[u8]) -> Vec<(String, String)> {
     fields
 }
 
-/// 文字列フィールドを取得 (前後の空白を除去)
 fn get_string(exif: &exif::Exif, tag: Tag) -> Option<String> {
     let field = exif.get_field(tag, In::PRIMARY)?;
     let s = field.display_value().to_string();
@@ -64,13 +49,11 @@ fn get_string(exif: &exif::Exif, tag: Tag) -> Option<String> {
     }
 }
 
-/// 符号なし整数フィールドを取得
 fn get_uint(exif: &exif::Exif, tag: Tag) -> Option<u32> {
     let field = exif.get_field(tag, In::PRIMARY)?;
     field.value.get_uint(0)
 }
 
-/// Rationalフィールドを取得
 fn get_rational(exif: &exif::Exif, tag: Tag) -> Option<exif::Rational> {
     let field = exif.get_field(tag, In::PRIMARY)?;
     if let exif::Value::Rational(ref v) = field.value {
@@ -80,17 +63,12 @@ fn get_rational(exif: &exif::Exif, tag: Tag) -> Option<exif::Rational> {
     }
 }
 
-/// 有理数を数値へ変換する。分母0は数値として扱わず`None`を返す
-///
-/// 有理数の割り算はこの関数へ集約し、分母0の項目を表示から省く扱いを全項目でそろえる。
 fn rational_to_f64(r: exif::Rational) -> Option<f64> {
     (r.denom != 0).then(|| f64::from(r.num) / f64::from(r.denom))
 }
 
-/// 焦点距離をフォーマット (例: "50 mm")
 fn format_focal_length(exif: &exif::Exif) -> Option<String> {
     let mm = rational_to_f64(get_rational(exif, Tag::FocalLength)?)?;
-    // 整数で表示できる場合は整数で
     if (mm - mm.round()).abs() < 0.01 {
         Some(format!("{} mm", mm.round() as u32))
     } else {
@@ -98,7 +76,6 @@ fn format_focal_length(exif: &exif::Exif) -> Option<String> {
     }
 }
 
-/// F値をフォーマット (例: "f/2.8")
 fn format_fnumber(exif: &exif::Exif) -> Option<String> {
     let f = rational_to_f64(get_rational(exif, Tag::FNumber)?)?;
     if (f - f.round()).abs() < 0.01 {
@@ -108,7 +85,6 @@ fn format_fnumber(exif: &exif::Exif) -> Option<String> {
     }
 }
 
-/// シャッター速度をフォーマット (例: "1/250 秒", "2 秒")
 fn format_exposure_time(exif: &exif::Exif) -> Option<String> {
     let r = get_rational(exif, Tag::ExposureTime)?;
     let secs = rational_to_f64(r)?;
@@ -116,26 +92,22 @@ fn format_exposure_time(exif: &exif::Exif) -> Option<String> {
         return None;
     }
     if r.num >= r.denom {
-        // 1秒以上
         if (secs - secs.round()).abs() < 0.01 {
             Some(format!("{} 秒", secs.round() as u32))
         } else {
             Some(format!("{secs:.1} 秒"))
         }
     } else {
-        // 分数表示
         Some(format!("{}/{} 秒", r.num, r.denom))
     }
 }
 
-/// GPS座標をフォーマット (例: "35.681236, 139.767125")
 fn format_gps(exif: &exif::Exif) -> Option<String> {
     let lat = gps_to_decimal(exif, Tag::GPSLatitude, Tag::GPSLatitudeRef)?;
     let lon = gps_to_decimal(exif, Tag::GPSLongitude, Tag::GPSLongitudeRef)?;
     Some(format!("{lat:.6}, {lon:.6}"))
 }
 
-/// GPS度分秒を10進度に変換
 fn gps_to_decimal(exif: &exif::Exif, coord_tag: Tag, ref_tag: Tag) -> Option<f64> {
     let field = exif.get_field(coord_tag, In::PRIMARY)?;
     let rationals = if let exif::Value::Rational(ref v) = field.value {
@@ -153,7 +125,6 @@ fn gps_to_decimal(exif: &exif::Exif, coord_tag: Tag, ref_tag: Tag) -> Option<f64
     let sec = rational_to_f64(rationals[2])?;
     let mut decimal = deg + min / 60.0 + sec / 3600.0;
 
-    // S/W なら負数
     if let Some(ref_field) = exif.get_field(ref_tag, In::PRIMARY) {
         let ref_str = ref_field.display_value().to_string();
         let ref_trimmed = ref_str.trim().trim_matches('"');
@@ -175,7 +146,6 @@ mod tests {
 
     #[test]
     fn read_exif_fields_returns_empty_for_non_exif_data() {
-        // PNGデータにはEXIFがないので空を返す
         let png_data = create_1x1_white_png();
         let fields = read_exif_fields(&png_data);
         assert!(fields.is_empty());
@@ -193,7 +163,6 @@ mod tests {
         assert!(fields.is_empty());
     }
 
-    /// 指定したタグのEXIFを埋め込んだPNGを製品の読取経路へ渡し、(ラベル, 値) の組を返す
     fn read_fields(entries: &[ExifEntry]) -> Vec<(String, String)> {
         let png = encode_with_exif(
             &asymmetric_rgba(2, 2),
@@ -223,7 +192,6 @@ mod tests {
     const GPS_LONGITUDE_REF: u16 = 0x0003;
     const GPS_LONGITUDE: u16 = 0x0004;
 
-    /// 35°40'52.45"と139°46'1.65" (docコメントの例 "35.681236, 139.767125" の度分秒)
     fn gps_entries(lat_ref: &'static str, lon_ref: &'static str) -> Vec<ExifEntry> {
         vec![
             ExifEntry::new(ExifIfd::Gps, GPS_LATITUDE_REF, ExifValue::Ascii(lat_ref)),
@@ -286,7 +254,6 @@ mod tests {
             read_fields(&gps_entries("N", "E")),
             vec![field("GPS", "35.681236, 139.767125")]
         );
-        // 南緯・西経は負の値
         assert_eq!(
             read_fields(&gps_entries("S", "W")),
             vec![field("GPS", "-35.681236, -139.767125")]
@@ -307,7 +274,6 @@ mod tests {
 
     #[test]
     fn gps_with_zero_denominator_is_omitted_and_other_fields_remain() {
-        // 緯度・経度の度・分・秒のそれぞれで分母を0にする (分子0の0/0も含む)
         let cases: [(u16, usize, (u32, u32)); 4] = [
             (GPS_LATITUDE, 0, (35, 0)),
             (GPS_LATITUDE, 1, (0, 0)),

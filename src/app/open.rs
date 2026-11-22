@@ -1,5 +1,3 @@
-//! 開く・閉じる・新規ウィンドウ・ドロップとエクスプローラー操作
-
 use super::{AppWindow, next_action};
 use anyhow::Context as _;
 use std::os::windows::process::CommandExt as _;
@@ -76,7 +74,6 @@ impl AppWindow {
     }
 
     pub(super) fn action_new_window(&mut self) {
-        // 引数なしで空のウィンドウを起動
         let result = crate::paths::exe_path().and_then(|exe| {
             std::process::Command::new(&exe)
                 .spawn()
@@ -144,7 +141,6 @@ impl AppWindow {
         self.before_image_change();
         self.selection.deselect();
 
-        // ドロップされた全ファイルを収集
         let file_count = unsafe { DragQueryFileW(hdrop, 0xFFFFFFFF, None) } as usize;
         let mut paths = Vec::new();
         let mut buf = [0u16; 1024];
@@ -162,7 +158,6 @@ impl AppWindow {
         }
 
         let result = if paths.len() > 1 {
-            // 複数パス: フォルダ・コンテナ・画像の混在をすべてフラットに展開
             self.document.open_multiple(&paths)
         } else if paths[0].is_dir() {
             self.document.open_folder(&paths[0])

@@ -9,7 +9,6 @@ use crate::extension_registry::ExtensionRegistry;
 
 pub(super) const EXTENSIONS: &[&str] = &[".7z"];
 
-/// 7zアーカイブハンドラ
 pub struct SevenZHandler {
     registry: Arc<ExtensionRegistry>,
 }
@@ -37,7 +36,6 @@ impl ArchiveHandler for SevenZHandler {
         let target_dir = target_dir.to_path_buf();
         let registry = Arc::clone(&self.registry);
 
-        // ArchiveReaderで各エントリをコールバック処理
         let mut reader = sevenz_rust2::ArchiveReader::new(file, sevenz_rust2::Password::empty())
             .with_context(|| format!("7zアーカイブ読み取り失敗: {}", archive_path.display()))?;
 
@@ -50,11 +48,9 @@ impl ArchiveHandler for SevenZHandler {
                     return Ok(true);
                 }
 
-                // エントリデータを取得
                 let mut data = Vec::new();
                 std::io::Read::read_to_end(data_reader, &mut data)?;
 
-                // target_dirに保存
                 let out_path = resolve_filename(&target_dir, filename);
                 std::fs::write(&out_path, &data)?;
                 results.push((

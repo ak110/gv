@@ -1,20 +1,11 @@
-//! ドキュメント（ファイルリスト・コンテナ・画像管理）モジュール
-//!
-//! 複数の画像ファイル・アーカイブ・PDFを統一インターフェースで操作する。
-//! - ファイルリストの管理と先読み
-//! - アーカイブ（ZIP/PDF/RAR/7z）の展開とバッファキャッシュ
-//! - ナビゲーションと画像デコード
-
 pub(crate) mod container;
 pub(crate) mod types;
 pub(crate) mod utils;
 
 pub use types::{DocumentEvent, ErrorNotice, ZipBuffer};
 
-/// 画像を読み込めなかった場合に示す次の操作
 const DECODE_FAILED_ACTION: &str =
     "ファイルが壊れていないか確認してください。他の画像へ移動すると表示を続けられます";
-/// 一部のコンテナだけを開けなかった場合に示す次の操作
 const PARTIAL_OPEN_ACTION: &str = "開けたコンテナの画像は表示を続けられます。開けなかったコンテナはファイルの破損やパスワード保護を確認してください";
 
 use std::collections::HashMap;
@@ -62,7 +53,6 @@ impl ExpansionJob {
 
     fn cancel_and_advance(&mut self) {
         if let Some(active) = self.active.take() {
-            // 処理中の1件は完走するが、残りのキューは消費しない。
             active.cancel.store(true, Ordering::Relaxed);
         }
         self.generation += 1;
@@ -104,35 +94,22 @@ struct ExpansionDispatch {
     generation: u64,
 }
 
-/// ドキュメント本体（画像・ファイルリスト管理、アーカイブハンドリング）
 pub struct Document {
     event_sender: Sender<DocumentEvent>,
     decoder: Arc<DecoderChain>,
     current_image: Option<DecodedImage>,
     file_list: FileList,
-    // 先読みエンジン
     prefetch_coord: PrefetchCoordinator,
-    // アーカイブ対応
     archive_manager: Arc<ArchiveManager>,
     archive_temp_dirs: Vec<types::ExtractedDirectory>,
-    /// ZIPファイルのバッファキャッシュ (オンデマンド取得用、先読みスレッドと共有)
     zip_buffers: Arc<RwLock<HashMap<PathBuf, ZipBuffer>>>,
-    /// 表示中の画像へ編集を適用したか
     edited: bool,
-    /// 永続フィルタ設定
     persistent_filter: PersistentFilter,
     expansion: ExpansionJob,
-    /// コンテナの展開状態
     container_states: HashMap<PathBuf, ContainerState>,
-    /// 直近のナビゲーション操作の方向 (PendingContainer 到達時の intent 構築に使う)
     last_navigation_direction: NavigationDirection,
-    /// 待機中の PendingContainer ナビゲーション意図
-    /// `(container_path, 到達時の方向)` を保持し、バックグラウンド展開完了時に
-    /// direction-aware な current_index 配置に使う
     pending_navigation_intent: Option<(PathBuf, NavigationDirection)>,
-    /// UIスレッド通知コールバック (PostMessageW経由でUIを起こす)
     ui_notify: Option<Arc<dyn Fn() + Send + Sync>>,
-    // 状態遷移は実経路を通し、ワーカーに渡す入力と応答だけをテストで制御する。
     #[cfg(test)]
     expansion_dispatch: Option<Sender<ExpansionDispatch>>,
 }
@@ -168,20 +145,12 @@ impl Document {
         }
     }
 
-    /// 先読みエンジンを起動する
-    /// `notify`: レスポンス受信時のコールバック (UIスレッド通知用)
-    /// `cache_budget`: キャッシュメモリ予算 (バイト)
-    /// `base_image_size`: キャッシュ枚数計算の基準となる1枚あたりのバイト数
-    ///
-    /// ワーカースレッドの起動に失敗した場合は `Err` を返す。呼び出し元で
-    /// `show_error_title` 等へ渡すこと。失敗してもアプリ自体は起動継続可能。
     pub fn start_prefetch(
         &mut self,
         notify: Arc<dyn Fn() + Send + Sync>,
         cache_budget: usize,
         base_image_size: usize,
     ) -> Result<()> {
-        // UI通知コールバックをバックグラウンド展開用にも保持
         self.ui_notify = Some(Arc::clone(&notify));
         let engine = PrefetchEngine::new(
             Box::new(move || notify()),
@@ -194,7 +163,6 @@ impl Document {
         Ok(())
     }
 
-    /// 先読みレスポンスを処理する (キャッシュ格納 + current_image更新)
     pub fn process_prefetch_responses(&mut self) {
         let events = self
             .prefetch_coord
@@ -215,7 +183,6 @@ impl Document {
         }
     }
 
-    /// 現在位置を中心に先読みをスケジュールする
     fn schedule_prefetch(&mut self) {
         let Some(center) = self.file_list.current_index() else {
             return;
@@ -224,35 +191,28 @@ impl Document {
             .reschedule(center, self.file_list.files(), &self.persistent_filter);
     }
 
-    /// キャッシュを無効化する (フォルダ切替、再読み込み時)
     fn invalidate_cache(&mut self) {
         self.prefetch_coord.invalidate();
         self.file_list.clear_failed();
     }
 
-    /// ファイルを開く (親フォルダの画像を列挙し、指定ファイルを表示)
-    /// PDF/アーカイブファイルの場合はそれぞれの専用パスで開く
     pub fn open(&mut self, path: &Path) -> Result<()> {
         let path = Self::canonicalize(path)?;
 
-        // ブックマーク判定
         if crate::bookmark::is_bookmark_file(&path) {
             return self.open_bookmark(&path);
         }
 
-        // PDF判定
         if Self::is_pdf(&path) {
             return self.open_pdf(&path);
         }
 
-        // アーカイブ判定
         if self.archive_manager.is_archive(&path) {
             return self.open_archive(&path);
         }
 
         self.reset_document_state();
 
-        // 親フォルダの画像を列挙
         if let Some(folder) = path.parent() {
             self.file_list.populate_from_folder(folder)?;
             self.file_list.set_current_by_path(&path);
@@ -263,8 +223,6 @@ impl Document {
         Ok(())
     }
 
-    /// 単一ファイルを開く (フォルダスキャンしない)
-    /// クリップボード貼り付けなど、tempディレクトリ内の単一ファイルを開く場合に使用
     pub fn open_single(&mut self, path: &Path) -> Result<()> {
         let path = Self::canonicalize(path)?;
         self.reset_document_state();
@@ -274,24 +232,20 @@ impl Document {
         Ok(())
     }
 
-    /// ブックマークファイルを開く
     fn open_bookmark(&mut self, bookmark_path: &Path) -> Result<()> {
         let is_archive = |p: &Path| self.archive_manager.is_archive(p);
         let data = crate::bookmark::load_bookmark_from_path(bookmark_path, &is_archive)?;
         self.load_bookmark_data(data)
     }
 
-    /// アーカイブを開く (単一アーカイブ)
     fn open_archive(&mut self, archive_path: &Path) -> Result<()> {
         self.open_containers(&[archive_path.to_path_buf()])
     }
 
-    /// PDFファイルを開く (単一PDF)
     fn open_pdf(&mut self, pdf_path: &Path) -> Result<()> {
         self.open_containers(&[pdf_path.to_path_buf()])
     }
 
-    /// 新しい一覧の開始時に、旧一覧の展開・進捗・画像・編集状態を全て破棄する。
     fn reset_document_state(&mut self) {
         self.expansion.cancel_and_advance();
         self.cleanup_archive_temp();
@@ -303,14 +257,11 @@ impl Document {
         self.edited = false;
     }
 
-    /// 複数コンテナ (アーカイブ/PDF混在) をまとめて開く
-    /// 最初のコンテナのみ即座に展開し、残りはプレースホルダとして登録後バックグラウンドで展開する。
     pub fn open_containers(&mut self, paths: &[PathBuf]) -> Result<()> {
         self.reset_document_state();
 
         let errors = self.process_and_integrate_containers(paths);
 
-        // エラー処理: 部分成功を許容、全失敗のみエラー返却
         if self.file_list.len() == 0 {
             if errors.is_empty() {
                 anyhow::bail!("コンテナ内に画像ファイルが存在しない");
@@ -333,21 +284,15 @@ impl Document {
         }
         let _ = self.event_sender.send(DocumentEvent::FileListChanged);
 
-        // 未展開コンテナがあればバックグラウンド展開を起動
         self.start_background_expansion();
 
         self.load_current();
         Ok(())
     }
 
-    /// 複数パス (フォルダ・コンテナ・画像ファイル混在) をフラットに展開して開く。
-    /// フォルダ入力はサブフォルダまで深さ優先で再帰走査し、配下の画像・コンテナを一括で取り込む。
     pub fn open_multiple(&mut self, paths: &[PathBuf]) -> Result<()> {
         self.reset_document_state();
 
-        // トップレベル入力の正規化。リパースポイント (シンボリックリンク・ジャンクション) は
-        // `canonicalize()` での実体化前に除外し、再帰走査時の除外規則と一貫させる。
-        // 複数入力が同じ実体パスへ解決された場合は、先着を残して以降を除外する (重複走査の回避)。
         let mut canonical_inputs: Vec<PathBuf> = Vec::new();
         for raw in paths {
             if let Ok(meta) = std::fs::symlink_metadata(raw)
@@ -361,8 +306,6 @@ impl Document {
             }
         }
 
-        // 入れ子関係にある入力 (ある入力が別の入力の祖先ディレクトリ) は祖先のみ残して子孫を除外する。
-        // 親フォルダと配下サブフォルダを同時に受け取った際、再帰走査で子孫サブツリーが二重登録されるのを防ぐ。
         let mut filtered_inputs: Vec<PathBuf> = Vec::new();
         for path in &canonical_inputs {
             let is_descendant = canonical_inputs
@@ -373,21 +316,13 @@ impl Document {
             }
         }
 
-        // D&D やシェルからの複数渡しは順序が選択順になるため、トップレベル入力を
-        // 自然順に並べ替えて以降の push 順 (= FileList のグループ出現順) を安定化する。
         sort_paths_natural(&mut filtered_inputs);
 
-        // コンテナは出所別に2系統で保持する。
-        // - toplevel_containers: トップレベル入力が直接コンテナであるもの (最後に自然順ソート対象)
-        // - folder_containers:   フォルダ再帰走査で見つけたもの (走査順を保持する)
         let mut toplevel_containers: Vec<PathBuf> = Vec::new();
         let mut folder_containers: Vec<PathBuf> = Vec::new();
         let mut bookmarks: Vec<PathBuf> = Vec::new();
         for path in &filtered_inputs {
             if path.is_dir() {
-                // フォルダ: 再帰走査した全ファイルを振り分ける。
-                // 再帰ヘルパー内でリパースポイント除外と自然順整列を済ませており、
-                // 親階層のファイル→サブディレクトリの順に格納されている。
                 for entry_path in collect_folder_files_recursive(path) {
                     if crate::bookmark::is_bookmark_file(&entry_path) {
                         bookmarks.push(entry_path);
@@ -412,8 +347,6 @@ impl Document {
             }
         }
 
-        // ブックマークからエントリを展開して file_list / コンテナ群に振り分ける。
-        // ブックマーク経由で得たコンテナはトップレベル相当として扱い、自然順ソート対象に含める。
         for bm_path in &bookmarks {
             let is_archive = |p: &Path| self.archive_manager.is_archive(p);
             if let Ok(data) = crate::bookmark::load_bookmark_from_path(bm_path, &is_archive) {
@@ -444,18 +377,12 @@ impl Document {
             }
         }
 
-        // トップレベル入力由来のコンテナ群のみ自然順ソートし、D&D 選択順を安定化する。
-        // process_and_integrate_containers は先頭を即展開するため、ここでの並び順が
-        // FileList のグループ出現順 = 最終的な表示順序を左右する。
-        // フォルダ再帰由来は走査順 (親→子) を壊さないよう、ソートせずに末尾へ連結する。
         sort_paths_natural(&mut toplevel_containers);
         let mut containers: Vec<PathBuf> = toplevel_containers;
         containers.extend(folder_containers);
 
-        // コンテナを展開・統合
         let errors = self.process_and_integrate_containers(&containers);
 
-        // エラー処理
         if self.file_list.len() == 0 {
             if errors.is_empty() {
                 anyhow::bail!("画像ファイルが存在しない");
@@ -478,16 +405,12 @@ impl Document {
         }
         let _ = self.event_sender.send(DocumentEvent::FileListChanged);
 
-        // 未展開コンテナがあればバックグラウンド展開を起動
         self.start_background_expansion();
 
         self.load_current();
         Ok(())
     }
 
-    /// コンテナの段階的読み込みヘルパー
-    /// 最初のコンテナのみ即座に展開し、残りはプレースホルダとして登録する。
-    /// エラーメッセージのリストを返す。
     fn process_and_integrate_containers(&mut self, paths: &[PathBuf]) -> Vec<String> {
         if paths.is_empty() {
             return Vec::new();
@@ -495,7 +418,6 @@ impl Document {
 
         let mut errors: Vec<String> = Vec::new();
 
-        // 最初のコンテナだけ即座に展開
         let result = process_single_container(&paths[0], &self.archive_manager, Self::is_pdf);
         match result {
             ContainerResult::Error { path, error } => {
@@ -506,7 +428,6 @@ impl Document {
             }
         }
 
-        // 残りのコンテナはプレースホルダとして登録
         for path in &paths[1..] {
             let file_name = path
                 .file_name()
@@ -538,14 +459,10 @@ impl Document {
         errors
     }
 
-    /// ContainerResult をファイルリストに統合する
     fn integrate_container_result(&mut self, result: ContainerResult) {
-        // FileInfo 構築を build_container_entries に委譲する。
-        // 先に参照で entries を生成し、その後所有権フィールド (buffer, temp_dir) を分解して
-        // self への副作用を処理する。
         let file_entries = Self::build_container_entries(&result);
         match result {
-            ContainerResult::Error { .. } => {} // 呼び出し元で処理済み
+            ContainerResult::Error { .. } => {}
             ContainerResult::Pdf { path, page_count } => {
                 if page_count == 0 {
                     return;
@@ -586,9 +503,6 @@ impl Document {
         }
     }
 
-    /// ContainerResult からエントリの Vec を生成する共通ヘルパー
-    ///
-    /// Error バリアントは空の Vec を返す。呼び出し元で Error の判定・処理を行うこと。
     fn build_container_entries(result: &ContainerResult) -> Vec<crate::file_info::FileInfo> {
         let mut entries = Vec::new();
         match result {
@@ -657,16 +571,11 @@ impl Document {
         entries
     }
 
-    /// バックグラウンドコンテナ展開を起動する
-    /// Pending状態のコンテナを全てInFlightに遷移させてからスレッドに投入する。
-    /// 既に Expanded 状態のコンテナはスキップする (再起動時の二重展開防止)。
     fn start_background_expansion(&mut self) {
-        // Pending状態のコンテナパスを収集し、現在位置からの距離でソート
         let current_idx = self.file_list.current_index().unwrap_or(0);
         let mut pending_paths: Vec<(usize, PathBuf)> = Vec::new();
         for (i, file) in self.file_list.files().iter().enumerate() {
             if let FileSource::PendingContainer { container_path } = &file.source {
-                // 既に Expanded 状態のものは投入しない (reschedule 時の安全策)
                 if matches!(
                     self.container_states.get(container_path),
                     Some(ContainerState::Expanded)
@@ -681,12 +590,10 @@ impl Document {
             return;
         }
 
-        // 現在位置からの距離でソート (近い順に展開する)
         pending_paths.sort_by_key(|(idx, _)| (*idx as isize - current_idx as isize).unsigned_abs());
 
         let paths: Vec<PathBuf> = pending_paths.into_iter().map(|(_, p)| p).collect();
 
-        // ディスパッチ前にメインスレッドで全てInFlightに遷移
         for path in &paths {
             self.container_states
                 .insert(path.clone(), ContainerState::InFlight);
@@ -712,11 +619,9 @@ impl Document {
 
         let archive_manager = Arc::clone(&self.archive_manager);
         let ui_notify = self.ui_notify.clone();
-        // rayon プール作成失敗を UI に通知するため、event_sender をワーカースレッドへ複製する
         let event_sender = self.event_sender.clone();
 
         std::thread::spawn(move || {
-            // rayon プールで並列展開。プール作成失敗時は DocumentEvent::Error を送って終了する。
             let pool = match build_expansion_pool() {
                 Ok(pool) => pool,
                 Err(e) => {
@@ -737,7 +642,6 @@ impl Document {
 
             pool.install(|| {
                 paths.par_iter().for_each(|path| {
-                    // 旧世代として無効化されていたら以降の処理をスキップする
                     if cancel.load(Ordering::Relaxed) {
                         return;
                     }
@@ -747,7 +651,6 @@ impl Document {
                         result,
                         generation,
                     });
-                    // UIスレッドを起こす (PostMessageW経由)
                     if let Some(notify) = &ui_notify {
                         notify();
                     }
@@ -761,11 +664,6 @@ impl Document {
         });
     }
 
-    /// バックグラウンド展開を再起動して優先度を再計算する
-    /// シャッフル等でリスト並べ替えが起きた後や、ユーザーが PendingContainer
-    /// に到達して特定コンテナを最優先で待ち始めたタイミングで呼ぶ。
-    /// 旧 rayon ジョブはキューの消費を停止し、
-    /// 進行中の1件だけ完走させてから終了する。結果は世代不一致で破棄される。
     fn reschedule_background_expansion(&mut self) {
         if !self.file_list.has_pending() {
             return;
@@ -774,22 +672,15 @@ impl Document {
         self.start_background_expansion();
     }
 
-    /// バックグラウンド展開結果を回収して file_list に統合する
-    /// 1回の poll で受信可能な完了結果を全部処理し、終了時に1回だけ
-    /// `FileListChanged` を送信する (パネル全件再構築のコストを抑えるため)。
-    /// 統合対象が `pending_navigation_intent` と一致したら direction を渡し、
-    /// 解決時に `load_current()` をリトライして表示を更新する。
     pub fn process_expand_results(&mut self) {
         let mut applied = false;
         let mut intent_resolved = false;
 
         while let Some((container_path, result)) = self.expansion.poll() {
-            // file_list 内で該当 PendingContainer を探して統合
             let Some(idx) = self.find_pending_index(&container_path) else {
                 continue;
             };
 
-            // intent と一致するなら direction を引き出し、解決済みフラグを立てる
             let (direction, was_intent) = match &self.pending_navigation_intent {
                 Some((p, d)) if *p == container_path => (*d, true),
                 _ => (NavigationDirection::Forward, false),
@@ -804,8 +695,6 @@ impl Document {
         }
 
         if applied {
-            // バッチ完了後にキャッシュ無効化と先読み再スケジュールを1回だけ実行する。
-            // apply_container_result はファイルリスト更新のみ行い、これらを呼ばない。
             self.invalidate_cache();
             if intent_resolved && self.file_list.current_index().is_some() {
                 self.load_current();
@@ -817,7 +706,6 @@ impl Document {
         }
     }
 
-    /// 指定 container_path を持つ PendingContainer プレースホルダの index を探す
     fn find_pending_index(&self, container_path: &Path) -> Option<usize> {
         self.file_list.files().iter().position(|f| match &f.source {
             FileSource::PendingContainer { container_path: cp } => cp == container_path,
@@ -825,7 +713,6 @@ impl Document {
         })
     }
 
-    /// バックグラウンド展開の進捗を返す (展開済み / 全体)
     pub fn expand_progress(&self) -> Option<(usize, usize)> {
         let total = self.container_states.len();
         if total == 0 {
@@ -837,17 +724,12 @@ impl Document {
             .filter(|s| **s == ContainerState::Expanded)
             .count();
         if done >= total {
-            None // 全完了なら非表示
+            None
         } else {
             Some((done, total))
         }
     }
 
-    /// ContainerResult をファイルリストに反映する
-    /// `direction` は「展開位置 == 現在位置」だった場合の current_index 配置に使う。
-    /// キャッシュ無効化・先読み再スケジュール・`FileListChanged` の送信は行わず、
-    /// 呼び出し元 (process_expand_results / expand_all_pending_sync) が
-    /// バッチ完了後にまとめて1回実行する。
     fn apply_container_result(
         &mut self,
         index: usize,
@@ -876,7 +758,6 @@ impl Document {
             result => {
                 let entries = Self::build_container_entries(&result);
 
-                // ZIPバッファやtemp_dirを保存
                 if let ContainerResult::Zip { path, buffer, .. } = result {
                     self.zip_buffers
                         .write()
@@ -898,14 +779,9 @@ impl Document {
         }
     }
 
-    /// 全未展開コンテナを同期展開する (ブックマーク保存前等で全展開が必要な経路用)
-    /// バックグラウンド展開と並走する可能性があるため、まず世代を進めて旧結果を破棄してから
-    /// 残った PendingContainer を1つずつ直接同期展開する。
     pub fn expand_all_pending_sync(&mut self) {
-        // 旧バックグラウンドジョブを即座に停止させて HDD 帯域を譲ってもらう。
         self.expansion.cancel_and_advance();
 
-        // 全プレースホルダを順に同期展開
         while self.file_list.has_pending() {
             let pending = self
                 .file_list
@@ -918,8 +794,6 @@ impl Document {
                 FileSource::PendingContainer { container_path } => container_path.clone(),
                 _ => break,
             };
-            // 既に Expanded 状態 (バックグラウンドが直前に書き戻したケース) はスキップして
-            // ファイルリストから単に取り除くだけにする
             if matches!(
                 self.container_states.get(&container_path),
                 Some(ContainerState::Expanded)
@@ -931,8 +805,6 @@ impl Document {
                 .insert(container_path.clone(), ContainerState::InFlight);
             let result =
                 process_single_container(&container_path, &self.archive_manager, Self::is_pdf);
-            // expand_all_pending_sync は通常ナビゲーション前のバックエンド処理なので
-            // 方向は意味を持たない。Forward を渡しておく。
             let _ = self.apply_container_result(
                 idx,
                 &container_path,
@@ -954,12 +826,10 @@ impl Document {
         let _ = self.event_sender.send(DocumentEvent::FileListChanged);
     }
 
-    /// PDFファイルかどうか判定する
     fn is_pdf(path: &Path) -> bool {
         ExtensionRegistry::is_pdf_path(path)
     }
 
-    /// アーカイブ用tempディレクトリとZIPバッファをクリーンアップする
     fn cleanup_archive_temp(&mut self) {
         self.archive_temp_dirs.clear();
         self.zip_buffers
@@ -968,14 +838,11 @@ impl Document {
             .clear();
     }
 
-    /// フォルダを開く (先頭画像を表示)
     pub fn open_folder(&mut self, folder: &Path) -> Result<()> {
-        // open_multiple() は read_dir エラーを無視するため、委譲前に確認して確実に伝播させる。
         std::fs::read_dir(folder)?;
         self.open_multiple(&[folder.to_path_buf()])
     }
 
-    /// 相対移動
     pub fn navigate_relative(&mut self, offset: isize) {
         self.last_navigation_direction = if offset >= 0 {
             NavigationDirection::Forward
@@ -987,7 +854,6 @@ impl Document {
         }
     }
 
-    /// 最初へ移動
     pub fn navigate_first(&mut self) {
         self.last_navigation_direction = NavigationDirection::Forward;
         if self.file_list.navigate_first() {
@@ -995,7 +861,6 @@ impl Document {
         }
     }
 
-    /// 指定インデックスへ移動
     pub fn navigate_to(&mut self, index: usize) {
         self.last_navigation_direction = NavigationDirection::Forward;
         if self.file_list.navigate_to(index) {
@@ -1003,7 +868,6 @@ impl Document {
         }
     }
 
-    /// 最後へ移動
     pub fn navigate_last(&mut self) {
         self.last_navigation_direction = NavigationDirection::Backward;
         if self.file_list.navigate_last() {
@@ -1011,9 +875,6 @@ impl Document {
         }
     }
 
-    /// 現在のファイルをデコードしてイベント送信
-    ///
-    /// 読取・デコードの失敗は失敗マークと`DocumentEvent::Error`で通知する。
     fn load_current(&mut self) {
         self.edited = false;
         let Some(index) = self.file_list.current_index() else {
@@ -1021,34 +882,21 @@ impl Document {
             return;
         };
 
-        // 0. PendingContainer なら同期展開せず、非同期待ちに入る
-        //    (UIスレッドをブロックしないため。展開完了は process_expand_results が
-        //    file_list へ統合し、direction-aware に current_index を調整した上で
-        //    load_current() をリトライする)
         if self.file_list.is_pending_at(index)
             && let Some(container_path) = self.file_list.pending_container_path_at(index)
         {
-            // 「読み込み中」状態に遷移
             self.current_image = None;
 
-            // 直近の navigation direction を保存し、該当コンテナの展開を最優先化
-            // (start_background_expansion 内で current_index 基準にソートされる)
             self.pending_navigation_intent = Some((container_path, self.last_navigation_direction));
             self.reschedule_background_expansion();
 
-            // UI に状態変化を通知:
-            //   - NavigationChanged: タイトルバーとファイルリスト選択を更新
-            //     (update_title 側で「読み込み中: foo.zip」を表示する)
-            //   - ImageReady: 画像領域を再描画して黒画面 (current_image=None) を表示
             self.send_navigation_changed();
             let _ = self.event_sender.send(DocumentEvent::ImageReady);
             return;
         }
 
-        // 通常ファイルに到達したので、待機していた intent はクリアする
         self.pending_navigation_intent = None;
 
-        // 1. キャッシュヒット → 瞬時切替 (永続フィルタはキャッシュ時に既に適用済み)
         if let Some(image) = self.prefetch_coord.take(index) {
             self.current_image = Some(image);
             let _ = self.event_sender.send(DocumentEvent::ImageReady);
@@ -1057,7 +905,6 @@ impl Document {
             return;
         }
 
-        // 2. キャッシュミス → 同期デコード (フォールバック)
         let current = self.file_list.current().expect("current_index was Some");
         let source = current.source.clone();
 
@@ -1071,14 +918,12 @@ impl Document {
 
         match decode_result {
             Ok(image) => {
-                // 永続フィルタを適用 (有効な場合のみ)
                 let image = self.persistent_filter.apply(&image).unwrap_or(image);
                 self.current_image = Some(image);
                 let _ = self.event_sender.send(DocumentEvent::ImageReady);
             }
             Err(e) => {
                 self.current_image = None;
-                // 同期デコード失敗時はfailedマーク (ナビゲーション時にスキップ対象)
                 self.file_list.mark_failed(index);
                 let msg = format!("{}: {}", source.display_path(), e);
                 let _ = self.event_sender.send(DocumentEvent::Error(
@@ -1092,7 +937,6 @@ impl Document {
         self.schedule_prefetch();
     }
 
-    /// NavigationChangedイベントを送信
     fn send_navigation_changed(&self) {
         if let Some(index) = self.file_list.current_index() {
             let _ = self
@@ -1101,15 +945,10 @@ impl Document {
         }
     }
 
-    /// パスを正規化する (相対パスやUNCパス対応)
-    /// Rustのcanonicalize() は\\?\プレフィックスを付与するが、
-    /// SHFileOperationW等のShell APIが非対応のため除去する
     fn canonicalize(path: &Path) -> Result<PathBuf> {
         match std::fs::canonicalize(path) {
             Ok(canonical) => Ok(crate::util::strip_extended_length_prefix(&canonical)),
             Err(e) => {
-                // UNCパスではcanonicalize() が失敗する場合がある
-                // (ネットワーク遅延、DFS等)。ファイルが存在するならそのまま使う
                 if path.exists() {
                     Ok(path.to_path_buf())
                 } else {
@@ -1119,13 +958,11 @@ impl Document {
         }
     }
 
-    /// FileInfoからファイルデータを取得する (オンデマンドアーカイブ対応)
     fn read_file_data(&self, info: &crate::file_info::FileInfo) -> Result<Vec<u8>> {
         info.source
             .read_bytes(&self.archive_manager, &self.zip_buffers)
     }
 
-    /// 現在項目の元データを取得する (テストで期待値を得るための補助)
     #[cfg(test)]
     pub fn read_file_data_current(&self) -> Result<Vec<u8>> {
         let current = self
@@ -1135,7 +972,6 @@ impl Document {
         self.read_file_data(current)
     }
 
-    /// 複製用にソースの内容を保存する。表示へ適用したフィルタは含めない。
     pub fn copy_source_to(&self, source: &FileSource, destination: &Path) -> Result<()> {
         match source {
             FileSource::File(path)
@@ -1151,71 +987,57 @@ impl Document {
         }
     }
 
-    /// 現在のデコード済み画像への参照
     pub fn current_image(&self) -> Option<&DecodedImage> {
         self.current_image.as_ref()
     }
 
-    /// 現在のファイルパス
     pub fn current_path(&self) -> Option<&Path> {
         self.file_list.current().and_then(|f| f.source.file_path())
     }
 
-    /// ファイルリストへの参照
     pub fn file_list(&self) -> &FileList {
         &self.file_list
     }
 
-    /// 実形式で用意しにくい展開済みソースを受入テストの混在一覧へ加える。
     #[cfg(test)]
     pub(crate) fn append_test_file(&mut self, info: crate::file_info::FileInfo) {
         self.file_list.push(info);
     }
 
-    /// パスがコンテナ (アーカイブ・PDF・ブックマーク) か判定する
     pub fn is_container(&self, path: &Path) -> bool {
         self.archive_manager.is_archive(path)
             || Self::is_pdf(path)
             || crate::bookmark::is_bookmark_file(path)
     }
 
-    /// パスがアーカイブ拡張子を持つか判定する (ブックマーク復元時のコンテナ検出用)
     pub fn is_archive_path(&self, path: &Path) -> bool {
         self.archive_manager.is_archive(path)
     }
 
-    /// 現在のファイルの論理ソース
     pub fn current_source(&self) -> Option<&FileSource> {
         self.file_list.current().map(|f| &f.source)
     }
 
-    // --- マーク操作 ---
-
-    /// 現在のファイルをマークする (現在位置は移動しない)
     pub fn mark_current(&mut self) {
         if let Some(index) = self.file_list.current_index() {
             self.file_list.mark_at(index);
         }
     }
 
-    /// 現在のファイルのマークを解除する
     pub fn unmark_current(&mut self) {
         if let Some(index) = self.file_list.current_index() {
             self.file_list.unmark_at(index);
         }
     }
 
-    /// 全マーク反転
     pub fn invert_all_marks(&mut self) {
         self.file_list.invert_all_marks();
     }
 
-    /// 最初から現在位置までのマーク反転
     pub fn invert_marks_to_here(&mut self) {
         self.file_list.invert_marks_to_here();
     }
 
-    /// 前のマーク画像へ移動
     pub fn navigate_prev_mark(&mut self) {
         self.last_navigation_direction = NavigationDirection::Backward;
         if self.file_list.navigate_prev_mark() {
@@ -1223,7 +1045,6 @@ impl Document {
         }
     }
 
-    /// 次のマーク画像へ移動
     pub fn navigate_next_mark(&mut self) {
         self.last_navigation_direction = NavigationDirection::Forward;
         if self.file_list.navigate_next_mark() {
@@ -1231,11 +1052,6 @@ impl Document {
         }
     }
 
-    // --- フォルダナビゲーション ---
-
-    /// 前のフォルダへ移動
-    /// 「前のフォルダの先頭画像」を表示する仕様なので、PendingContainer 到達時も
-    /// 展開後グループの先頭で正しい (Forward 扱い)
     pub fn navigate_prev_folder(&mut self) {
         self.last_navigation_direction = NavigationDirection::Forward;
         if self.file_list.navigate_prev_folder() {
@@ -1243,7 +1059,6 @@ impl Document {
         }
     }
 
-    /// 次のフォルダへ移動
     pub fn navigate_next_folder(&mut self) {
         self.last_navigation_direction = NavigationDirection::Forward;
         if self.file_list.navigate_next_folder() {
@@ -1251,7 +1066,6 @@ impl Document {
         }
     }
 
-    /// ソート順で前の画像へ移動
     pub fn sort_navigate_back(&mut self) {
         self.last_navigation_direction = NavigationDirection::Backward;
         let order = self.file_list.sort_order();
@@ -1260,19 +1074,16 @@ impl Document {
         }
     }
 
-    /// ファイルリスト全体をシャッフル
     pub fn shuffle_all(&mut self) {
         self.file_list.shuffle_all();
         self.after_list_change();
     }
 
-    /// グループ順をシャッフル (グループ内順序は保持)
     pub fn shuffle_groups(&mut self) {
         self.file_list.shuffle_groups();
         self.after_list_change();
     }
 
-    /// ソート順で次の画像へ移動
     pub fn sort_navigate_forward(&mut self) {
         self.last_navigation_direction = NavigationDirection::Forward;
         let order = self.file_list.sort_order();
@@ -1281,7 +1092,6 @@ impl Document {
         }
     }
 
-    /// 現在のファイルをリストから削除する (ファイル自体は残る)
     pub fn remove_current_from_list(&mut self) {
         if let Some(index) = self.file_list.current_index() {
             self.file_list.remove_at(index);
@@ -1289,7 +1099,6 @@ impl Document {
         }
     }
 
-    /// 操作に成功した行だけを一覧とマークから除く。
     pub fn remove_indices_from_list(&mut self, indices: &[usize]) {
         for &index in indices.iter().rev() {
             self.file_list.remove_at(index);
@@ -1297,7 +1106,6 @@ impl Document {
         self.after_list_change();
     }
 
-    /// マーク済みファイルをリストから削除する
     pub fn remove_marked_from_list(&mut self) {
         if self.file_list.marked_count() == 0 {
             return;
@@ -1306,12 +1114,8 @@ impl Document {
         self.after_list_change();
     }
 
-    /// リスト変更後の共通処理 (キャッシュ無効化+再読込+イベント送信)
-    /// 並べ替えで PendingContainer の位置関係が変わっている可能性があるため、
-    /// バックグラウンド展開を再優先度付け (現在位置基準) する。
     pub fn after_list_change(&mut self) {
         self.invalidate_cache();
-        // シャッフル/削除等でリスト位置が変わった可能性 → 展開キューを再ソート
         self.reschedule_background_expansion();
         let _ = self.event_sender.send(DocumentEvent::FileListChanged);
         if self.file_list.len() > 0 {
@@ -1323,20 +1127,17 @@ impl Document {
         }
     }
 
-    /// 現在のファイルを再読み込みする
     pub fn reload(&mut self) {
         self.invalidate_cache();
         self.load_current();
     }
 
-    /// ファイルリストをクリアする
     pub fn close_all(&mut self) {
         self.reset_document_state();
         let _ = self.event_sender.send(DocumentEvent::FileListChanged);
         let _ = self.event_sender.send(DocumentEvent::ImageReady);
     }
 
-    /// ブックマークデータからファイルリストを復元する
     pub fn load_bookmark_data(&mut self, data: crate::bookmark::BookmarkData) -> Result<()> {
         let has_containers = data.entries.iter().any(|s| {
             matches!(
@@ -1348,7 +1149,6 @@ impl Document {
         });
 
         if has_containers {
-            // コンテナモード: ユニークなコンテナパスを収集
             let mut container_paths: Vec<PathBuf> = Vec::new();
             for source in &data.entries {
                 let path = match source {
@@ -1371,13 +1171,8 @@ impl Document {
 
             self.open_containers(&container_paths)?;
 
-            // 全コンテナを同期展開してから位置復元する。
-            // open_containers は先頭コンテナのみ即時展開し残りは PendingContainer のため、
-            // 非先頭コンテナ内エントリを指す index の source_matches が失敗する。
-            // ブックマーク読み込みはユーザー明示操作なので同期展開のブロッキングは許容する。
             self.expand_all_pending_sync();
 
-            // 位置復元: source同一性で検索 (PDF/Archive両対応)
             if let Some(target_source) = data.entries.get(data.index) {
                 let target_idx = self
                     .file_list
@@ -1389,7 +1184,6 @@ impl Document {
                 self.load_current();
             }
         } else {
-            // 通常ファイルのみ
             self.reset_document_state();
 
             for source in &data.entries {
@@ -1413,14 +1207,12 @@ impl Document {
         Ok(())
     }
 
-    /// 現在のファイルのメタデータを取得する
     pub fn current_metadata(&self) -> Result<crate::image::ImageMetadata> {
         let current = self
             .file_list
             .current()
             .ok_or_else(|| anyhow::anyhow!("ファイルが選択されていない"))?;
 
-        // PDFページの場合はcurrent_imageからメタデータを生成
         if matches!(current.source, FileSource::PdfPage { .. }) {
             return if self.current_image.is_some() {
                 Ok(crate::image::ImageMetadata {
@@ -1438,37 +1230,28 @@ impl Document {
             .metadata(&data, &current.source.filename_hint())
     }
 
-    /// 指定インデックスの画像がキャッシュ済みか判定する
-    /// current_imageとして保持中の画像も「キャッシュ済み」として扱う
     pub fn is_cached(&self, index: usize) -> bool {
         self.prefetch_coord.contains(index)
             || (self.file_list.current_index() == Some(index) && self.current_image.is_some())
     }
 
-    // --- 編集状態 ---
-
-    /// 未保存の編集があるかどうか
     pub fn has_unsaved_edit(&self) -> bool {
         self.edited
     }
 
-    /// 永続フィルタへの参照
     pub fn persistent_filter(&self) -> &PersistentFilter {
         &self.persistent_filter
     }
 
-    /// 永続フィルタへの可変参照
     pub fn persistent_filter_mut(&mut self) -> &mut PersistentFilter {
         &mut self.persistent_filter
     }
 
-    /// 永続フィルタ設定変更後にキャッシュを全無効化して再読込する
     pub fn on_persistent_filter_changed(&mut self) {
         self.invalidate_cache();
         self.load_current();
     }
 
-    /// current_imageを編集結果で置き換える
     pub fn apply_edit(&mut self, new_image: DecodedImage) {
         self.current_image = Some(new_image);
         self.edited = true;
@@ -1617,12 +1400,9 @@ mod tests {
 
     #[test]
     fn new_propagates_default_sort_to_file_list() {
-        // `Document::new` が受け取った既定ソート種別がファイル一覧へ伝達されることを確認する。
-        // `test_document` は `SortOrder::default()` (= `Natural`) を渡す。
         let (doc, _rx) = test_document();
         assert_eq!(doc.file_list().sort_order(), SortOrder::default());
 
-        // 明示的に異なる種別を渡したケースも検証する。
         let (sender, _rx2) = crossbeam_channel::unbounded();
         let registry = Arc::new(ExtensionRegistry::new());
         let decoder = crate::test_helpers::test_decoder();
@@ -1684,14 +1464,13 @@ mod tests {
 
         assert_eq!(doc.file_list().marked_count(), 0);
 
-        // マーク設定は現在位置を移動しない
-        doc.mark_current(); // mark index 0, stay at 0
+        doc.mark_current();
         assert_eq!(doc.file_list().current_index(), Some(0));
         assert_eq!(doc.file_list().marked_count(), 1);
 
-        doc.invert_all_marks(); // toggle all marks (0 marked -> 0, 1, 2 marked; 0 is unmarked)
+        doc.invert_all_marks();
         let marked = doc.file_list().marked_count();
-        assert!(marked > 0 && marked < 3); // should have some marked and some unmarked
+        assert!(marked > 0 && marked < 3);
     }
 
     #[test]
@@ -1702,8 +1481,6 @@ mod tests {
         assert!(!Document::is_pdf(Path::new("test.pdf.txt")));
     }
 
-    /// 通常ファイル・ZIP内画像・先読み (キャッシュ取出) のいずれでも向きを一度だけ適用し、
-    /// 再読込や往復移動で回転が累積しない
     #[test]
     fn orientation_is_applied_consistently_for_file_archive_and_prefetch() {
         use crate::test_helpers::{
@@ -1753,7 +1530,6 @@ mod tests {
             img.data.clone()
         };
 
-        // 通常ファイル (同期デコード) と、先読み済みの次画像への移動 (キャッシュ取出)
         let (mut doc, _rx) = test_document();
         doc.start_prefetch(Arc::new(|| {}), 64 * 1024 * 1024, 1024)
             .unwrap();
@@ -1772,7 +1548,6 @@ mod tests {
         doc.reload();
         assert_eq!(current(&doc), expected[0], "reload");
 
-        // ZIP内の画像
         let (mut zip_doc, _rx) = test_document();
         zip_doc.open(&zip_path).unwrap();
         assert_eq!(current(&zip_doc), expected[0], "archive");
@@ -1998,20 +1773,17 @@ mod tests {
         assert_eq!(started_rx.recv_timeout(Duration::from_secs(5)).unwrap(), 0);
         let old_generation = doc.prefetch_coord.generation().unwrap();
 
-        // 旧要求のデコードを止めたまま、製品の設定変更処理で世代を進める。
         doc.persistent_filter_mut().toggle_enabled();
         doc.on_persistent_filter_changed();
         assert!(doc.prefetch_coord.generation().unwrap() > old_generation);
         assert_eq!(doc.current_image().unwrap().data, vec![10, 20, 30, 255]);
 
-        // 先読み対象を表示待ちにする。旧応答が採用されれば反転画像が表示される状態。
         assert!(doc.file_list.navigate_to(1));
         doc.current_image = None;
         for _ in event_rx.try_iter() {}
         release_tx.send(()).unwrap();
         notified_rx.recv_timeout(Duration::from_secs(5)).unwrap();
         assert_eq!(started_rx.recv_timeout(Duration::from_secs(5)).unwrap(), 1);
-        // 新世代をゲートで止めているので、ここでは旧世代の実ワーカー応答だけを処理する。
         doc.process_prefetch_responses();
         assert!(
             doc.current_image().is_none(),

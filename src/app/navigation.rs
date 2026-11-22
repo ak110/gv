@@ -1,5 +1,3 @@
-//! ナビゲーション操作
-
 use super::{AppWindow, next_action};
 use crate::document::Document;
 
@@ -8,7 +6,6 @@ impl AppWindow {
         self.navigate_with_guard(Document::sort_navigate_forward);
     }
 
-    /// 編集状態と選択範囲を整理して画像を切り替える
     pub(crate) fn navigate_with_guard(&mut self, f: impl FnOnce(&mut Document)) {
         self.before_image_change();
         self.carry_over_selection();
@@ -16,18 +13,12 @@ impl AppWindow {
         self.process_document_events();
     }
 
-    /// 画像切替をまたいで選択範囲を引き継ぐ
-    ///
-    /// 複数の画像に対して同一座標の領域を繰り返し指定できるよう、確定済みの選択矩形は切替後も保持する。
-    /// 座標は切替先の画像の寸法に合わせて補正せず、各処理が境界クランプで扱う。
-    /// ドラッグ操作の途中で切り替わった場合は、未確定の矩形が残らないよう解除する。
     pub(crate) fn carry_over_selection(&mut self) {
         if !self.selection.is_selected() {
             self.selection.deselect();
         }
     }
 
-    /// ページ指定ナビゲーション
     pub(crate) fn navigate_to_page_dialog(&mut self) {
         let total = self.document.file_list().len();
         if total == 0 {
@@ -51,7 +42,6 @@ impl AppWindow {
 }
 
 impl AppWindow {
-    /// 編集済みの画像を離れるときは、その画像上の選択範囲を解除する
     pub(super) fn before_image_change(&mut self) {
         if self.document.has_unsaved_edit() {
             self.selection.deselect();
@@ -129,7 +119,6 @@ mod tests {
         app.with_app(super::super::AppWindow::on_slideshow_timer);
         assert_eq!(app.borrow().selection.current_rect(), selected);
         assert_eq!(app.borrow().document.file_list().current_index(), Some(1));
-        // 編集済み画像もスライドショーの自動送りで破棄する。
         app.with_app(|state| {
             state
                 .document
@@ -142,7 +131,6 @@ mod tests {
         app.destroy();
     }
 
-    /// 有効なページ指定では、未編集の選択を保持し、編集済みの選択を解除する。
     #[test]
     fn page_dialog_keeps_unedited_selection_and_discards_edited_selection() {
         let dir = TempDir::new("page_navigation_selection");

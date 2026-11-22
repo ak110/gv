@@ -4,35 +4,26 @@ use std::time::SystemTime;
 
 use anyhow::{Context as _, Result};
 
-/// ファイルの論理的なソース情報
-///
-/// 通常ファイル・アーカイブ内エントリ・PDFページ・未展開コンテナを区別する
 #[derive(Debug, Clone)]
 pub enum FileSource {
-    /// 通常のファイルシステム上のファイル
     File(PathBuf),
-    /// アーカイブ内のエントリ
     ArchiveEntry {
         archive: PathBuf,
         entry: String,
-        /// trueならオンデマンド取得、falseならtemp展開済み
         on_demand: bool,
-        /// 一括展開した画像の実ファイル。オンデマンドではNone。
         temp_path: Option<PathBuf>,
-        /// アーカイブ内エントリの再アクセス用インデックス。
-        /// オンデマンド取得には`Some`が必須で、表示名から番号を推測しない。
-        /// ブックマークの`None`はコンテナを開き直して番号付きの行へ再構築する。
-        /// 一括展開済みの画像は番号を使わず、temp_pathから読み込む。
         entry_index: Option<u32>,
     },
-    /// PDFのページ
-    PdfPage { pdf_path: PathBuf, page_index: u32 },
-    /// 未展開コンテナ (遅延読み込み用プレースホルダ)
-    PendingContainer { container_path: PathBuf },
+    PdfPage {
+        pdf_path: PathBuf,
+        page_index: u32,
+    },
+    PendingContainer {
+        container_path: PathBuf,
+    },
 }
 
 impl FileSource {
-    /// 削除・移動できる通常ファイルのパス。
     pub fn file_path(&self) -> Option<&Path> {
         match self {
             Self::File(path) => Some(path),
@@ -40,7 +31,6 @@ impl FileSource {
         }
     }
 
-    /// 通常ファイルだけを削除・移動の対象にする。
     pub fn can_delete(&self) -> bool {
         self.file_path().is_some()
     }
@@ -48,12 +38,10 @@ impl FileSource {
         self.file_path().is_some()
     }
 
-    /// 複製できる内容を持つか。未展開コンテナは対象外。
     pub fn can_copy(&self) -> bool {
         !self.is_pending_container()
     }
 
-    /// デコーダへ渡す元の画像ファイル名。
     pub fn filename_hint(&self) -> String {
         match self {
             Self::ArchiveEntry { entry, .. } => crate::archive::extract_filename(entry).to_string(),
@@ -66,7 +54,6 @@ impl FileSource {
         }
     }
 
-    /// 画像内容を取得する。PDFはページを描画しPNGとして返す。
     pub fn read_bytes(
         &self,
         manager: &crate::archive::ArchiveManager,
@@ -110,11 +97,6 @@ impl FileSource {
         }
     }
 
-    /// 表示用パスを生成する。
-    ///
-    /// 戻り値は OS パスではなく UI 表示専用の論理パス文字列であり、
-    /// `Path::join` で組み立てる対象ではない (`/` 区切り固定で Windows パスとも混在し得る)。
-    /// ファイルシステム操作には `parent_dir()` / `default_save_name()` 等の専用メソッドを使うこと。
     pub fn display_path(&self) -> String {
         match self {
             FileSource::File(path) => path.display().to_string(),
@@ -133,12 +115,10 @@ impl FileSource {
         }
     }
 
-    /// 未展開コンテナかどうか
     pub fn is_pending_container(&self) -> bool {
         matches!(self, FileSource::PendingContainer { .. })
     }
 
-    /// ダイアログ初期ディレクトリ用: ソースの親ディレクトリを返す
     pub fn parent_dir(&self) -> Option<&Path> {
         match self {
             FileSource::File(path) => path.parent(),
@@ -148,7 +128,6 @@ impl FileSource {
         }
     }
 
-    /// ダイアログ用デフォルトファイル名を返す
     pub fn default_save_name(&self) -> String {
         match self {
             FileSource::File(path) => path
@@ -185,7 +164,6 @@ impl FileSource {
         }
     }
 
-    /// ダイアログ用デフォルトstem (拡張子なし) を返す (エクスポート用)
     pub fn default_save_stem(&self) -> String {
         let name = self.default_save_name();
         Path::new(&name)
@@ -195,11 +173,6 @@ impl FileSource {
             .to_string()
     }
 
-    /// ブックマーク保存ダイアログの初期名に使う代表ステムを返す
-    ///
-    /// 通常ファイルは親ディレクトリ名、コンテナはコンテナファイル名のステム。
-    /// 取得不能 (親なし・ステム抽出失敗・非UTF-8など) の場合は `None` を返し、
-    /// 呼び出し側でフォールバックする。
     pub fn bookmark_default_stem(&self) -> Option<String> {
         let container_stem = |p: &Path| {
             p.file_stem()
@@ -218,11 +191,6 @@ impl FileSource {
         }
     }
 
-    /// ブックマーク前回名キャッシュの一致判定キー用に絶対パス相当の識別子を返す
-    ///
-    /// 通常ファイルでは親ディレクトリのパスを返す。コンテナ系ではコンテナファイルのパスを返す。
-    /// 同名別パスを区別するために代表ステム (`bookmark_default_stem`) とは分離している。
-    /// 親ディレクトリを取得できない通常ファイルでは `None` を返す。
     pub fn bookmark_container_key(&self) -> Option<PathBuf> {
         match self {
             FileSource::File(path) => path.parent().map(Path::to_path_buf),
@@ -239,18 +207,16 @@ impl fmt::Display for FileSource {
     }
 }
 
-/// 個々のファイル情報
 pub struct FileInfo {
-    pub source: FileSource, // 論理ソース (表示・保存・ブックマーク用)
-    pub file_name: String,  // ソート用キャッシュ
+    pub source: FileSource,
+    pub file_name: String,
     pub file_size: u64,
     pub modified: SystemTime,
     pub marked: bool,
-    pub load_failed: bool, // デコード失敗フラグ (ナビゲーション時にスキップ)
+    pub load_failed: bool,
 }
 
 impl FileInfo {
-    /// パスからFileInfoを構築する (通常ファイル用)
     pub fn from_path(path: &Path) -> Result<Self> {
         let metadata = std::fs::metadata(path)
             .with_context(|| format!("メタデータ取得失敗: {}", path.display()))?;
@@ -276,7 +242,6 @@ impl FileInfo {
 
 #[cfg(test)]
 impl FileSource {
-    /// アーカイブパスを返す (アーカイブエントリ/PDFの場合)
     pub fn archive_path(&self) -> Option<&Path> {
         match self {
             FileSource::ArchiveEntry { archive, .. } => Some(archive),
@@ -286,7 +251,6 @@ impl FileSource {
         }
     }
 
-    /// アーカイブエントリかどうか
     pub fn is_archive_entry(&self) -> bool {
         matches!(self, FileSource::ArchiveEntry { .. })
     }
@@ -336,7 +300,6 @@ mod tests {
                 );
             }
 
-            // 表示名が一致しなくても、番号で選んだ内容を取得する。
             let mut indexed = source.clone();
             if let FileSource::ArchiveEntry {
                 entry, entry_index, ..
@@ -353,7 +316,6 @@ mod tests {
             assert!(invalid.read_bytes(&manager, &buffers).is_err());
         }
 
-        // 一括展開済みの画像には番号を要求しない。
         let extracted = dir.join("extracted.png");
         std::fs::write(&extracted, &png).unwrap();
         let source = FileSource::ArchiveEntry {
@@ -466,11 +428,9 @@ mod tests {
             Path::new(r"C:\docs\test.pdf")
         );
 
-        // 通常ファイルは削除対象になる
         let file_source = FileSource::File(PathBuf::from(r"C:\images\test.jpg"));
         assert!(file_source.can_delete());
 
-        // アーカイブ内のエントリは削除対象にならない
         let archive_source = FileSource::ArchiveEntry {
             archive: PathBuf::from(r"C:\archive.zip"),
             entry: "img.png".to_string(),
@@ -552,16 +512,12 @@ mod tests {
 
     #[test]
     fn bookmark_default_stem_for_each_source() {
-        // 通常ファイル (親フォルダあり): 親フォルダ名を返す
         let file = FileSource::File(PathBuf::from(r"C:\photos\sunset.jpg"));
         assert_eq!(file.bookmark_default_stem().as_deref(), Some("photos"));
 
-        // 通常ファイル (ルート直下): parent() がドライブルート `C:\` を返し、
-        // その file_name() が `None` を返すため、最終結果は `None`
         let root_file = FileSource::File(PathBuf::from(r"C:\sunset.jpg"));
         assert_eq!(root_file.bookmark_default_stem(), None);
 
-        // アーカイブ: アーカイブファイル名のステム
         let archive = FileSource::ArchiveEntry {
             archive: PathBuf::from(r"C:\archive.zip"),
             entry: "folder/image.png".to_string(),
@@ -571,14 +527,12 @@ mod tests {
         };
         assert_eq!(archive.bookmark_default_stem().as_deref(), Some("archive"));
 
-        // PDF: PDFファイル名のステム
         let pdf = FileSource::PdfPage {
             pdf_path: PathBuf::from(r"C:\docs\report.pdf"),
             page_index: 0,
         };
         assert_eq!(pdf.bookmark_default_stem().as_deref(), Some("report"));
 
-        // 未展開コンテナ: コンテナファイル名のステム
         let pending = FileSource::PendingContainer {
             container_path: PathBuf::from(r"C:\unopened.zip"),
         };
@@ -587,22 +541,18 @@ mod tests {
 
     #[test]
     fn bookmark_container_key_for_each_source() {
-        // 通常ファイル (親ディレクトリあり): 親ディレクトリのパスを返す
         let file = FileSource::File(PathBuf::from(r"C:\photos\sunset.jpg"));
         assert_eq!(
             file.bookmark_container_key().as_deref(),
             Some(Path::new(r"C:\photos"))
         );
 
-        // 通常ファイル (ルート直下): parent() がドライブルート `C:\` を返す。
-        // 代表ステムでは `None` になるケースでも、コンテナ識別キーは判定に利用できる
         let root_file = FileSource::File(PathBuf::from(r"C:\sunset.jpg"));
         assert_eq!(
             root_file.bookmark_container_key().as_deref(),
             Some(Path::new(r"C:\"))
         );
 
-        // アーカイブ: アーカイブファイルのパス
         let archive = FileSource::ArchiveEntry {
             archive: PathBuf::from(r"C:\archive.zip"),
             entry: "folder/image.png".to_string(),
@@ -615,7 +565,6 @@ mod tests {
             Some(Path::new(r"C:\archive.zip"))
         );
 
-        // PDF: PDFファイルのパス
         let pdf = FileSource::PdfPage {
             pdf_path: PathBuf::from(r"C:\docs\report.pdf"),
             page_index: 0,
@@ -625,7 +574,6 @@ mod tests {
             Some(Path::new(r"C:\docs\report.pdf"))
         );
 
-        // 未展開コンテナ: コンテナファイルのパス
         let pending = FileSource::PendingContainer {
             container_path: PathBuf::from(r"C:\unopened.zip"),
         };
@@ -634,7 +582,6 @@ mod tests {
             Some(Path::new(r"C:\unopened.zip"))
         );
 
-        // 同名の別パスは別キーとして区別される (代表ステムでは区別できない欠陥への対処)
         let a = FileSource::File(PathBuf::from(r"C:\a\photos\x.jpg"));
         let b = FileSource::File(PathBuf::from(r"D:\b\photos\y.jpg"));
         assert_ne!(a.bookmark_container_key(), b.bookmark_container_key());

@@ -1,7 +1,3 @@
-//! gvの一時資源の生成と、異常終了後に残った資源の回収。
-//!
-//! 作成したパスは各利用側が所有し、正常終了時に回収する。
-
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -39,7 +35,6 @@ fn next_path(root: &Path, purpose: TempPurpose, extension: &str) -> PathBuf {
     ))
 }
 
-/// 既存の一時フォルダと共有せず、新しいフォルダを作成する。
 pub fn create_temp_dir(purpose: TempPurpose) -> io::Result<PathBuf> {
     create_temp_dir_in(&std::env::temp_dir(), purpose)
 }
@@ -55,7 +50,6 @@ pub fn create_temp_dir_in(root: &Path, purpose: TempPurpose) -> io::Result<PathB
     }
 }
 
-/// 貼り付けのPNGを排他的に新規作成する。
 pub fn create_paste_file(root: &Path) -> io::Result<(PathBuf, File)> {
     loop {
         let path = next_path(root, TempPurpose::Paste, ".png");
@@ -67,7 +61,6 @@ pub fn create_paste_file(root: &Path) -> io::Result<(PathBuf, File)> {
     }
 }
 
-/// 自プロセスと生存中のプロセスを残し、孤立した全用途の資源を削除する。
 pub fn cleanup_orphaned_temp_dirs() {
     cleanup_in(&std::env::temp_dir(), std::process::id(), is_process_alive);
 }
@@ -86,12 +79,10 @@ fn cleanup_in(root: &Path, my_pid: u32, is_alive: impl Fn(u32) -> bool) {
             continue;
         };
 
-        // 自プロセスはスキップ
         if pid == my_pid {
             continue;
         }
 
-        // PID生存チェック
         if is_alive(pid) {
             continue;
         }
@@ -104,7 +95,6 @@ fn cleanup_in(root: &Path, my_pid: u32, is_alive: impl Fn(u32) -> bool) {
     }
 }
 
-/// 旧アーカイブ・更新の形式も含め、用途とPIDを取得する。
 fn parse_temp_name(name: &str) -> Option<(TempPurpose, u32)> {
     for purpose in [
         TempPurpose::Archive,
@@ -120,7 +110,6 @@ fn parse_temp_name(name: &str) -> Option<(TempPurpose, u32)> {
     Some((TempPurpose::Archive, rest.split('_').next()?.parse().ok()?))
 }
 
-/// Win32 OpenProcess でプロセスの生存をチェック
 fn is_process_alive(pid: u32) -> bool {
     unsafe {
         match OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
@@ -128,7 +117,6 @@ fn is_process_alive(pid: u32) -> bool {
                 let _ = CloseHandle(handle);
                 true
             }
-            // 存在しないPIDだけを回収し、アクセス拒否などの判定不能は保護する。
             Err(error) => {
                 error.code() != windows::core::HRESULT::from_win32(ERROR_INVALID_PARAMETER.0)
             }
@@ -150,7 +138,6 @@ mod tests {
 
     #[test]
     fn parse_pid_legacy_prefix() {
-        // 旧プレフィクス gv3_archive_ もサポート
         assert_eq!(
             parse_temp_name("gv3_archive_12345_1700000000000"),
             Some((TempPurpose::Archive, 12345))
@@ -182,8 +169,6 @@ mod tests {
 
     #[test]
     fn dead_process_is_not_alive() {
-        // PID=0はSystem Idle Process、通常OpenProcessでアクセス拒否される
-        // 最大値に近いPIDは通常存在しない
         assert!(!is_process_alive(u32::MAX));
     }
 

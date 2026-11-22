@@ -8,8 +8,6 @@ use crate::extension_registry::ExtensionRegistry;
 
 pub(super) const EXTENSIONS: &[&str] = &[".rar", ".cbr"];
 
-/// RAR/cbrアーカイブハンドラ
-/// unrarクレートはストリーム型APIのため、1パスで全画像を展開する
 pub struct RarHandler {
     registry: Arc<ExtensionRegistry>,
 }
@@ -36,11 +34,10 @@ impl ArchiveHandler for RarHandler {
 
         let mut results = Vec::new();
 
-        // ストリーム型: read_header → read/skip のステートマシンで1パス展開
         loop {
             let cursor = match archive.read_header() {
                 Ok(Some(cursor)) => cursor,
-                Ok(None) => break, // エントリ終了
+                Ok(None) => break,
                 Err(e) => {
                     eprintln!("RARヘッダ読み取り失敗: {e}");
                     break;
@@ -52,12 +49,10 @@ impl ArchiveHandler for RarHandler {
             let filename = extract_filename(&entry_path);
             let modified = super::dos_modified(entry.file_time);
 
-            // ディレクトリ、空ファイル名、隠しファイルはスキップ
             let should_extract =
                 super::is_image_entry(&entry_path, entry.is_directory(), &self.registry);
 
             if should_extract {
-                // エントリデータを取得する
                 match cursor.read() {
                     Ok((data, next)) => {
                         let out_path = resolve_filename(target_dir, filename);
@@ -72,7 +67,6 @@ impl ArchiveHandler for RarHandler {
                     }
                 }
             } else {
-                // 画像でないエントリはスキップ
                 match cursor.skip() {
                     Ok(next) => {
                         archive = next;

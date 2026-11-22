@@ -1,0 +1,264 @@
+{
+  "docs/.vitepress/config.ts": {
+    "VitePressを更新したら、既定のslugifyとの差がNFCの正規化だけであることを確かめる。": 1,
+    "だけを除くため、仮名の濁点・半濁点（U+3099・U+309A）が分解形のまま残り、合成形で書いた見出しへのリンクと一致しない。": 1,
+    "同じ変換の後に合成形（NFC）へ正規化する。既定の変換はNFKDで分解した後にラテン文字の結合記号（U+0300〜U+036F）": 1,
+    "見出しIDの生成。VitePress 1.6.4の既定のslugify（@mdit-vue/sharedを同梱したもので、直接importできない）と": 1
+  },
+  "scripts/cargo_runner_linux.sh": {
+    "Linuxからのクロスビルドでcargoがテスト実行器として起動するスクリプト（scripts/setup_linux.pyが設定する）。": 1,
+    "LinuxではWindows向けのテストを実行せず、コンパイルの成功までを確かめる。テストの実行はWindows CIが担う。": 1
+  },
+  "scripts/release.py": {
+    "検証済みの依存と起動元commitを保持してリリースを準備・公開する。": 1
+  },
+  "scripts/setup_linux.py": {
+    "- CMAKE_GENERATOR・CMAKE_SYSTEM_NAME: ターゲットを限定しないため、ホスト向けのビルドにも作用する（gvの依存はcmakeを使わない）": 1,
+    "- RUSTFLAGS: 空値の出力であり、ユーザーが設定した値を上書きしてしまう": 1,
+    "- WINEDEBUG: wineを使わないため不要": 1,
+    "- テスト実行器: wineの代わりに、テストを実行しない`scripts/cargo_runner_linux.sh`を設定する": 1,
+    "`cargo xwin env`の出力のうち保存しない変数。": 1,
+    "前回生成した`.mise.local.toml`の値を除いた環境を返す。 再実行ではmiseが前回の`.mise.local.toml`を環境へ読み込んでいる。 そのままでは`CARGO_BUILD_TARGET`によりホスト向けの`cargo install`までWindowsターゲットになり、 `cargo xwin env`も既存の`LIB`・`PATH`へ同じ値を重ねて出力するため、前回の値を外して初回と同じ環境にする。": 1
+  },
+  "src/app/mod.rs": {
+    "ファイルリスト非表示時もマーク状態を確認できるよう、タイトルへ表示する。": 1,
+    "共有参照だけを生成し、AppWindowの排他的アクセスはRefCellが管理する。": 1,
+    "同期コールバックの終了まで生存する。WM_DESTROYで登録を解除する。": 1,
+    "記号は ui::file_list_panel のマーク済み表示と揃える。": 1
+  },
+  "src/app/next_action.rs": {
+    "!": 1,
+    "! 失敗の通知で利用者へ示す次の操作": 1,
+    "! 文面は句点を付けずに書く。案内するメニュー項目名は`ui::menu`の表示名と一致させる。": 1
+  },
+  "src/app/panel.rs": {
+    "wide.len() <= max (cchTextMax) を上記で保証済みのため範囲内に収まる。": 1
+  },
+  "src/app/system.rs": {
+    "ShellExecuteW は戻り値が32以下の場合エラー（WinSDK仕様）": 1
+  },
+  "src/app/test_support.rs": {
+    "/": 1,
+    "/ PDFを描画した後に、ウィンドウ破棄済みのD2DRendererを解放すると、": 1,
+    "/ ウィンドウを閉じ、本体と同じくAppWindowを解放せずに残す": 1,
+    "/ テストプロセスの終了時に終了コードが2170になる。測定では本体と同じ終了経路にそろえる。": 1,
+    "/ 本体はメッセージループの後に`process::exit`で終わり、AppWindowを解放しない。": 1
+  },
+  "src/app/tests.rs": {
+    "戻るまでこのスコープに生存する。cchTextMaxはbufferの容量以下。": 1,
+    "書込先と通知構造体は別のローカル変数で重ならない。": 1
+  },
+  "src/archive/mod.rs": {
+    "Linuxからのクロスビルドは`--cfg gv_no_rar`でRAR展開を除外する（unrarのビルドがクロスビルドに対応しないため）。": 1
+  },
+  "src/archive/zip.rs": {
+    "/": 1,
+    "/ ZIPエントリのファイル名バイト列を表示用文字列にデコードする。": 1,
+    "/ zipクレートの`name()`はファイル名をUTF-8として解釈し、": 1,
+    "/ コードページ932 (`CP_SHIFT_JIS`相当) を指定してデコードする。": 1,
+    "/ 失敗時にCP437へフォールバックするためCP932記録のZIPで文字化けする。": 1,
+    "/ 本関数はUTF-8として有効なら採用し、無効なら`MultiByteToWideChar`に": 1,
+    "呼び出し形式であり、susie::util::from_ansi と同じパターン。": 1,
+    "確認し、その分の Vec<u16> を渡してデコードする。CP932 + MB_PRECOMPOSED は CP_ACP と同じ": 1
+  },
+  "src/clipboard.rs": {
+    "- DIB ヘッダは pack されていないアライメントの可能性があるため `ptr::read_unaligned` で": 1,
+    "- GetClipboardData の戻り値 HGLOBAL に GlobalLock してから読み取る。GlobalSize で": 1,
+    "- GlobalAlloc(GMEM_MOVEABLE, byte_len) で確保した領域に GlobalLock で得たポインタへ": 1,
+    "- SetClipboardData 成功後はクリップボードがメモリの所有権を取るため呼び出し元では解放しない。": 2,
+    "- V4/V5ヘッダのアルファマスク読み取り (header.add(52)) は data_size >= bi_size の": 1,
+    "- dib は total_size バイトの Vec で初期化済み。GlobalAlloc(GMEM_MOVEABLE, total_size) で": 1,
+    "- hwnd は呼び出し元から渡された有効なウィンドウハンドル。": 1,
+    "- ピクセルデータの読み込みも src_row + x*bytes_per_pixel が required_size 内に収まる": 1,
+    "/": 1,
+    "/ 32ビットDIBの4バイト目は仕様上パディングであり、アルファチャンネルとして使用するには": 1,
+    "/ BI_ALPHABITFIELDS(6)のみアルファ有効とし、V4/V5ヘッダ(biSize≥108)では": 1,
+    "/ DIBヘッダ情報から32ビットDIBの4バイト目にあるアルファチャンネルの有効性を判定する。": 1,
+    "/ bV4AlphaMask(オフセット52)が非ゼロの場合にアルファ有効とする。": 1,
+    "/ ヘッダで明示的に宣言されている必要がある。BITMAPINFOHEADER(biSize=40)では": 1,
+    "byte_len バイトが確保済みで領域は重ならない。": 1,
+    "wide (Vec<u16>) を byte_len バイトだけコピーする。コピー元・先ともに少なくとも": 1,
+    "ことを上で検証済みなので、`*src.add(...)` は確保領域内。": 1,
+    "バウンドチェック済みであり、bi_size >= 108 のとき確保領域内アクセスとなる。": 1,
+    "失敗時は所有権が移転しないため GlobalFree で解放する。": 2,
+    "実バイト数を確認し、required_size を計算してバウンドチェック後にのみアクセスする。": 1,
+    "確保した領域に同じバイト数だけコピーするので両側のバウンドは満たされる。": 1,
+    "読み取る (フィールドはそれぞれ 4/4/2 バイト境界に並ばない場合がある)。": 1
+  },
+  "src/document/container.rs": {
+    "- memmap2::Mmap::map は対象ファイルが mmap 中に外部から書き換えられないことを": 1,
+    "- 失敗時は通常の fs::read にフォールバックするので致命的にはならない。": 1,
+    "呼び出し側が保証する必要がある (Rust 的には UB の可能性)。本アプリでは": 1,
+    "閲覧専用かつ ZipBuffer の生存期間中は書き換え操作を行わない設計のため許容する。": 1
+  },
+  "src/document/utils.rs": {
+    "/ Windows のリパースポイント (シンボリックリンク・ジャンクション等) か判定する。": 1,
+    "/ `FileType::is_symlink()` はジャンクションを確実に識別できないため、": 1,
+    "/ `MetadataExt::file_attributes()` で `FILE_ATTRIBUTE_REPARSE_POINT` ビットを直接検査する。": 1
+  },
+  "src/file_list/natural_sort.rs": {
+    "`StrCmpLogicalW` は読み取りのみで副作用を持たない。": 1,
+    "関数呼び出し中は所有権を保持しているため、`PCWSTR` の指す先は live である。": 1
+  },
+  "src/main.rs": {
+    "/": 1,
+    "/ release版はウィンドウサブシステムで標準エラーの出力先が無いため、ダイアログで伝える。": 1,
+    "/ 起動の失敗を理由と次の操作とともにダイアログで示し、非0で終了する": 1,
+    "DPI awareness設定 (COM初期化より先に呼ぶ必要がある)": 1,
+    "_appはメッセージループ中に生存する必要がある (Box<WindowState>のドロップ防止)": 1,
+    "メインウィンドウ作成": 1
+  },
+  "src/pdf_renderer.rs": {
+    "!": 2,
+    "! Direct3D 11デバイスへ`IPdfRendererNative::RenderPageToSurface`で描画する。": 1,
+    "! Direct3Dデバイスを保持し、プロセス終了時のDLL解放でそのデバイスを破棄する。": 1,
+    "! OS部品の静的オブジェクトへデバイスの寿命を委ねないことで、終了時の破棄を避ける。": 1,
+    "! PDFページレンダリング": 1,
+    "! WARPデバイスはこの破棄で停止済みのスレッドプールへ処理を投げるため、": 1,
+    "! WinRT APIはスレッドセーフではないため、呼び出しごとにPdfDocumentを新規オープンする。": 1,
+    "! Windows.Data.Pdf API を使ってPDFの各ページを画像にレンダリングする。": 1,
+    "! `RenderToStreamAsync`系はOS部品（Windows.Data.Pdf）内部の静的オブジェクトが": 1,
+    "! デバイスは描画スレッドで作成し、同じスレッドで描画を終えた時点で解放する。": 1,
+    "! ページの描画には`PdfPage::RenderToStreamAsync`系を使わず、gvが作成した": 1,
+    "! 全処理の成功後でもプロセスが0xc000000d（STATUS_INVALID_PARAMETER）で異常終了する。": 1,
+    "/ MTAスレッドに委譲して実行する。": 1,
+    "/ STAメインスレッドから安全にPDFページ数を取得する": 1,
+    "/ WinRT非同期APIはSTAでブロッキング待ちするとデッドロックするため、": 1,
+    "RowPitchは1行の画素のバイト数（width * 4）以上であり、y < heightの行の先頭から": 1,
+    "row_bytesバイトはマップされた領域内に収まる。": 1
+  },
+  "src/prefetch/loader_thread.rs": {
+    "PDFレンダリングにWinRT APIが必要なのでCOM初期化": 1
+  },
+  "src/render/d2d_renderer.rs": {
+    "(TILE_SIZE * TILE_SIZE * 4) バイト確保済みで、pitch (= TILE_SIZE * 4) × TILE_SIZE": 1,
+    "= pixels.len() を満たす。戻り時点でpixelsの参照は不要。": 1,
+    "pitch (= width*4) × height = bgra_data.len() を満たす。CreateBitmap は同期コピーで": 1,
+    "rgba_to_premultiplied_bgra で `image.data.len()` (= width*height*4) バイトを返すため": 1,
+    "戻った時点で bgra_data の参照は不要になるため寿命の問題もない。": 1
+  },
+  "src/shell/association.rs": {
+    "from_raw_parts は wide_val.len() * 2 バイトを u8 スライスとして参照しており範囲内に収まる。": 1
+  },
+  "src/shell/file_operations.rs": {
+    "/": 1,
+    "/ Windowsではstd::fs::renameが既存ファイルの置換を行い、共有違反・読み取り専用なら失敗する。": 1,
+    "/ 内容を完成させてから保存先へ反映する。書き込み・置換に失敗しても既存内容を残す。": 1,
+    "/ 同一フォルダで作成するため、置換が別ボリュームへのコピーにならない。": 1,
+    "Windowsでの後始末・置換の前に必ずハンドルを閉じる。": 1
+  },
+  "src/susie/ffi.rs": {
+    "/ GetArchiveInfoの関数ポインタ型": 1,
+    "/ GetFileの関数ポインタ型": 1,
+    "/ GetPictureの関数ポインタ型": 1,
+    "/ GetPluginInfoの関数ポインタ型": 1,
+    "/ HANDLE* pHBInfo, HANDLE* pHBm, SUSIE_PROGRESS lpPrgressCallback, LONG_PTR lData)": 1,
+    "/ IsSupportedの関数ポインタ型": 1,
+    "/ SUSIE_PROGRESS progressCallback, LONG_PTR lData)": 1,
+    "/ bit8 = 0:srcはファイル名, 1:srcはメモリイメージ": 1,
+    "/ dw: ファイルハンドルまたはファイル先頭データへのポインタ": 1,
+    "/ flag: 0=ファイル名, 1=メモリイメージ": 1,
+    "/ flag: bit0 = 0:ファイル出力, 1:メモリ出力": 1,
+    "/ int GetArchiveInfo(LPCSTR buf, LONG_PTR len, unsigned int flag, HLOCAL* lphInf)": 1,
+    "/ int GetFile(LPCSTR src, LONG_PTR len, LPSTR dest, unsigned int flag,": 1,
+    "/ int GetPicture(LPCSTR buf, LONG_PTR len, unsigned int flag,": 1,
+    "/ int GetPluginInfo(int infono, LPSTR buf, int buflen)": 1,
+    "/ int IsSupported(LPCSTR filename, void* dw)": 1
+  },
+  "src/susie/plugin.rs": {
+    "(32bit/64bit ABI) に準拠している。シグネチャ不一致の DLL を読み込んだ場合は": 1,
+    "/ Susieプラグインの関数ポインタ群": 1,
+    "/ `Library`をDrop順で最後に解放するためフィールド順序に注意": 1,
+    "GetArchiveInfoFn / GetFileFn) のシグネチャは Susie プラグイン仕様": 1,
+    "LocalUnlock 後に参照が逃げないことが保証される（to_vec で所有権化）。": 1,
+    "SAFETY (以下の `lib.get::<Fn>` 系すべてに共通):": 1,
+    "Sync は実装せず、必ず Mutex 経由でアクセスすること。": 1,
+    "`Arc<Mutex<SusiePlugin>>` で包んで全呼び出しを直列化する前提のため Send は安全。": 1,
+    "entry_size ずつ進むため、キャスト後の ArchiveFileInfo への参照は妥当である。": 1,
+    "flag=1: メモリイメージモード (bufはデータポインタ、lenはデータサイズ)": 1,
+    "プラグイン側は単一の DLL ロードに対してスレッド安全とは限らないが、本アプリでは": 1,
+    "ループ内で offset の上限チェック（10000エントリ）により暴走を防止する。": 1,
+    "ロード自体は OS のローダ任せで、副作用 (DllMain 実行) があるが、Susie 規約に": 1,
+    "取得するシンボル名と関数型 (GetPluginInfoFn / IsSupportedFn / GetPictureFn /": 1,
+    "呼び出し時に未定義動作になりうるが、これは Susie 規格自体の仮定。": 1,
+    "正確なバイト数である。スライス変換後の参照は with_local_lock のクロージャ内に留まり、": 1,
+    "準拠した DLL であることを前提とする。失敗時は Err を返してリソースは即解放される。": 1
+  },
+  "src/susie/util.rs": {
+    "/": 3,
+    "/ # SAFETY (関数全体)": 1,
+    "/ - `bits_ptr` が `stride * abs_height` バイト以上のメモリ領域を指し、関数の実行中": 1,
+    "/ - `bmi_ptr` が `BitmapInfoHeader` (40 バイト) 以上のメモリ領域を指す。": 1,
+    "/ DIB (Device Independent Bitmap) をRGBA画像に変換する": 1,
+    "/ Susieプラグインの GetPicture が返す BITMAPINFO + ピクセルデータを処理": 1,
+    "/ bit_count <= 8 のときは続けて `colors_used * 4` バイトのパレット領域があること。": 1,
+    "/ 呼び出し側は以下を保証すること:": 1,
+    "/ 対応: 1bit, 4bit, 8bit, 24bit, 32bit (bottom-up/top-down)": 1,
+    "/ 解放されないこと (Susie プラグインが GetPicture で確保したメモリの所有期間内)。": 1,
+    "/ 計算した `src_row` と `x * bytes_per_pixel` のオフセットでのみメモリを参照する。": 1,
+    "/ 関数内の各 `unsafe` ブロックは上記前提のもと、`width / height / bit_count` から": 1,
+    "その +1 サイズの buf を渡してエンコードする。出力先バッファは buf スライスで境界が保証される。": 1,
+    "確認し、その分の Vec<u16> を渡してデコードする。": 1
+  },
+  "src/test_helpers.rs": {
+    "/": 2,
+    "/ CP932バイト列をそのまま書き込む。": 1,
+    "/ ディレクトリ・EOCDの長さとオフセットを整合させた上で、ファイル名フィールドへ": 1,
+    "/ データはStored (無圧縮) で書き込み、CRC32は標準的なIEEEテーブルで計算する。": 1,
+    "/ ファイル名フィールドにCP932バイト列を直接書き込んだ最小ZIPバイナリを組み立てる": 1,
+    "/ 本関数はZIP仕様 (APPNOTE 4.3) に従い、ローカルファイルヘッダー・セントラル": 1,
+    "/ 目的: zipクレートの`ZipWriter`はファイル名をUTF-8で書き込み汎用ビットフラグの": 1,
+    "/ 第11ビット (UTF-8) を設定するため、後処理ではCP932記録ZIPを再現できない。": 1,
+    "RcのPhantomDataにより別スレッドへ移動できず、成功した初期化1回へ解放1回を対応させる。": 1,
+    "成功時だけguardを生成し、!Sendかつ!Syncの所有者が同じスレッドで一度解放する。": 1
+  },
+  "src/ui/dialog.rs": {
+    "/": 1,
+    "/ # Safety": 2,
+    "/ GWLP_USERDATAから型付きポインタを取得する。": 1,
+    "/ USERDATAがnullでなければ、生存するTを指す型付きポインタであること。": 1,
+    "/ hwndとparentは有効なウィンドウで、closedはループ終了まで生存する値を指すこと。": 1,
+    "/ この関数は参照を生成しない。参照へ変換する側が、生存期間と共有・排他の条件を守ること。": 1,
+    "SendMessage等によるメッセージ再入の前に参照の使用を終える。": 1,
+    "lpCreateParamsはshow_dialogでBoxのDialogDataへのポインタとして渡した。": 1,
+    "コールバックが変更する間はdataを借用しない。": 1,
+    "メッセージ送信の完了後だけ状態を読み、参照を保持しない。": 1,
+    "処理中はdataへのRust参照を保持しない。文字列のバッファは同期呼出の終了まで生存する。": 1
+  },
+  "src/ui/file_dialog.rs": {
+    "デフォルト拡張子の補完設定 (ユーザーがファイル名から拡張子を削除した場合に Windows": 1,
+    "側で自動補完される)。先頭ドット無しの拡張子文字列を渡す必要がある。": 1
+  },
+  "src/ui/file_list_panel.rs": {
+    "LVSICF_NOINVALIDATEALL: 可視範囲外は再描画しない": 1,
+    "LVSICF_NOINVALIDATEALL=0x1, LVSICF_NOSCROLL=0x2": 1,
+    "LVSICF_NOSCROLL: スクロール位置を維持": 1
+  },
+  "src/updater.rs": {
+    "/": 4,
+    "/ # バッチファイル生成の制約": 1,
+    "/ - エンコーディング: UTF-8 BOM + `chcp 65001` で出力する。": 1,
+    "/ - 作業フォルダの削除は最後の行で`rmdir`と`exit 0`を連結する。": 1,
+    "/ - 制御フロー: `if ( ... )` ブロック内に日本語リテラルを置かない。": 1,
+    "/ - 改行: `format!` が出力する LF を `replace('\\n', \"\\r\\n\")` で CRLF に変換する": 1,
+    "/ 1. 親プロセスの終了を待機": 1,
+    "/ 2. 実行中のexeを.oldにリネーム (Windowsはリネームを許可する)": 1,
+    "/ 3. 新しいexeを本来の名前で配置": 1,
+    "/ 4. 新exeを起動": 1,
+    "/ 5. 作業フォルダをバッチ自身ごと削除する": 1,
+    "/ DBCSトレイルバイトが cmd.exe の構文解析を破壊する": 1,
+    "/ DBCSトレイルバイトが特殊文字と誤認されるため `goto` で制御する": 1,
+    "/ GitHub Pages経由のバージョン情報URL(APIレートリミット回避)": 1,
+    "/ `cleanup_old_exe()`が次回起動時に.oldを削除する。": 1,
+    "/ rename-then-replaceパターン:": 1,
+    "/ ファイル名に日本語（ぐらびゅ.exe等）を含むため CP932 では": 1,
+    "/ 更新用バッチスクリプトを生成する": 1,
+    "/ 自身を削除した後にバッチへ戻らず、所有するcmd.exeを終了する。": 1
+  },
+  "src/util.rs": {
+    "/": 1,
+    "/ # Safety": 1,
+    "/ Win32 MessageBoxW のラッパー": 1,
+    "/ hwnd は有効なウィンドウハンドル、または `HWND::default()`（NULLに相当）であること。": 1
+  }
+}

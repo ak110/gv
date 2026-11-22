@@ -1,5 +1,3 @@
-//! 実行ファイルと隣接する設定・資源の配置。
-
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result};

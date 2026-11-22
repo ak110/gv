@@ -1,17 +1,12 @@
 use std::path::{Path, PathBuf};
 
-/// &str を null終端UTF-16ワイド文字列に変換する (Win32 API用)
 pub fn to_wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
-/// `\\?\` プレフィックスを除去する (Shell API/WinRT APIが非対応のため)
-/// UNCパスの場合: `\\?\UNC\server\share` → `\\server\share`
-/// 通常パスの場合: `\\?\C:\path` → `C:\path`
 pub fn strip_extended_length_prefix(path: &Path) -> PathBuf {
     let s = path.to_string_lossy();
     if let Some(unc) = s.strip_prefix(r"\\?\UNC\") {
-        // UNCパス: \\?\UNC\server\share → \\server\share
         PathBuf::from(format!(r"\\{unc}"))
     } else if let Some(stripped) = s.strip_prefix(r"\\?\") {
         PathBuf::from(stripped)
@@ -20,9 +15,6 @@ pub fn strip_extended_length_prefix(path: &Path) -> PathBuf {
     }
 }
 
-/// 失敗の通知文を、要約、次の操作、詳細の順に1行へ組み立てる
-///
-/// `summary`と`next_action`は句点を付けずに渡す。詳細が長くても次の操作を先に読めるよう、詳細は末尾に置く。
 pub fn format_error_text(summary: &str, next_action: &str, detail: Option<&str>) -> String {
     match detail {
         Some(detail) => format!("{summary}。{next_action}。詳細: {detail}"),
@@ -30,11 +22,6 @@ pub fn format_error_text(summary: &str, next_action: &str, detail: Option<&str>)
     }
 }
 
-/// 失敗を伝えるエラー用メッセージボックスを表示する
-///
-/// 利用者が次の行動を選べるよう、要約、次の操作、詳細を分けて受け取り、次の操作の指定を必須にする。
-/// エラー用途のメッセージボックスはこの関数を通す。
-/// `hwnd`は有効なウィンドウハンドルか`HWND::default()`（NULLに相当）を渡す。
 pub fn show_error_box(
     hwnd: windows::Win32::Foundation::HWND,
     title: &str,
@@ -51,7 +38,6 @@ pub fn show_error_box(
     }
 }
 
-/// エラー用メッセージボックスの本文を、要約、次の操作、詳細の順に行を分けて組み立てる
 pub fn format_error_box_text(summary: &str, next_action: &str, detail: Option<&str>) -> String {
     match detail {
         Some(detail) => format!("{summary}。\n{next_action}。\n\n詳細:\n{detail}"),
@@ -120,7 +106,6 @@ mod tests {
             .chain(std::iter::once(0))
             .collect();
         assert_eq!(result, expected);
-        // null終端確認
         assert_eq!(*result.last().unwrap(), 0);
     }
 

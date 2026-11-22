@@ -1,9 +1,7 @@
 fn main() {
-    // アイコンリソースをコンパイル (.rcファイル経由で複数アイコンを登録)
     let mut res = winresource::WindowsResource::new();
     res.set_resource_file("resources/gv.rc");
 
-    // Cargo.tomlのバージョンからVERSIONINFO設定
     let version = env!("CARGO_PKG_VERSION");
     let parts: Vec<u64> = version.split('.').filter_map(|s| s.parse().ok()).collect();
     let major = parts.first().copied().unwrap_or(0);

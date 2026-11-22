@@ -5,14 +5,8 @@ use anyhow::{Context as _, Result, bail};
 
 use crate::action::Action;
 
-/// 配布版のデフォルトキーバインドTOML。
-/// ビルド時に取り込み、`with_defaults()` のソースとして使う。
-/// パース不能になる事故はビルド時テスト `default_toml_parses_and_resolves` で防止する。
 const DEFAULT_KEYS_TOML: &str = include_str!("../../ぐらびゅ.keys.default.toml");
 
-// --- 入力表現 ---
-
-/// 修飾キーの組み合わせ
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Modifiers {
     pub ctrl: bool,
@@ -20,21 +14,18 @@ pub struct Modifiers {
     pub alt: bool,
 }
 
-/// ホイール方向
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WheelDirection {
     Up,
     Down,
 }
 
-/// マウスボタン操作
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MouseButton {
     LeftDoubleClick,
     MiddleClick,
 }
 
-/// 入力イベント (キー/ホイール/マウスを統一的に扱う)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum InputChord {
     Key {
@@ -50,16 +41,12 @@ pub enum InputChord {
     },
 }
 
-// --- KeyConfig ---
-
-/// キーバインド設定
 pub struct KeyConfig {
     bindings: HashMap<InputChord, Action>,
     chords: HashMap<Action, Vec<InputChord>>,
 }
 
 impl KeyConfig {
-    /// 設定ファイルからロード。ファイルがなければデフォルトを使用。
     pub fn load(path: Option<&Path>) -> Self {
         if let Some(p) = path
             && let Ok(content) = std::fs::read_to_string(p)
@@ -78,20 +65,15 @@ impl KeyConfig {
         Self::with_defaults()
     }
 
-    /// 配布TOMLから取得したデフォルトバインディングで初期化。
-    /// 配布TOMLのパース失敗はビルド時の単体テストで防止しているため、
-    /// ここでは必ず成功する前提で `expect` する。
     pub fn with_defaults() -> Self {
         Self::parse_toml(DEFAULT_KEYS_TOML)
             .expect("ぐらびゅ.keys.default.tomlのパースに失敗 (配布物の不整合)")
     }
 
-    /// 入力からアクションを検索
     pub fn lookup(&self, chord: InputChord) -> Option<Action> {
         self.bindings.get(&chord).copied()
     }
 
-    /// 操作に割り当てた入力を、設定値に書かれた順に返す。
     pub fn chords(&self, action: Action) -> &[InputChord] {
         self.chords.get(&action).map_or(&[], Vec::as_slice)
     }
@@ -104,7 +86,6 @@ impl KeyConfig {
             .collect()
     }
 
-    /// 配布設定へ、指定された操作だけを上書きする。
     fn with_overrides(content: &str) -> Result<Self> {
         let overrides = Self::parse_toml(content)?;
         let mut config = Self::with_defaults();
@@ -124,10 +105,6 @@ impl KeyConfig {
         Ok(config)
     }
 
-    /// TOMLテキストからパース。
-    /// セクション名を識別し、`[persistent_filter]` 配下のフィールドを `PFilter*` アクションへ解決する。
-    /// 同名フィールド (`levels` 等) が `[filter]` と `[persistent_filter]` で別アクションへ
-    /// 振り分けられるよう、セクション認識を必須とする。
     fn parse_toml(content: &str) -> Result<Self> {
         let table: toml::Table = content.parse()?;
         let mut bindings = HashMap::new();
@@ -144,13 +121,11 @@ impl KeyConfig {
                 let Some(key_str) = val.as_str() else {
                     bail!("[{section}].{field} の割り当ては文字列で指定してください");
                 };
-                // 空文字列も操作単位の指定として保持し、デフォルトの割り当てを解除する。
                 if let Some(old) = chords.insert(action, Vec::new()) {
                     for chord in old {
                         bindings.remove(&chord);
                     }
                 }
-                // カンマ区切りで複数キーを登録
                 for part in key_str.split(',') {
                     let part = part.trim();
                     if part.is_empty() {
@@ -174,7 +149,6 @@ impl KeyConfig {
 }
 
 impl InputChord {
-    /// 解析可能なキー名へ戻し、マウス入力は表示用の日本語名にする。
     pub fn display(self) -> String {
         let (modifiers, name) = match self {
             Self::Mouse { button } => {
@@ -214,14 +188,8 @@ impl InputChord {
     }
 }
 
-/// (セクション, フィールド) からアクションを解決する。
-/// `[persistent_filter]` セクションのフィールド名は永続フィルタ系アクションへ解決し、
-/// 他セクションでは `field_to_action` の標準マッピングへ委ねる。
 fn resolve_action(section: &str, field: &str) -> Option<Action> {
     if section == "persistent_filter" {
-        // `[persistent_filter].levels` → `Action::PFilterLevels` のように
-        // `pfilter_` プレフィックスを補ってから標準マッピングを引く。
-        // すでに `pfilter_` プレフィックス付きのフィールド名が書かれている場合は二重付与を避ける。
         let canonical = if field.starts_with("pfilter_") {
             field.to_string()
         } else {
@@ -232,22 +200,16 @@ fn resolve_action(section: &str, field: &str) -> Option<Action> {
     field_to_action(field)
 }
 
-// --- キー名パーサー ---
-
-/// キー文字列を解析してInputChordに変換
 pub fn parse_chord(s: &str) -> Result<InputChord> {
     let s = s.trim();
 
-    // マウス操作
     if let Some(&(_, button)) = MOUSE_NAMES.iter().find(|&&(name, _)| name == s) {
         return Ok(InputChord::Mouse { button });
     }
 
-    // 修飾子 + キーを分離
     let mut modifiers = Modifiers::default();
     let mut remaining = s;
 
-    // "Ctrl+Shift+←" → 最後の要素がキー名
     loop {
         if let Some(rest) = remaining.strip_prefix("Ctrl+") {
             modifiers.ctrl = true;
@@ -263,7 +225,6 @@ pub fn parse_chord(s: &str) -> Result<InputChord> {
         }
     }
 
-    // ホイール操作
     if let Some(&(_, direction)) = WHEEL_NAMES.iter().find(|&&(name, _)| name == remaining) {
         return Ok(InputChord::Wheel {
             direction,
@@ -271,16 +232,12 @@ pub fn parse_chord(s: &str) -> Result<InputChord> {
         });
     }
 
-    // キー名 → 仮想キーコード
     let vk = key_name_to_vk(remaining)?;
     Ok(InputChord::Key { vk, modifiers })
 }
 
-/// キー名から仮想キーコードを返す
 fn key_name_to_vk(name: &str) -> Result<u16> {
-    // 単一の英字・数字
     if name.len() == 1 {
-        // バイト長1の文字列なので chars().next() は必ず Some を返す。
         let ch = name
             .chars()
             .next()
@@ -290,7 +247,6 @@ fn key_name_to_vk(name: &str) -> Result<u16> {
         }
     }
 
-    // テーブルから検索
     for &(key_name, vk) in KEY_NAMES {
         if key_name.eq_ignore_ascii_case(name) {
             return Ok(vk);
@@ -300,7 +256,6 @@ fn key_name_to_vk(name: &str) -> Result<u16> {
     bail!("不明なキー名: {name:?}");
 }
 
-/// マウス操作の名前。日本語名はメニューとヘルプの表示名で、表示どおりに書いても受理する
 const MOUSE_NAMES: &[(&str, MouseButton)] = &[
     ("LeftDoubleClick", MouseButton::LeftDoubleClick),
     ("左ダブルクリック", MouseButton::LeftDoubleClick),
@@ -308,7 +263,6 @@ const MOUSE_NAMES: &[(&str, MouseButton)] = &[
     ("ホイールクリック", MouseButton::MiddleClick),
 ];
 
-/// ホイール操作の名前。日本語名はメニューとヘルプの表示名で、表示どおりに書いても受理する
 const WHEEL_NAMES: &[(&str, WheelDirection)] = &[
     ("WheelUp", WheelDirection::Up),
     ("ホイール(上)", WheelDirection::Up),
@@ -316,9 +270,7 @@ const WHEEL_NAMES: &[(&str, WheelDirection)] = &[
     ("ホイール(下)", WheelDirection::Down),
 ];
 
-/// キー名 → VKコード マッピングテーブル
 const KEY_NAMES: &[(&str, u16)] = &[
-    // 矢印キー
     ("←", 0x25),
     ("→", 0x27),
     ("↑", 0x26),
@@ -327,12 +279,10 @@ const KEY_NAMES: &[(&str, u16)] = &[
     ("Right", 0x27),
     ("Up", 0x26),
     ("Down", 0x28),
-    // ページ
     ("PageUp", 0x21),
     ("PageDown", 0x22),
     ("Home", 0x24),
     ("End", 0x23),
-    // 特殊キー
     ("Enter", 0x0D),
     ("Return", 0x0D),
     ("Space", 0x20),
@@ -341,7 +291,6 @@ const KEY_NAMES: &[(&str, u16)] = &[
     ("Escape", 0x1B),
     ("BackSpace", 0x08),
     ("Delete", 0x2E),
-    // ファンクションキー
     ("F1", 0x70),
     ("F2", 0x71),
     ("F3", 0x72),
@@ -354,7 +303,6 @@ const KEY_NAMES: &[(&str, u16)] = &[
     ("F10", 0x79),
     ("F11", 0x7A),
     ("F12", 0x7B),
-    // テンキー
     ("Num0", 0x60),
     ("Num1", 0x61),
     ("Num2", 0x62),
@@ -371,11 +319,8 @@ const KEY_NAMES: &[(&str, u16)] = &[
     ("Num /", 0x6F),
 ];
 
-/// TOMLフィールド名 → Action のマッピング
 fn field_to_action(field: &str) -> Option<Action> {
     Some(match field {
-        // ナビゲーション
-        // "page_back"/"navigate_1_back" 等は既存設定ファイルとの互換性のためNavigateBackにマップ
         "back" | "navigate_back" | "page_back" | "navigate_1_back" => Action::NavigateBack,
         "forward" | "navigate_forward" | "page_forward" | "navigate_1_forward" => {
             Action::NavigateForward
@@ -396,7 +341,6 @@ fn field_to_action(field: &str) -> Option<Action> {
         "shuffle_all" => Action::ShuffleAll,
         "shuffle_groups" => Action::ShuffleGroups,
 
-        // 表示
         "auto_shrink" => Action::DisplayAutoShrink,
         "auto_fit" => Action::DisplayAutoFit,
         "zoom_in" => Action::ZoomIn,
@@ -405,7 +349,6 @@ fn field_to_action(field: &str) -> Option<Action> {
         "toggle_margin" => Action::ToggleMargin,
         "cycle_alpha_background" => Action::CycleAlphaBackground,
 
-        // ウィンドウ
         "toggle_fullscreen" => Action::ToggleFullscreen,
         "minimize" => Action::Minimize,
         "toggle_maximize" => Action::ToggleMaximize,
@@ -413,7 +356,6 @@ fn field_to_action(field: &str) -> Option<Action> {
         "toggle_cursor_hide" => Action::ToggleCursorHide,
         "toggle_menu_bar" => Action::ToggleMenuBar,
 
-        // ファイル操作
         "new_window" => Action::NewWindow,
         "open_file" => Action::OpenFile,
         "open_folder" => Action::OpenFolder,
@@ -432,7 +374,6 @@ fn field_to_action(field: &str) -> Option<Action> {
         "export_png" => Action::ExportPng,
         "show_image_info" => Action::ShowImageInfo,
 
-        // マーク
         "mark_set" | "set" => Action::MarkSet,
         "mark_unset" | "unset" => Action::MarkUnset,
         "mark_invert_all" | "invert_all" => Action::MarkInvertAll,
@@ -443,7 +384,6 @@ fn field_to_action(field: &str) -> Option<Action> {
         "marked_copy" => Action::MarkedCopy,
         "marked_copy_names" => Action::MarkedCopyNames,
 
-        // 編集
         "deselect_selection" => Action::DeselectSelection,
         "crop" => Action::Crop,
         "flip_horizontal" => Action::FlipHorizontal,
@@ -454,7 +394,6 @@ fn field_to_action(field: &str) -> Option<Action> {
         "rotate_arbitrary" => Action::RotateArbitrary,
         "resize" => Action::Resize,
 
-        // フィルタ
         "fill" => Action::Fill,
         "levels" => Action::Levels,
         "gamma" => Action::Gamma,
@@ -472,7 +411,6 @@ fn field_to_action(field: &str) -> Option<Action> {
         "sharpen_strong" => Action::SharpenStrong,
         "median_filter" => Action::MedianFilter,
 
-        // 永続フィルタ
         "pfilter_toggle" => Action::PFilterToggle,
         "pfilter_flip_h" => Action::PFilterFlipH,
         "pfilter_flip_v" => Action::PFilterFlipV,
@@ -494,14 +432,11 @@ fn field_to_action(field: &str) -> Option<Action> {
         "pfilter_invert_colors" => Action::PFilterInvertColors,
         "pfilter_apply_alpha" => Action::PFilterApplyAlpha,
 
-        // ブックマーク
         "bookmark_save" => Action::BookmarkSave,
         "bookmark_load" => Action::BookmarkLoad,
 
-        // ファイルリスト
         "toggle_file_list" => Action::ToggleFileList,
 
-        // ユーティリティ
         "open_exe_folder" => Action::OpenExeFolder,
         "open_bookmark_folder" => Action::OpenBookmarkFolder,
         "open_spi_folder" => Action::OpenSpiFolder,
@@ -513,7 +448,6 @@ fn field_to_action(field: &str) -> Option<Action> {
         "unregister_shell" => Action::UnregisterShell,
         "exit" => Action::Exit,
 
-        // スライドショー
         "slideshow_toggle" => Action::SlideshowToggle,
         "slideshow_faster" => Action::SlideshowFaster,
         "slideshow_slower" => Action::SlideshowSlower,
@@ -555,8 +489,6 @@ mod tests {
     }
     use super::*;
 
-    /// 受理するキー名の全てが、配布TOML冒頭の記法コメントと利用者向けガイドの記法の表に載っている。
-    /// 受理する名前を増やしたときに文書の追随漏れを検出する。
     #[test]
     fn accepted_key_names_are_documented() {
         const GUIDE: &str = include_str!("../../docs/guide/customization.md");
@@ -570,7 +502,6 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
 
-        // F1〜F12・Num0〜Num9・英字・数字は範囲で書くため、範囲の両端を確かめる
         let mut documented: Vec<(String, String)> = Vec::new();
         for &(name, _) in KEY_NAMES {
             let range = if name.starts_with('F') && name[1..].parse::<u8>().is_ok() {
@@ -794,7 +725,6 @@ mod tests {
     fn default_bindings_complete() {
         let config = KeyConfig::with_defaults();
 
-        // ナビゲーション基本
         assert_eq!(
             config.lookup(parse_chord("←").unwrap()),
             Some(Action::NavigateBack)
@@ -812,7 +742,6 @@ mod tests {
             Some(Action::NavigateFirst)
         );
 
-        // 表示モード
         assert_eq!(
             config.lookup(parse_chord("Num /").unwrap()),
             Some(Action::DisplayAutoShrink)
@@ -822,25 +751,21 @@ mod tests {
             Some(Action::CycleAlphaBackground)
         );
 
-        // ウィンドウ
         assert_eq!(
             config.lookup(parse_chord("Alt+Enter").unwrap()),
             Some(Action::ToggleFullscreen)
         );
 
-        // ファイル操作
         assert_eq!(
             config.lookup(parse_chord("Ctrl+O").unwrap()),
             Some(Action::OpenFile)
         );
 
-        // マーク
         assert_eq!(
             config.lookup(parse_chord("Delete").unwrap()),
             Some(Action::MarkSet)
         );
 
-        // マウス
         assert_eq!(
             config.lookup(parse_chord("LeftDoubleClick").unwrap()),
             Some(Action::ToggleMaximize)
@@ -870,7 +795,6 @@ zoom_in = "Ctrl+Num +, Ctrl+WheelDown"
             config.lookup(parse_chord("Ctrl+B").unwrap()),
             Some(Action::NavigateForward)
         );
-        // カンマ区切り
         assert_eq!(
             config.lookup(parse_chord("Ctrl+Num +").unwrap()),
             Some(Action::ZoomIn)
@@ -883,7 +807,6 @@ zoom_in = "Ctrl+Num +, Ctrl+WheelDown"
 
     #[test]
     fn field_to_action_coverage() {
-        // 主要なフィールド名がマッピングされていることを確認
         assert_eq!(field_to_action("back"), Some(Action::NavigateBack));
         assert_eq!(field_to_action("forward"), Some(Action::NavigateForward));
         assert_eq!(
@@ -891,18 +814,15 @@ zoom_in = "Ctrl+Num +, Ctrl+WheelDown"
             Some(Action::ToggleFullscreen)
         );
         assert_eq!(field_to_action("mark_set"), Some(Action::MarkSet));
-        assert_eq!(field_to_action("set"), Some(Action::MarkSet)); // エイリアス
+        assert_eq!(field_to_action("set"), Some(Action::MarkSet));
         assert_eq!(field_to_action("unknown_field"), None);
     }
 
-    /// 配布TOMLが正しくパースでき、主要アクションへ解決されることを保証する。
-    /// `with_defaults()` のフォールバック経路はビルド時にこのテストで担保する。
     #[test]
     fn default_toml_parses_and_resolves() {
         let config = KeyConfig::parse_toml(DEFAULT_KEYS_TOML)
             .expect("配布版ぐらびゅ.keys.default.tomlのパースに失敗");
 
-        // ナビゲーション
         assert_eq!(
             config.lookup(parse_chord("←").unwrap()),
             Some(Action::NavigateBack)
@@ -911,12 +831,10 @@ zoom_in = "Ctrl+Num +, Ctrl+WheelDown"
             config.lookup(parse_chord("Tab").unwrap()),
             Some(Action::SortNavigateForward)
         );
-        // 編集
         assert_eq!(
             config.lookup(parse_chord("Ctrl+→").unwrap()),
             Some(Action::Rotate90CW)
         );
-        // フィルタ
         assert_eq!(
             config.lookup(parse_chord("Ctrl+L").unwrap()),
             Some(Action::Levels)
@@ -925,7 +843,6 @@ zoom_in = "Ctrl+Num +, Ctrl+WheelDown"
             config.lookup(parse_chord("Ctrl+G").unwrap()),
             Some(Action::GrayscaleStrict)
         );
-        // 永続フィルタ (parse_toml がセクションを認識して PFilter* に割り当てる箇所)
         assert_eq!(
             config.lookup(parse_chord("Ctrl+Shift+L").unwrap()),
             Some(Action::PFilterLevels)
@@ -934,7 +851,6 @@ zoom_in = "Ctrl+Num +, Ctrl+WheelDown"
             config.lookup(parse_chord("Ctrl+Shift+G").unwrap()),
             Some(Action::PFilterGrayscaleSimple)
         );
-        // ブックマーク・スライドショー
         assert_eq!(
             config.lookup(parse_chord("F9").unwrap()),
             Some(Action::BookmarkSave)
@@ -945,8 +861,6 @@ zoom_in = "Ctrl+Num +, Ctrl+WheelDown"
         );
     }
 
-    /// `[persistent_filter]` セクションのフィールドが `PFilter*` に解決されることを単独で確認する。
-    /// 旧バグ「セクション無視で `levels` が常に `Action::Levels` へ解決された」の再発防止。
     #[test]
     fn persistent_filter_section_resolves_to_pfilter_actions() {
         let toml = r#"
@@ -959,7 +873,6 @@ levels = "Ctrl+Shift+L"
 grayscale_simple = "Ctrl+Shift+G"
 "#;
         let config = KeyConfig::parse_toml(toml).unwrap();
-        // [filter] 配下は通常アクション
         assert_eq!(
             config.lookup(parse_chord("Ctrl+L").unwrap()),
             Some(Action::Levels)
@@ -968,7 +881,6 @@ grayscale_simple = "Ctrl+Shift+G"
             config.lookup(parse_chord("Ctrl+Alt+L").unwrap()),
             Some(Action::GrayscaleSimple)
         );
-        // [persistent_filter] 配下は PFilter* アクション
         assert_eq!(
             config.lookup(parse_chord("Ctrl+Shift+L").unwrap()),
             Some(Action::PFilterLevels)
@@ -979,8 +891,6 @@ grayscale_simple = "Ctrl+Shift+G"
         );
     }
 
-    /// `[persistent_filter]` 配下にすでに `pfilter_` プレフィックス付きのフィールド名を書いた場合も
-    /// 二重付与せず正しく解決することを確認する。
     #[test]
     fn persistent_filter_section_accepts_explicit_prefix() {
         let toml = r#"

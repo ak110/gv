@@ -7,9 +7,6 @@ use crate::file_list::SortOrder;
 use crate::render::d2d_renderer::AlphaBackground;
 use crate::render::layout::DisplayMode;
 
-/// 設定ファイル上の表示モード (DisplayModeへの中間表現)
-/// Fixed(f32)はデータ付きバリアントのため、serde直接対応は不可。
-/// config側でfixed_scaleと組み合わせてDisplayModeに変換する。
 #[derive(Debug, Clone, Copy, PartialEq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DisplayModeConfig {
@@ -21,7 +18,6 @@ pub enum DisplayModeConfig {
     Fixed,
 }
 
-/// アプリケーション設定 (ぐらびゅ.toml)
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Config {
@@ -36,14 +32,10 @@ pub struct Config {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct DisplayConfig {
-    /// 表示モード
     #[serde(deserialize_with = "deserialize_enum_or_default")]
     pub auto_scale: DisplayModeConfig,
-    /// 固定倍率 (auto_scale = Fixed のとき使用)
     pub fixed_scale: f32,
-    /// 余白量 (ピクセル)
     pub margin: f32,
-    /// α背景
     #[serde(deserialize_with = "deserialize_enum_or_default")]
     pub alpha_background: AlphaBackground,
 }
@@ -58,7 +50,6 @@ pub struct PrefetchConfig {
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct ListConfig {
-    /// デフォルトソート
     #[serde(deserialize_with = "deserialize_enum_or_default")]
     pub default_sort: SortOrder,
 }
@@ -79,13 +70,9 @@ pub struct SusieConfig {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct SlideshowConfig {
-    /// スライドショー間隔 (ミリ秒)
     pub interval_ms: u32,
-    /// 最後の画像の後に最初に戻る
     pub repeat: bool,
 }
-
-// --- 列挙値のフィールド単位フォールバック ---
 
 trait ConfigEnum: serde::de::DeserializeOwned + Serialize + Default {
     const FIELD: &'static str;
@@ -126,8 +113,6 @@ where
     }
 }
 
-// --- Default実装 ---
-
 impl Default for DisplayConfig {
     fn default() -> Self {
         Self {
@@ -165,10 +150,7 @@ impl Default for SlideshowConfig {
     }
 }
 
-// --- 変換ヘルパー ---
-
 impl DisplayConfig {
-    /// DisplayModeConfigからDisplayModeに変換 (Fixed + fixed_scaleの組み合わせが必要なため維持)
     pub fn to_display_mode(&self) -> DisplayMode {
         match self.auto_scale {
             DisplayModeConfig::Shrink => DisplayMode::AutoShrink,
@@ -181,11 +163,6 @@ impl DisplayConfig {
 }
 
 impl PrefetchConfig {
-    /// キャッシュ基準サイズ (バイト)。
-    ///
-    /// `cache_base_width` / `cache_base_height` に 0 が設定されていても、
-    /// この値を除数とするキャッシュ枚数の計算でゼロ除算が起きないよう
-    /// 最低 1 ピクセルにクランプしてから計算する。
     pub fn base_image_size(&self) -> usize {
         let w = self.cache_base_width.max(1) as usize;
         let h = self.cache_base_height.max(1) as usize;
@@ -194,8 +171,6 @@ impl PrefetchConfig {
 }
 
 impl Config {
-    /// exeディレクトリの `ぐらびゅ.toml` を読み込む。
-    /// ファイルなし / パース失敗はデフォルトにフォールバック。
     pub fn load() -> Self {
         let Ok(config_path) = crate::paths::config_path() else {
             return Config::default();
@@ -209,7 +184,6 @@ impl Config {
         }
     }
 
-    /// 指定パスからConfigを読み込む
     pub fn load_from(path: &Path) -> Result<Self> {
         let content = std::fs::read_to_string(path)?;
         let config: Config = toml::from_str(&content)?;
@@ -280,7 +254,6 @@ auto_scale = "original"
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         assert_eq!(config.display.auto_scale, DisplayModeConfig::Original);
-        // 未指定フィールドはデフォルト
         assert_eq!(config.display.margin, 64.0);
         assert_eq!(config.list.default_sort, SortOrder::Natural);
     }
@@ -309,7 +282,6 @@ auto_scale = "original"
 
     #[test]
     fn invalid_values_fallback_to_defaults() {
-        // 無効なauto_scaleはFitにフォールバック
         let toml_str = r#"
 [display]
 auto_scale = "unknown"
@@ -403,7 +375,6 @@ default_sort = "bogus"
 
     #[test]
     fn prefetch_base_image_size_zero_clamps_to_one_pixel() {
-        // ゼロ設定は 1×1 ピクセルにクランプされる (キャッシュ枚数の計算のゼロ除算防止)。
         let p = PrefetchConfig {
             cache_base_width: 0,
             cache_base_height: 0,

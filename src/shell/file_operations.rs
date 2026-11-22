@@ -1,5 +1,3 @@
-//! Shellのファイル削除・移動・コピー
-
 use anyhow::{Context as _, Result};
 use std::fs::{File, OpenOptions};
 use std::io::Write as _;
@@ -40,7 +38,6 @@ pub fn copy_atomic(source: &Path, destination: &Path) -> Result<()> {
     })
 }
 
-/// 保存先へ反映するまでの新規ファイルだけを所有し、失敗時も回収する。
 struct PendingSave {
     path: PathBuf,
     file: Option<File>,
@@ -89,7 +86,6 @@ impl Drop for PendingSave {
     }
 }
 
-/// IFileOperationによるファイル削除 (ごみ箱経由)
 pub fn delete_to_recycle_bin(hwnd: HWND, paths: &[&Path]) -> Result<bool> {
     #[cfg(test)]
     if let Some(result) = test_driver::capture_operation("delete", paths) {
@@ -109,7 +105,6 @@ pub fn delete_to_recycle_bin(hwnd: HWND, paths: &[&Path]) -> Result<bool> {
     }
 }
 
-/// IFileOperationによるファイル移動 (複数→ディレクトリ)
 pub fn move_files(hwnd: HWND, paths: &[&Path], dest: &Path) -> Result<bool> {
     #[cfg(test)]
     if let Some(result) = test_driver::capture_operation("move", paths) {
@@ -133,8 +128,6 @@ pub fn move_files(hwnd: HWND, paths: &[&Path], dest: &Path) -> Result<bool> {
     }
 }
 
-/// 単一ファイルの移動 (リネーム対応)
-/// 移動先の親ディレクトリをIShellItemにし、ファイル名をMoveItemの引数で指定する
 pub fn move_single_file(hwnd: HWND, src: &Path, dest: &Path) -> Result<bool> {
     #[cfg(test)]
     if let Some(result) = test_driver::capture_operation("move_single", &[src]) {
@@ -167,15 +160,11 @@ pub fn move_single_file(hwnd: HWND, src: &Path, dest: &Path) -> Result<bool> {
     }
 }
 
-// --- IFileOperation ヘルパー ---
-
 use windows::Win32::UI::Shell::FILEOPERATION_FLAGS;
 
-/// IFileOperationのフラグ定数
 const FOFLAG_ALLOWUNDO: FILEOPERATION_FLAGS = FILEOPERATION_FLAGS(0x0040);
 const FOFLAG_WANTNUKEWARNING: FILEOPERATION_FLAGS = FILEOPERATION_FLAGS(0x4000);
 
-/// IFileOperationを作成し、親ウィンドウとフラグを設定する
 unsafe fn create_file_operation(
     hwnd: HWND,
     flags: FILEOPERATION_FLAGS,
@@ -194,8 +183,6 @@ unsafe fn create_file_operation(
     }
 }
 
-/// IFileOperationの操作を実行し、結果を返す
-/// 成功時はtrue、ユーザーキャンセル時はfalseを返す
 unsafe fn perform_operations(
     op: &windows::Win32::UI::Shell::IFileOperation,
     error_msg: &str,
@@ -207,8 +194,6 @@ unsafe fn perform_operations(
     }
 }
 
-/// SHCreateItemFromParsingNameでIShellItemを取得する (エラー時はResult)
-/// ファイル操作用: 対象パスが存在しない場合はエラーとして扱う
 fn create_shell_item_strict(path: &Path) -> Result<windows::Win32::UI::Shell::IShellItem> {
     let path = crate::util::strip_extended_length_prefix(path);
     let wide: Vec<u16> = path
@@ -225,7 +210,6 @@ fn create_shell_item_strict(path: &Path) -> Result<windows::Win32::UI::Shell::IS
     }
 }
 
-/// Shell境界の入力を記録し、受入テストでは実ファイルの削除・移動をキャンセルする。
 #[cfg(test)]
 pub(crate) mod test_driver {
     use std::cell::RefCell;
@@ -251,7 +235,6 @@ pub(crate) mod test_driver {
         with_driver(selected, false, action)
     }
 
-    /// 選択先を注入し、移動だけを記録して実Shellへ渡す。削除はキャンセルを維持する。
     pub(crate) fn with_selected_path_and_real_moves(
         selected: PathBuf,
         action: impl FnOnce(),
@@ -315,7 +298,6 @@ mod tests {
     use super::*;
     use std::os::windows::fs::OpenOptionsExt as _;
 
-    /// 書き込み途中と置換の失敗は元の内容を残し、失敗後も上書きと複製を実行できる。
     #[test]
     fn atomic_save_preserves_existing_content_on_failure_and_recovers() {
         let dir = crate::test_helpers::TempDir::new("atomic_save");

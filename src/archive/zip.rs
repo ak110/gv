@@ -10,7 +10,6 @@ use crate::extension_registry::ExtensionRegistry;
 
 pub(super) const EXTENSIONS: &[&str] = &[".zip", ".cbz"];
 
-/// ZIP/cbzアーカイブハンドラ
 pub struct ZipHandler {
     registry: Arc<ExtensionRegistry>,
 }
@@ -22,7 +21,6 @@ impl ZipHandler {
 }
 
 impl ZipHandler {
-    /// インメモリバッファからエントリ一覧を取得する
     pub fn list_images_from_buffer(
         buffer: &[u8],
         registry: &ExtensionRegistry,
@@ -32,7 +30,6 @@ impl ZipHandler {
         Ok(Self::list_images_from_archive(archive, registry))
     }
 
-    /// インメモリバッファからインデックス指定でエントリを取得する (Stored最適化付き)
     pub fn read_entry_from_buffer_at(buffer: &[u8], index: u32) -> Result<Vec<u8>> {
         let cursor = std::io::Cursor::new(buffer);
         let mut archive = zip::ZipArchive::new(cursor).context("ZIPバッファの読み取りに失敗")?;
@@ -40,7 +37,6 @@ impl ZipHandler {
             .by_index(index as usize)
             .with_context(|| format!("エントリが見つからない: index={index}"))?;
 
-        // Storedエントリ: バッファから直接スライス (zip Readerのオーバーヘッド回避)
         if entry.compression() == zip::CompressionMethod::Stored {
             let start = entry.data_start().context("データ開始位置の取得に失敗")? as usize;
             let size = entry.size() as usize;
@@ -48,13 +44,11 @@ impl ZipHandler {
             return Ok(buffer[start..start + size].to_vec());
         }
 
-        // 圧縮エントリ: 通常の展開
         let mut data = Vec::with_capacity(entry.size() as usize);
         entry.read_to_end(&mut data)?;
         Ok(data)
     }
 
-    /// ファイルパスからインデックス指定でエントリを取得する
     pub fn read_entry_at(archive_path: &Path, index: u32) -> Result<Vec<u8>> {
         let file = File::open(archive_path)
             .with_context(|| format!("アーカイブを開けない: {}", archive_path.display()))?;
@@ -68,7 +62,6 @@ impl ZipHandler {
         Ok(data)
     }
 
-    /// ファイルパスからエントリ一覧を取得する
     #[cfg(test)]
     pub fn list_images(&self, archive_path: &Path) -> Result<Vec<super::ArchiveImageEntry>> {
         let file = File::open(archive_path)
@@ -78,7 +71,6 @@ impl ZipHandler {
         Ok(Self::list_images_from_archive(archive, &self.registry))
     }
 
-    /// ZipArchiveからエントリ一覧を取得する共通実装
     fn list_images_from_archive<R: std::io::Read + std::io::Seek>(
         mut archive: zip::ZipArchive<R>,
         registry: &ExtensionRegistry,
@@ -146,11 +138,6 @@ fn decode_zip_entry_name(raw: &[u8]) -> String {
     decode_cp932(raw).unwrap_or_else(|| String::from_utf8_lossy(raw).into_owned())
 }
 
-/// CP932 (Shift_JIS) バイト列をUTF-8文字列へデコードする。
-///
-/// `MultiByteToWideChar`にコードページ932を固定指定するため、
-/// プロセスの`CP_ACP`設定や言語設定に依存しない。
-/// 入力が空、またはWindows API呼び出しが失敗した場合は`None`を返す。
 fn decode_cp932(bytes: &[u8]) -> Option<String> {
     use windows::Win32::Globalization::{MB_PRECOMPOSED, MultiByteToWideChar};
 
@@ -248,7 +235,6 @@ mod tests {
 
     #[test]
     fn read_entry_from_buffer_at_compressed() {
-        // Deflate圧縮のZIPを作成
         let mut buf = Vec::new();
         {
             let cursor = std::io::Cursor::new(&mut buf);
@@ -276,31 +262,23 @@ mod tests {
 
     #[test]
     fn decode_cp932_name() {
-        // 「画像」のCP932バイト列: 0x89 0xE6 0x91 0x9C
         let cp932: &[u8] = &[0x89, 0xE6, 0x91, 0x9C, b'.', b'j', b'p', b'g'];
         assert_eq!(decode_zip_entry_name(cp932), "画像.jpg");
     }
 
     #[test]
     fn decode_invalid_bytes_falls_back_to_lossy() {
-        // CP932として無効なバイト列の単独使用 (例: 0xFF) は
-        // MultiByteToWideCharがエラーになるか置換文字を返す。
-        // どちらでもパニックせず文字列を返すことを確認する。
         let bytes: &[u8] = &[0xFF, 0xFE, 0xFD];
         let s = decode_zip_entry_name(bytes);
         assert!(!s.is_empty());
     }
 
-    // --- CP932 ファイル名ZIPの再現テスト ---
-
     #[test]
     fn cp932_filename_zip_lists_and_reads_correctly() {
-        // 「画像.jpg」のCP932バイト列
         let cp932_name: &[u8] = &[0x89, 0xE6, 0x91, 0x9C, b'.', b'j', b'p', b'g'];
         let payload = b"jpeg-bytes-12345";
         let buffer = build_cp932_zip(&[(cp932_name, payload)]);
 
-        // 列挙: name_rawから復号した文字列が日本語として正しいこと
         let reg = Arc::new(ExtensionRegistry::new());
         let entries = ZipHandler::list_images_from_buffer(&buffer, &reg).unwrap();
         assert_eq!(entries.len(), 1);
@@ -308,7 +286,6 @@ mod tests {
         assert_eq!(entries[0].file_name, "画像.jpg");
         assert_eq!(entries[0].entry_index, 0);
 
-        // 取得: インデックスベースで成功すること
         let data = ZipHandler::read_entry_from_buffer_at(&buffer, 0).unwrap();
         assert_eq!(data, payload);
     }

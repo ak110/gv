@@ -12,7 +12,6 @@ use anyhow::{Result, bail};
 
 use crate::extension_registry::ExtensionRegistry;
 
-/// 組み込みハンドラの形式名と拡張子。拡張子の実体は各ハンドラが定義する。
 pub fn builtin_formats() -> Vec<(&'static str, &'static [&'static str])> {
     vec![
         ("ZIP", zip::EXTENSIONS),
@@ -22,7 +21,6 @@ pub fn builtin_formats() -> Vec<(&'static str, &'static [&'static str])> {
     ]
 }
 
-/// コミック用の拡張子だけをシェルへ関連付ける。
 pub fn comic_extensions() -> Vec<&'static str> {
     vec![
         zip::EXTENSIONS[1],
@@ -31,7 +29,6 @@ pub fn comic_extensions() -> Vec<&'static str> {
     ]
 }
 
-/// 汎用アーカイブは過去の関連付けを解除する対象として使う。
 pub fn generic_extensions() -> Vec<&'static str> {
     vec![
         zip::EXTENSIONS[0],
@@ -41,32 +38,19 @@ pub fn generic_extensions() -> Vec<&'static str> {
     ]
 }
 
-/// アーカイブ展開結果: (展開先パス, アーカイブ内エントリパス, 元の更新日時)
 pub type ExtractedEntry = (PathBuf, String, std::time::SystemTime);
 
-/// オンデマンド取得用のアーカイブ内画像エントリ情報
 pub struct ArchiveImageEntry {
-    /// アーカイブ内パス (例: "subfolder/image.png")
-    /// ZIPの場合はCP932/UTF-8復号後の表示用文字列であり再アクセス用キーには使用できない
     pub entry_name: String,
-    /// フラット化したファイル名 (ソート用)
     pub file_name: String,
-    /// 非圧縮サイズ
     pub file_size: u64,
-    /// アーカイブ内エントリのインデックス (再アクセス用キー)
-    /// この型を生成するZIPの`ZipArchive::by_index`の引数に対応する。
     pub entry_index: u32,
-    /// アーカイブ内の更新日時。
     pub modified: std::time::SystemTime,
 }
 
-/// アーカイブハンドラのトレイト
-/// 各フォーマットのハンドラが実装する
 pub trait ArchiveHandler: Send + Sync {
     fn supported_extensions(&self) -> Vec<String>;
 
-    /// アーカイブ内の画像ファイルをtarget_dirに展開する
-    /// 戻り値は展開先・元のエントリ名・更新日時の一覧。
     fn extract_images(
         &self,
         _archive_path: &Path,
@@ -88,7 +72,6 @@ pub trait ArchiveHandler: Send + Sync {
     }
 }
 
-/// アーカイブハンドラのディスパッチャ
 pub struct ArchiveManager {
     handlers: Vec<Box<dyn ArchiveHandler>>,
     registry: Arc<ExtensionRegistry>,
@@ -107,12 +90,10 @@ impl ArchiveManager {
         }
     }
 
-    /// ハンドラを追加する (Susieプラグイン等の動的追加用)
     pub fn add_handler(&mut self, handler: Box<dyn ArchiveHandler>) {
         self.handlers.push(handler);
     }
 
-    /// パスの拡張子を正規化する (例: "test.ZIP" → ".zip")
     fn normalized_extension(path: &Path) -> String {
         path.extension()
             .and_then(|e| e.to_str())
@@ -120,7 +101,6 @@ impl ArchiveManager {
             .unwrap_or_default()
     }
 
-    /// パスの拡張子に対応するハンドラを返す
     fn find_handler(&self, archive_path: &Path) -> Result<&dyn ArchiveHandler> {
         let ext = Self::normalized_extension(archive_path);
         self.handlers
@@ -130,14 +110,12 @@ impl ArchiveManager {
             .ok_or_else(|| anyhow::anyhow!("未対応のアーカイブ形式: {}", archive_path.display()))
     }
 
-    /// パスがアーカイブファイルか拡張子で判定する
     pub fn is_archive(&self, path: &Path) -> bool {
         path.file_name()
             .and_then(|n| n.to_str())
             .is_some_and(|name| self.registry.is_archive_extension(name))
     }
 
-    /// 対応ハンドラでアーカイブ内の画像を一括展開する
     pub fn extract_images(
         &self,
         archive_path: &Path,
@@ -147,13 +125,11 @@ impl ArchiveManager {
             .extract_images(archive_path, target_dir)
     }
 
-    /// パスに対応するハンドラがオンデマンド取得に対応しているか判定する
     pub fn supports_on_demand(&self, archive_path: &Path) -> bool {
         self.find_handler(archive_path)
             .is_ok_and(ArchiveHandler::supports_on_demand)
     }
 
-    /// ハンドラの抽象を通じてバッファから画像を列挙する。
     pub fn list_images_from_buffer(
         &self,
         buffer: &[u8],
@@ -163,7 +139,6 @@ impl ArchiveManager {
             .list_images_from_buffer(buffer)
     }
 
-    /// ハンドラの抽象を通じて番号指定の内容を取得する。
     pub fn read_entry_at(
         &self,
         archive_path: &Path,
@@ -175,8 +150,6 @@ impl ArchiveManager {
     }
 }
 
-/// アーカイブ展開時のファイル名重複を解決する
-/// target_dirに同名ファイルが既に存在する場合、"_2", "_3"...のサフィックスを付ける
 pub fn resolve_filename(target_dir: &Path, original_name: &str) -> std::path::PathBuf {
     let path = target_dir.join(original_name);
     if !path.exists() {
@@ -204,25 +177,18 @@ pub fn resolve_filename(target_dir: &Path, original_name: &str) -> std::path::Pa
         }
     }
 
-    // 9999まで全て使用済みの場合 (実質ありえない)
     target_dir.join(format!("{original_name}_overflow"))
 }
 
-/// アーカイブエントリのパスからファイル名部分のみを抽出する
-/// アーカイブ内のサブフォルダ構造はフラット化する
 pub fn extract_filename(entry_path: &str) -> &str {
-    // パス区切りは '/' と '\' の両方を考慮
     entry_path.rsplit(['/', '\\']).next().unwrap_or(entry_path)
 }
 
-/// 全アーカイブ形式で共通の画像エントリ選別。
 pub fn is_image_entry(path: &str, is_directory: bool, registry: &ExtensionRegistry) -> bool {
     let name = extract_filename(path);
     !is_directory && !name.is_empty() && !name.starts_with('.') && registry.is_image_extension(name)
 }
 
-/// DOS日時を暦の成分から変換する。タイムゾーン情報は格納されていないためUTCとして扱う。
-/// 不正な成分は更新日時なしとしてUNIX epochを返す。
 pub fn dos_modified(packed: u32) -> std::time::SystemTime {
     let Ok(time) = ::zip::DateTime::try_from_msdos((packed >> 16) as u16, packed as u16) else {
         return std::time::SystemTime::UNIX_EPOCH;
@@ -262,7 +228,6 @@ mod tests {
         assert!(mgr.is_archive(Path::new("test.ZIP")));
         assert!(mgr.is_archive(Path::new("test.cbz")));
         assert!(mgr.is_archive(Path::new("test.7z")));
-        // RARはビルド構成で対応可否が変わる（`gv_no_rar`では非対応形式として扱う）
         assert_eq!(mgr.is_archive(Path::new("test.rar")), cfg!(not(gv_no_rar)));
         assert_eq!(mgr.is_archive(Path::new("test.cbr")), cfg!(not(gv_no_rar)));
         assert!(!mgr.is_archive(Path::new("test.jpg")));
@@ -282,11 +247,9 @@ mod tests {
     fn resolve_filename_handles_duplicates() {
         let dir = crate::test_helpers::TempDir::new("resolve_fn");
 
-        // 重複なし
         let path = resolve_filename(&dir, "unique.jpg");
         assert_eq!(path.file_name().unwrap().to_str().unwrap(), "unique.jpg");
 
-        // 重複あり
         std::fs::write(dir.join("dup.jpg"), b"").unwrap();
         let path = resolve_filename(&dir, "dup.jpg");
         assert_eq!(path.file_name().unwrap().to_str().unwrap(), "dup_2.jpg");
@@ -314,13 +277,10 @@ mod tests {
     fn find_handler_succeeds_for_supported_extensions() {
         let reg = Arc::new(ExtensionRegistry::new());
         let mgr = ArchiveManager::new(reg);
-        // 各ハンドラの代表拡張子で成功すること
         assert!(mgr.find_handler(Path::new("a.zip")).is_ok());
         assert!(mgr.find_handler(Path::new("a.cbz")).is_ok());
         assert!(mgr.find_handler(Path::new("a.7z")).is_ok());
-        // 大文字小文字の正規化も find_handler 経由で確認 (normalized_extension の置き換え)
         assert!(mgr.find_handler(Path::new("a.ZIP")).is_ok());
-        // RARはビルド構成で対応可否が変わる（`gv_no_rar`では非対応形式として扱う）
         assert_eq!(
             mgr.find_handler(Path::new("a.rar")).is_ok(),
             cfg!(not(gv_no_rar))
@@ -333,20 +293,14 @@ mod tests {
             mgr.find_handler(Path::new("a.Rar")).is_ok(),
             cfg!(not(gv_no_rar))
         );
-        // 拡張子なしは失敗
         assert!(mgr.find_handler(Path::new("noext")).is_err());
     }
-
-    // normalized_extension の単体テストは削除済み:
-    // 上の find_handler_succeeds_for_supported_extensions が大文字小文字混在の代表的な
-    // 入力で結合的にカバーしており、private 関数の単独テストは冗長。
 
     #[test]
     fn list_images_from_buffer_empty_zip() {
         let reg = Arc::new(ExtensionRegistry::new());
         let mgr = ArchiveManager::new(reg);
 
-        // 空のZIPバッファを作成
         let buf = {
             let mut v = Vec::new();
             let cursor = std::io::Cursor::new(&mut v);
@@ -365,7 +319,6 @@ mod tests {
         let reg = Arc::new(ExtensionRegistry::new());
         let mgr = ArchiveManager::new(reg);
 
-        // 画像と非画像が混在するZIP
         let buf = {
             use std::io::Write;
             let mut v = Vec::new();
@@ -389,7 +342,6 @@ mod tests {
         let entries = mgr
             .list_images_from_buffer(&buf, Path::new("mixed.zip"))
             .unwrap();
-        // jpg と png のみ通過する
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].file_name, "photo.jpg");
         assert_eq!(entries[1].file_name, "icon.png");
@@ -412,7 +364,6 @@ mod tests {
             writer.finish().unwrap();
             v
         };
-        // .cbzもZIPとして処理される
         let entries = mgr
             .list_images_from_buffer(&buf, Path::new("comic.cbz"))
             .unwrap();
@@ -433,7 +384,6 @@ mod tests {
     fn supports_on_demand_returns_false_for_unsupported() {
         let reg = Arc::new(ExtensionRegistry::new());
         let mgr = ArchiveManager::new(reg);
-        // 未対応拡張子 → find_handlerが失敗 → false
         assert!(!mgr.supports_on_demand(Path::new("test.xyz")));
     }
 
@@ -441,7 +391,6 @@ mod tests {
     fn supports_on_demand_for_zip() {
         let reg = Arc::new(ExtensionRegistry::new());
         let mgr = ArchiveManager::new(reg);
-        // ZipHandlerのsupports_on_demandはtrueを返す
         assert!(mgr.supports_on_demand(Path::new("test.zip")));
     }
 
@@ -465,7 +414,6 @@ mod tests {
     fn resolve_filename_no_extension() {
         let dir = crate::test_helpers::TempDir::new("resolve_noext");
 
-        // 拡張子なしファイルの重複解決
         std::fs::write(dir.join("README"), b"").unwrap();
         let path = resolve_filename(&dir, "README");
         assert_eq!(path.file_name().unwrap().to_str().unwrap(), "README_2");
@@ -475,7 +423,6 @@ mod tests {
     fn resolve_filename_multiple_duplicates() {
         let dir = crate::test_helpers::TempDir::new("resolve_multi");
 
-        // 連番の重複解決: _2, _3 と順に増える
         std::fs::write(dir.join("img.png"), b"").unwrap();
         std::fs::write(dir.join("img_2.png"), b"").unwrap();
         let path = resolve_filename(&dir, "img.png");
@@ -484,7 +431,6 @@ mod tests {
 
     #[test]
     fn extract_filename_trailing_separator() {
-        // 末尾が区切り文字の場合 → 空文字列
         assert_eq!(extract_filename("folder/"), "");
         assert_eq!(extract_filename("folder\\"), "");
     }
@@ -493,7 +439,6 @@ mod tests {
     fn is_archive_rejects_path_without_filename() {
         let reg = Arc::new(ExtensionRegistry::new());
         let mgr = ArchiveManager::new(reg);
-        // パスの末尾が区切り文字 (file_name() がNone)
         assert!(!mgr.is_archive(Path::new("/")));
     }
 }

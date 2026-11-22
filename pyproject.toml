@@ -16,6 +16,7 @@ python = true
 js-runner = "direct"
 prettier = true
 colloquial-check = true
+comment-check = true
 
 extend-exclude = [
     "target",
@@ -23,6 +24,13 @@ extend-exclude = [
     "dist",
     # miseが生成するnpmツールのlock（mise.lockが内容のdigestを持つ）。整形すると導入済みの版を見失う。
     ".mise",
+]
+
+[tool.pylint."messages control"]
+disable = [
+    "missing-class-docstring",
+    "missing-function-docstring",
+    "missing-module-docstring",
 ]
 
 [tool.typos.default.extend-identifiers]

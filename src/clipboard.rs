@@ -1,5 +1,3 @@
-//! Win32 Clipboard APIによるクリップボード操作
-
 use anyhow::{Context as _, Result, bail};
 use windows::Win32::Foundation::{HGLOBAL, HWND};
 use windows::Win32::System::DataExchange::{
@@ -10,7 +8,6 @@ use windows::Win32::System::Memory::{
 };
 use windows::Win32::System::Ole::CF_DIB;
 
-// windowsクレート v0.62にはGlobalFreeが含まれないためkernel32.dllから直接リンクする
 unsafe extern "system" {
     safe fn GlobalFree(hmem: HGLOBAL) -> HGLOBAL;
 }
@@ -20,7 +17,6 @@ use crate::util::to_wide;
 
 const CF_UNICODETEXT: u32 = 13;
 
-/// テキストをクリップボードにコピーする
 pub fn copy_text_to_clipboard(hwnd: HWND, text: &str) -> Result<()> {
     let wide = to_wide(text);
     let byte_len = wide.len() * 2;
@@ -46,7 +42,6 @@ pub fn copy_text_to_clipboard(hwnd: HWND, text: &str) -> Result<()> {
         std::ptr::copy_nonoverlapping(wide.as_ptr().cast::<u8>(), ptr.cast::<u8>(), byte_len);
         let _ = GlobalUnlock(hmem);
 
-        // SetClipboardDataに渡すHANDLEはGlobalAllocの戻り値をそのまま使う
         let handle = windows::Win32::Foundation::HANDLE(hmem.0.cast());
         if SetClipboardData(CF_UNICODETEXT, Some(handle)).is_err() {
             let _ = GlobalFree(hmem);
@@ -58,7 +53,6 @@ pub fn copy_text_to_clipboard(hwnd: HWND, text: &str) -> Result<()> {
     Ok(())
 }
 
-/// 画像をクリップボードにコピーする (CF_DIB形式)
 pub fn copy_image_to_clipboard(hwnd: HWND, image: &DecodedImage) -> Result<()> {
     let header_size: usize = 40;
     let row_stride = (image.width as usize * 3).div_ceil(4) * 4;
@@ -67,23 +61,21 @@ pub fn copy_image_to_clipboard(hwnd: HWND, image: &DecodedImage) -> Result<()> {
 
     let mut dib = vec![0u8; total_size];
 
-    // BITMAPINFOHEADER
     dib[0..4].copy_from_slice(&40u32.to_le_bytes());
     dib[4..8].copy_from_slice(&image.width.to_le_bytes());
     dib[8..12].copy_from_slice(&image.height.to_le_bytes());
     dib[12..14].copy_from_slice(&1u16.to_le_bytes());
     dib[14..16].copy_from_slice(&24u16.to_le_bytes());
 
-    // RGBA → BGR (上下反転)
     for y in 0..image.height as usize {
         let src_row = y * image.width as usize * 4;
         let dst_row = header_size + (image.height as usize - 1 - y) * row_stride;
         for x in 0..image.width as usize {
             let src = src_row + x * 4;
             let dst = dst_row + x * 3;
-            dib[dst] = image.data[src + 2]; // B
-            dib[dst + 1] = image.data[src + 1]; // G
-            dib[dst + 2] = image.data[src]; // R
+            dib[dst] = image.data[src + 2];
+            dib[dst + 1] = image.data[src + 1];
+            dib[dst + 2] = image.data[src];
         }
     }
 
@@ -117,7 +109,6 @@ pub fn copy_image_to_clipboard(hwnd: HWND, image: &DecodedImage) -> Result<()> {
     Ok(())
 }
 
-/// クリップボードから画像を取得する (CF_DIB形式)
 pub fn paste_image_from_clipboard(hwnd: HWND) -> Result<Option<DecodedImage>> {
     // SAFETY:
     // - GetClipboardData の戻り値 HGLOBAL に GlobalLock してから読み取る。GlobalSize で
@@ -137,7 +128,6 @@ pub fn paste_image_from_clipboard(hwnd: HWND) -> Result<Option<DecodedImage>> {
             return Ok(None);
         };
 
-        // HANDLEをHGLOBALとして扱う
         let hglobal = windows::Win32::Foundation::HGLOBAL(handle.0.cast());
         let ptr = GlobalLock(hglobal);
         if ptr.is_null() {
@@ -177,7 +167,6 @@ pub fn paste_image_from_clipboard(hwnd: HWND) -> Result<Option<DecodedImage>> {
             bail!("DIBヘッダサイズが不正: {bi_size}");
         }
 
-        // V4/V5ヘッダ(biSize≥108)のbV4AlphaMaskはオフセット52にある
         let alpha_mask = if bi_size >= 108 && data_size >= bi_size as usize {
             u32::from_le_bytes(std::ptr::read_unaligned(header.add(52).cast::<[u8; 4]>()))
         } else {
@@ -189,7 +178,6 @@ pub fn paste_image_from_clipboard(hwnd: HWND) -> Result<Option<DecodedImage>> {
         let src_row_stride = (width as usize * bytes_per_pixel).div_ceil(4) * 4;
         let pixel_offset = compute_dib_pixel_offset(bi_size, bi_compression);
 
-        // ピクセルデータが収まるか検証
         let required_size =
             pixel_offset.saturating_add(src_row_stride.saturating_mul(abs_height as usize));
         if required_size > data_size {
@@ -212,9 +200,9 @@ pub fn paste_image_from_clipboard(hwnd: HWND) -> Result<Option<DecodedImage>> {
             for x in 0..width as usize {
                 let src = header.add(src_row + x * bytes_per_pixel);
                 let dst = dst_row + x * 4;
-                rgba[dst] = *src.add(2); // R
-                rgba[dst + 1] = *src.add(1); // G
-                rgba[dst + 2] = *src; // B
+                rgba[dst] = *src.add(2);
+                rgba[dst + 1] = *src.add(1);
+                rgba[dst + 2] = *src;
                 rgba[dst + 3] = if bit_count == 32 && dib_has_alpha {
                     *src.add(3)
                 } else {
@@ -246,25 +234,21 @@ fn has_dib_alpha(bi_size: u32, bi_compression: u32, alpha_mask: u32) -> bool {
     if bi_size == 40 {
         bi_compression == BI_ALPHABITFIELDS
     } else {
-        // V4/V5ヘッダではbV4AlphaMask非ゼロでアルファ有効
         alpha_mask != 0
     }
 }
 
-/// DIBヘッダのbiSizeとbiCompressionからピクセルデータの開始オフセットを計算する。
-/// BI_BITFIELDSやBI_ALPHABITFIELDSの場合、カラーマスクがヘッダ直後に付加される。
 fn compute_dib_pixel_offset(bi_size: u32, bi_compression: u32) -> usize {
     const BI_BITFIELDS: u32 = 3;
     const BI_ALPHABITFIELDS: u32 = 6;
 
     if bi_size == 40 {
         match bi_compression {
-            BI_BITFIELDS => 40 + 12,      // 3つのDWORDカラーマスク
-            BI_ALPHABITFIELDS => 40 + 16, // 4つのDWORDカラーマスク
+            BI_BITFIELDS => 40 + 12,
+            BI_ALPHABITFIELDS => 40 + 16,
             _ => 40,
         }
     } else {
-        // BITMAPV4HEADER(108), BITMAPV5HEADER(124) 等はヘッダにマスクを含む
         bi_size as usize
     }
 }
@@ -302,43 +286,36 @@ mod tests {
 
     #[test]
     fn test_has_dib_alpha_bi_rgb() {
-        // BI_RGB: BITMAPINFOHEADERではアルファ無効
         assert!(!has_dib_alpha(40, 0, 0));
     }
 
     #[test]
     fn test_has_dib_alpha_bi_bitfields() {
-        // BI_BITFIELDS: BITMAPINFOHEADERではアルファ無効
         assert!(!has_dib_alpha(40, 3, 0));
     }
 
     #[test]
     fn test_has_dib_alpha_bi_alphabitfields() {
-        // BI_ALPHABITFIELDS: BITMAPINFOHEADERではアルファ有効
         assert!(has_dib_alpha(40, 6, 0));
     }
 
     #[test]
     fn test_has_dib_alpha_v4_no_mask() {
-        // V4ヘッダ、アルファマスクなし
         assert!(!has_dib_alpha(108, 0, 0));
     }
 
     #[test]
     fn test_has_dib_alpha_v4_with_mask() {
-        // V4ヘッダ、アルファマスクあり
         assert!(has_dib_alpha(108, 0, 0xFF000000));
     }
 
     #[test]
     fn test_has_dib_alpha_v5_no_mask() {
-        // V5ヘッダ、アルファマスクなし
         assert!(!has_dib_alpha(124, 0, 0));
     }
 
     #[test]
     fn test_has_dib_alpha_v5_with_mask() {
-        // V5ヘッダ、アルファマスクあり
         assert!(has_dib_alpha(124, 0, 0xFF000000));
     }
 }

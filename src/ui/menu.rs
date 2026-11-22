@@ -1,21 +1,14 @@
-//! メニューバー構築
-//!
-//! Win32 HMENU を構築し、メニューIDからActionへの変換を提供する。
-
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::action::Action;
 use crate::ui::key_config::KeyConfig;
 
-/// メニューID の基底値
 const WM_COMMAND_BASE: u16 = 0x1000;
 
-/// メニューバーを構築して返す
 pub fn build_menu_bar(keys: &KeyConfig) -> HMENU {
     unsafe {
         let menu_bar = CreateMenu().unwrap_or_default();
 
-        // ファイル(&F)
         let file_menu = create_popup(
             keys,
             &[
@@ -36,7 +29,6 @@ pub fn build_menu_bar(keys: &KeyConfig) -> HMENU {
         );
         append_popup(menu_bar, file_menu, "ファイル(&F)");
 
-        // マーク(&M)
         let mark_menu = create_popup(
             keys,
             &[
@@ -57,7 +49,6 @@ pub fn build_menu_bar(keys: &KeyConfig) -> HMENU {
         );
         append_popup(menu_bar, mark_menu, "マーク(&M)");
 
-        // 編集(&E)
         let edit_menu = create_popup(
             keys,
             &[
@@ -74,7 +65,6 @@ pub fn build_menu_bar(keys: &KeyConfig) -> HMENU {
         );
         append_popup(menu_bar, edit_menu, "編集(&E)");
 
-        // 画像(&I)
         let image_menu = create_popup(
             keys,
             &[
@@ -113,7 +103,6 @@ pub fn build_menu_bar(keys: &KeyConfig) -> HMENU {
         );
         append_popup(menu_bar, image_menu, "画像(&I)");
 
-        // フィルタ(&T)
         let filter_menu = create_popup(
             keys,
             &[
@@ -145,7 +134,6 @@ pub fn build_menu_bar(keys: &KeyConfig) -> HMENU {
         );
         append_popup(menu_bar, filter_menu, "フィルタ(&T)");
 
-        // リスト(&L)
         let list_menu = create_popup(
             keys,
             &[
@@ -169,7 +157,6 @@ pub fn build_menu_bar(keys: &KeyConfig) -> HMENU {
         );
         append_popup(menu_bar, list_menu, "リスト(&L)");
 
-        // 表示(&V)
         let view_menu = create_popup(
             keys,
             &[
@@ -194,7 +181,6 @@ pub fn build_menu_bar(keys: &KeyConfig) -> HMENU {
         );
         append_popup(menu_bar, view_menu, "表示(&V)");
 
-        // ヘルプ(&H)
         let help_menu = create_popup(
             keys,
             &[
@@ -219,7 +205,6 @@ pub fn build_menu_bar(keys: &KeyConfig) -> HMENU {
     }
 }
 
-/// Action からメニューIDを計算
 pub fn action_to_menu_id(action: Action) -> u16 {
     use strum::IntoEnumIterator;
     let index = Action::iter().position(|a| a == action).unwrap_or(0) as u16;
@@ -233,7 +218,6 @@ fn menu_label(keys: &KeyConfig, action: Action, label: &str) -> String {
     }
 }
 
-/// メニュー項目の有効/無効を更新
 pub fn update_menu_enabled(menu: HMENU, action: Action, enabled: bool) {
     unsafe {
         let flag = if enabled { MF_ENABLED } else { MF_GRAYED };
@@ -241,7 +225,6 @@ pub fn update_menu_enabled(menu: HMENU, action: Action, enabled: bool) {
     }
 }
 
-/// メニュー項目のチェック状態を更新
 pub fn update_menu_check(menu: HMENU, action: Action, checked: bool) {
     unsafe {
         let flag = if checked { MF_CHECKED } else { MF_UNCHECKED };
@@ -253,7 +236,6 @@ pub fn update_menu_check(menu: HMENU, action: Action, checked: bool) {
     }
 }
 
-/// メニューIDからActionに変換
 pub fn menu_id_to_action(id: u16) -> Option<Action> {
     if id < WM_COMMAND_BASE {
         return None;
@@ -262,7 +244,6 @@ pub fn menu_id_to_action(id: u16) -> Option<Action> {
     action_from_index(index)
 }
 
-/// ポップアップメニューを作成してアイテムを追加
 unsafe fn create_popup(keys: &KeyConfig, items: &[Option<(Action, &str)>]) -> HMENU {
     unsafe {
         let popup = CreatePopupMenu().unwrap_or_default();
@@ -286,7 +267,6 @@ unsafe fn create_popup(keys: &KeyConfig, items: &[Option<(Action, &str)>]) -> HM
     }
 }
 
-/// ポップアップをメニューバーに追加
 unsafe fn append_popup(menu_bar: HMENU, popup: HMENU, label: &str) {
     unsafe {
         let wide_label = to_wide(label);
@@ -301,7 +281,6 @@ unsafe fn append_popup(menu_bar: HMENU, popup: HMENU, label: &str) {
 
 use crate::util::to_wide;
 
-/// インデックスからActionを復元する (strum::EnumIter を利用)
 fn action_from_index(index: u16) -> Option<Action> {
     use strum::IntoEnumIterator;
     Action::iter().nth(index as usize)

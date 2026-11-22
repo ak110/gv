@@ -22,7 +22,6 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
 
-/// 親ウィンドウの中心座標を計算し、モニターのワーク領域内にclampする
 pub fn center_on_parent(parent: HWND, width: i32, height: i32) -> (i32, i32) {
     let mut rect = windows::Win32::Foundation::RECT::default();
     unsafe {
@@ -31,7 +30,6 @@ pub fn center_on_parent(parent: HWND, width: i32, height: i32) -> (i32, i32) {
     let cx = i32::midpoint(rect.left, rect.right) - width / 2;
     let cy = i32::midpoint(rect.top, rect.bottom) - height / 2;
 
-    // 親ウィンドウが属するモニターのワーク領域内にclamp
     let monitor = unsafe { MonitorFromWindow(parent, MONITOR_DEFAULTTONEAREST) };
     let mut mi = MONITORINFO {
         cbSize: size_of::<MONITORINFO>() as u32,
@@ -39,7 +37,6 @@ pub fn center_on_parent(parent: HWND, width: i32, height: i32) -> (i32, i32) {
     };
     if unsafe { GetMonitorInfoW(monitor, std::ptr::from_mut(&mut mi)) }.as_bool() {
         let rc = mi.rcWork;
-        // ダイアログがモニターより大きい場合はワーク領域の左上へ配置する
         let x = cx.clamp(rc.left, (rc.right - width).max(rc.left));
         let y = cy.clamp(rc.top, (rc.bottom - height).max(rc.top));
         (x, y)

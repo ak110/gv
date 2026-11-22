@@ -1,7 +1,3 @@
-//! ファイルリストパネルと UI 状態管理
-//!
-//! パネルの通知処理、メニュー更新、画面同期など。
-
 use std::collections::HashSet;
 
 use windows::Win32::Foundation::{LPARAM, LRESULT};
@@ -19,17 +15,11 @@ use crate::ui::menu;
 use super::AppWindow;
 
 impl AppWindow {
-    /// DocumentEvent を処理する
     pub(crate) fn process_document_events(&mut self) {
-        // 先読みレスポンスを処理 (キャッシュ格納 + current_image更新)
         self.document.process_prefetch_responses();
 
-        // バックグラウンドコンテナ展開結果を処理
         self.document.process_expand_results();
 
-        // FileListChanged は同一poll内で複数届きうる (バックグラウンド統合バッチごと等)。
-        // パネル更新コストを抑えるため、ループ中はフラグだけ設定し、ループ抜け後に1回だけ
-        // panel.update() を呼ぶ。
         let mut file_list_changed = false;
         let mut nav_changed_index: Option<usize> = None;
         while let Ok(event) = self.event_receiver.try_recv() {
@@ -62,18 +52,15 @@ impl AppWindow {
             self.defer_ui(move || panel.set_selection(index));
         }
 
-        // パネル表示中ならキャッシュ状態の差分のみ更新 (該当行のみ再描画)
         if self.file_list_panel.is_visible() {
             let doc = &self.document;
             let len = doc.file_list().len();
-            // 現在のキャッシュ状態をスナップショット (上限6件程度なので軽量)
             let mut new_cached = HashSet::new();
             for i in 0..len {
                 if doc.is_cached(i) {
                     new_cached.insert(i);
                 }
             }
-            // 前回との差分だけ該当行を再描画
             for &i in self.cached_indices.symmetric_difference(&new_cached) {
                 let panel = self.file_list_panel.clone();
                 self.defer_ui(move || panel.update_item(i));
@@ -82,15 +69,12 @@ impl AppWindow {
         }
     }
 
-    /// メニューポップアップ表示時にトグル項目のチェック状態を更新
     pub(crate) fn update_menu_checks(&self, popup: HMENU) {
         let pf = self.document.persistent_filter();
         let pf_enabled = pf.is_enabled();
 
-        // 永続フィルタの有効/無効チェック
         menu::update_menu_check(popup, Action::PFilterToggle, pf_enabled);
 
-        // 各フィルタ操作のチェックマーク + フィルタ無効時はグレーアウト
         for spec in crate::filter_spec::FILTER_SPECS {
             if let Some(action) = spec.persistent_action {
                 menu::update_menu_check(popup, action, pf.has_operation(spec.kind));
@@ -98,7 +82,6 @@ impl AppWindow {
             }
         }
 
-        // その他のトグル項目
         menu::update_menu_check(
             popup,
             Action::ToggleFileList,
@@ -123,7 +106,6 @@ impl AppWindow {
         menu::update_menu_check(popup, Action::SlideshowToggle, self.slideshow_active);
     }
 
-    /// ファイルリストパネルの同期ヘルパー (MarkInvertAll / MarkInvertToHere で共通)
     pub(crate) fn sync_file_list_panel(&mut self) {
         if self.file_list_panel.is_visible() {
             let doc = &self.document;
@@ -137,10 +119,8 @@ impl AppWindow {
         }
     }
 
-    /// ファイルリストパネルからの通知を処理
     pub(crate) fn handle_file_list_notify(&mut self, code: u32, lparam: LPARAM) -> LRESULT {
         match code {
-            // テキスト要求: 該当インデックスのラベルを ListView 提供のバッファへコピー
             i if i == LVN_GETDISPINFOW => {
                 // SAFETY: LVN_GETDISPINFOW の lparam は OS が有効な NMLVDISPINFOW へのポインタを保証する
                 let dispinfo = unsafe { &mut *(lparam.0 as *mut NMLVDISPINFOW) };
@@ -150,11 +130,9 @@ impl AppWindow {
                     if let Some(info) = files.get(idx) {
                         let is_cached = self.document.is_cached(idx);
                         let label = FileListPanel::format_label(info, is_cached);
-                        // UTF-16 化して、ListView 提供の pszText バッファへコピー
                         let max = dispinfo.item.cchTextMax as usize;
                         if max > 0 && !dispinfo.item.pszText.0.is_null() {
                             let mut wide: Vec<u16> = label.encode_utf16().collect();
-                            // ヌル終端1文字分を残して切り詰める
                             if wide.len() >= max {
                                 wide.truncate(max - 1);
                             }
@@ -173,11 +151,9 @@ impl AppWindow {
                 }
                 LRESULT(0)
             }
-            // 選択変更通知: ユーザーのクリック・マウスホイール等で iItem が変わった
             i if i == LVN_ITEMCHANGED => {
                 // SAFETY: LVN_ITEMCHANGED の lparam は OS が有効な NMLISTVIEW へのポインタを保証する
                 let nmlv = unsafe { &*(lparam.0 as *const NMLISTVIEW) };
-                // 状態変化のうち SELECTED ビットが新たに有効になったときだけ反応
                 let became_selected = (nmlv.uChanged.0 & LVIF_STATE.0) != 0
                     && (nmlv.uOldState & LVIS_SELECTED.0) == 0
                     && (nmlv.uNewState & LVIS_SELECTED.0) != 0;
@@ -201,7 +177,6 @@ impl AppWindow {
         self.file_list_panel.toggle(self.fullscreen.is_fullscreen());
         let panel = self.file_list_panel.clone();
         self.defer_ui(move || panel.apply_visibility());
-        // パネルが表示状態になったら全同期 (非表示中の変更を反映)
         if self.file_list_panel.is_visible() {
             let doc = &self.document;
             let len = doc.file_list().len();
@@ -211,7 +186,6 @@ impl AppWindow {
                 let panel = self.file_list_panel.clone();
                 self.defer_ui(move || panel.set_selection(idx));
             }
-            // cached_indicesも同期
             self.cached_indices.clear();
             for i in 0..len {
                 if self.document.is_cached(i) {
@@ -221,7 +195,6 @@ impl AppWindow {
         }
         let (width, height) = crate::ui::window::get_client_size(self.hwnd);
         self.on_size(width, height);
-        // 同期再描画でちらつきを防止
         let hwnd = self.hwnd;
         self.defer_ui(move || unsafe {
             let _ = UpdateWindow(hwnd);

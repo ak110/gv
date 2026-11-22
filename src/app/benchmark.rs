@@ -1,49 +1,32 @@
-//! 表示時間の測定 (開発者が`mise run bench`で明示実行する)
-//!
-//! 隠しウィンドウの`AppWindow`で、実際のファイル読込・デコード・先読み・Direct2D描画を通して
-//! 初回表示、連続した前方移動、直後の逆方向移動の時間を測る。
-//! 開始は表示を要求する直前、終了は対象画像の描画が成功（`EndDraw`成功）した時点とする。
-//! 結果は`target/gv-bench/`へJSONで保存し、`scripts/compare_display_bench.py`で2結果を比較する。
-//! 通常の`cargo test`とCIでは実行しない (`#[ignore]`)。
-
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-/// 1回の操作の測定結果
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct Trial {
     pub(crate) input: String,
     pub(crate) scenario: String,
     pub(crate) round: u32,
     pub(crate) step: u32,
-    /// 表示対象のファイルリスト上の位置
     pub(crate) index: usize,
     pub(crate) ms: f64,
-    /// 期限内に対象画像の描画が成功したか (失敗した試行は集計から除く)
     pub(crate) drawn: bool,
-    /// 要求の時点で対象が先読み済みだったか
     pub(crate) cached: bool,
 }
 
-/// 入力種別×シナリオごとの集計
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) struct ScenarioSummary {
     pub(crate) input: String,
     pub(crate) scenario: String,
-    /// 集計に含めた (描画が成功した) 試行数
     pub(crate) count: usize,
-    /// 集計から除いた (失敗・描画未完了の) 試行数
     pub(crate) failed: usize,
-    /// 集計に含めた試行のうち先読み済みだった数
     pub(crate) cached: usize,
     pub(crate) median_ms: Option<f64>,
     pub(crate) p95_ms: Option<f64>,
 }
 
-/// 試行を入力種別×シナリオで集計する。描画が成功しなかった試行は値から除き、件数だけ数える
 pub(crate) fn summarize(trials: &[Trial]) -> Vec<ScenarioSummary> {
     let mut order: Vec<(String, String)> = Vec::new();
     let mut groups: BTreeMap<(String, String), Vec<&Trial>> = BTreeMap::new();
@@ -73,7 +56,6 @@ pub(crate) fn summarize(trials: &[Trial]) -> Vec<ScenarioSummary> {
         .collect()
 }
 
-/// 昇順に並んだ値の中央値
 fn median(sorted: &[f64]) -> Option<f64> {
     let n = sorted.len();
     match n {
@@ -83,7 +65,6 @@ fn median(sorted: &[f64]) -> Option<f64> {
     }
 }
 
-/// 昇順に並んだ値の最近順位法によるパーセンタイル
 fn percentile_nearest_rank(sorted: &[f64], percent: usize) -> Option<f64> {
     if sorted.is_empty() {
         return None;
@@ -92,38 +73,27 @@ fn percentile_nearest_rank(sorted: &[f64], percent: usize) -> Option<f64> {
     Some(sorted[rank - 1])
 }
 
-/// 測定条件
 #[derive(Debug, Clone, Serialize)]
 struct Settings {
-    /// 入力ごとに新しいウィンドウで繰り返す回数
     rounds: u32,
-    /// 初回表示の後に続ける前方移動の回数
     forward_steps: u32,
-    /// 前方移動の直後に続ける逆方向移動の回数
     backward_steps: u32,
-    /// 操作の間隔 (前の画像の描画成功から次の要求まで。間にメッセージを処理する)
     interval_ms: u64,
-    /// 1操作の描画完了を待つ上限
     timeout_ms: u64,
 }
 
-/// 素材の内容
 #[derive(Debug, Clone, Serialize)]
 struct Material {
     width: u32,
     height: u32,
-    /// 入力ごとの画像枚数 (PDFはページ数)
     count: usize,
-    /// ファイルリスト上の並び (名前の自然順で、生成した順と同じ)
     order: String,
     inputs: Vec<String>,
 }
 
-/// 実行環境
 #[derive(Debug, Clone, Serialize)]
 struct Environment {
     commit: String,
-    /// 未commitの変更があったか
     dirty: bool,
     profile: &'static str,
     rustc: String,
@@ -132,14 +102,12 @@ struct Environment {
     gpu: String,
 }
 
-/// 先読みの設定
 #[derive(Debug, Clone, Serialize)]
 struct PrefetchSettings {
     cache_budget_bytes: usize,
     base_image_size_bytes: usize,
 }
 
-/// 保存する測定結果
 #[derive(Debug, Clone, Serialize)]
 struct Report {
     environment: Environment,
@@ -147,13 +115,11 @@ struct Report {
     settings: Settings,
     prefetch: PrefetchSettings,
     window_client_size: (u32, u32),
-    /// 各値の意味 (結果ファイル単独で読めるようにする)
     notes: Vec<&'static str>,
     trials: Vec<Trial>,
     summary: Vec<ScenarioSummary>,
 }
 
-/// 固定内容の写真風画像 (滑らかなグラデーションと細かい模様で圧縮率を写真に近づける)
 fn material_image(width: u32, height: u32, seed: u32) -> image::RgbImage {
     image::RgbImage::from_fn(width, height, |x, y| {
         let noise = (x.wrapping_mul(7919) ^ y.wrapping_mul(104_729) ^ seed.wrapping_mul(31)) % 23;
@@ -171,9 +137,7 @@ fn encode(img: &image::RgbImage, format: image::ImageFormat) -> Vec<u8> {
     buf.into_inner()
 }
 
-/// JPEGを1枚ずつページへ貼ったPDFを組み立てる
 fn build_pdf(jpegs: &[Vec<u8>], width: u32, height: u32) -> Vec<u8> {
-    // Windowsの既定描画 (96DPI) で画像と同じ画素数になるページ寸法
     let page_w = f64::from(width) * 72.0 / 96.0;
     let page_h = f64::from(height) * 72.0 / 96.0;
     let mut out: Vec<u8> = b"%PDF-1.4\n".to_vec();
@@ -241,7 +205,6 @@ fn build_pdf(jpegs: &[Vec<u8>], width: u32, height: u32) -> Vec<u8> {
     out
 }
 
-/// 素材を生成し、入力種別と開くパスの組を返す
 fn prepare_inputs(dir: &Path, width: u32, height: u32, count: usize) -> Vec<(String, PathBuf)> {
     use std::io::Write as _;
     let jpeg_dir = dir.join("jpeg");
@@ -278,7 +241,6 @@ fn prepare_inputs(dir: &Path, width: u32, height: u32, count: usize) -> Vec<(Str
     ]
 }
 
-/// 待機中のウィンドウメッセージ (先読み完了の通知など) を処理する
 fn pump_messages() {
     use windows::Win32::UI::WindowsAndMessaging::{
         DispatchMessageW, MSG, PM_REMOVE, PeekMessageW, TranslateMessage, WM_QUIT,
@@ -295,7 +257,6 @@ fn pump_messages() {
     }
 }
 
-/// 対象位置の画像の描画が成功するまで待ち、成功したかを返す
 fn wait_until_drawn(app: &super::test_support::TestApp, index: usize, deadline: Instant) -> bool {
     loop {
         pump_messages();
@@ -320,7 +281,6 @@ fn wait_until_drawn(app: &super::test_support::TestApp, index: usize, deadline: 
     }
 }
 
-/// 操作間隔の間もメッセージを処理して先読みを進める
 fn idle(app: &super::test_support::TestApp, duration: Duration) {
     let until = Instant::now() + duration;
     while Instant::now() < until {
@@ -396,7 +356,6 @@ fn process_memory() -> ProcessMemory {
     serde_json::from_str(&json).expect("プロセスメモリーのJSONデコード失敗")
 }
 
-/// 1入力分の測定 (新しいウィンドウで初回表示・前方移動・逆方向移動を順に行う)
 fn measure_input(input: &str, path: &Path, round: u32, settings: &Settings) -> Vec<Trial> {
     use crate::action::Action;
     let app = super::test_support::TestApp::new();
@@ -416,12 +375,10 @@ fn measure_input(input: &str, path: &Path, round: u32, settings: &Settings) -> V
         });
     };
 
-    // 初回表示 (ファイル指定起動・ドロップと同じ`Document::open`)
     let start = Instant::now();
     let opened = app.with_app(|state| state.document.open(path).is_ok());
     let drawn = opened && wait_until_drawn(&app, 0, start + timeout);
     record("initial", 0, 0, start, drawn, false);
-    // 初回表示に失敗した入力は移動を測らない。失敗時もウィンドウの閉じ方は成功時と同じにする
     if drawn {
         let mut index = 0usize;
         for (scenario, action, steps) in [
@@ -460,7 +417,6 @@ mod tests {
 
     const LARGE_IMAGE_MATERIAL: (u32, u32, usize) = (8192, 4096, 8);
 
-    /// 失敗・描画未完了の試行は中央値とp95から除き、件数を別に数える
     #[test]
     fn summary_excludes_failed_trials() {
         let trials = vec![
@@ -488,12 +444,10 @@ mod tests {
         assert_eq!((zip_initial.count, zip_initial.failed), (0, 1));
         assert_eq!(zip_initial.median_ms, None);
         assert_eq!(get("pdf", "forward").median_ms, Some(50.0));
-        // 最初に現れた順を保つ
         assert_eq!(summary[0].input, "zip");
         assert_eq!(summary[0].scenario, "forward");
     }
 
-    /// 初回表示に失敗した入力は失敗試行1件を返し、移動を測らずに戻る
     #[test]
     fn failed_initial_display_is_recorded() {
         let dir = crate::test_helpers::TempDir::new("bench-fail");
@@ -510,7 +464,6 @@ mod tests {
         assert!(!trials[0].drawn);
     }
 
-    /// 表示時間の測定 (`mise run bench`で実行する)
     #[test]
     #[ignore = "Windows実機のGPUとウィンドウを使う実測のため、mise run benchで明示実行する"]
     fn display_benchmark() {
@@ -582,7 +535,6 @@ mod tests {
         println!("結果: {}", out.display());
     }
 
-    /// 素材生成は別プロセスで行い、閲覧プロセスのピークへ生成時の使用量を混入させない。
     #[test]
     #[ignore = "bench-memoryから別プロセスで呼ばれる素材生成専用"]
     fn prepare_large_image_material() {
@@ -617,7 +569,6 @@ mod tests {
         );
     }
 
-    /// キャッシュ格納前のデコードと未回収応答を含め、巨大画像閲覧のプロセス全体を測る。
     #[test]
     #[ignore = "巨大画像とWindows実機のGPUを使うため、mise run bench-memoryで明示実行する"]
     fn large_image_memory_benchmark() {
@@ -688,7 +639,6 @@ mod tests {
             cached: false,
         }];
         samples.push(("before_ui_pause", process_memory()));
-        // UIが先読み応答を回収しない利用条件そのものを再現する。完了待機のsleepではない。
         let pause = Duration::from_secs(3);
         std::thread::sleep(pause);
         samples.push(("after_ui_pause", process_memory()));

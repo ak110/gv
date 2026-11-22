@@ -1,5 +1,3 @@
-//! ウィンドウ所有者と、アプリの借用を終了してから実行するWin32操作。
-
 use std::cell::{Cell, Ref, RefCell};
 use std::collections::VecDeque;
 
@@ -15,7 +13,6 @@ pub(super) enum UiEffect {
     Modal(Box<dyn FnOnce(&WindowState)>),
 }
 
-/// HWNDへ公開する安定した所有者。再入時にも可変参照を直接生成しない。
 pub(crate) struct WindowState {
     app: RefCell<AppWindow>,
     hwnd: HWND,
@@ -109,7 +106,6 @@ impl WindowState {
                     UiEffect::Call(call) => call(),
                     UiEffect::WithState(call) => call(self),
                     UiEffect::Modal(call) => {
-                        // モーダル待機中は通常の再入処理と、そのUI効果を完了できる。
                         self.flushing.set(false);
                         call(self);
                         self.flushing.set(true);
@@ -157,7 +153,6 @@ impl WindowState {
             return Some(LRESULT(0));
         }
         if self.modal.get() && msg == WM_DROPFILES {
-            // HDROPはDragFinishまで受信側が所有する。モーダル中に文書を変更しない。
             self.pending_messages
                 .borrow_mut()
                 .push_back((msg, wparam, lparam));
@@ -170,7 +165,6 @@ impl WindowState {
                 return Some(LRESULT(0));
             }
         }
-        // 親が無効化されるモーダル中に、残っていた入力やタイマーで別の操作を始めない。
         if self.modal.get()
             && matches!(
                 msg,
@@ -223,7 +217,6 @@ impl WindowState {
                     ((lparam.0 >> 16) & 0xFFFF) as u32,
                 ))),
                 WM_DOCUMENT_EVENT => self.pending_document.set(true),
-                // これらのメッセージはポインターを含まない値だけを保留する。
                 WM_KEYDOWN | WM_SYSKEYDOWN | WM_MOUSEWHEEL | WM_LBUTTONDOWN | WM_LBUTTONUP
                 | WM_LBUTTONDBLCLK | WM_MBUTTONUP | WM_MOUSEMOVE | WM_TIMER | WM_COMMAND
                 | WM_DROPFILES => self
@@ -242,14 +235,12 @@ impl WindowState {
 }
 
 impl AppWindow {
-    /// 同期再入を起こし得る操作は、アプリへの借用を終了した後に実行する。
     pub(super) fn defer_ui(&self, call: impl FnOnce() + 'static) {
         self.effects
             .borrow_mut()
             .push_back(UiEffect::Call(Box::new(call)));
     }
 
-    /// Win32操作の結果を、操作の終了後に短いアプリ借用で適用する。
     pub(super) fn defer_call<T: 'static>(
         &self,
         run: impl FnOnce() -> T + 'static,
@@ -265,7 +256,6 @@ impl AppWindow {
             })));
     }
 
-    /// モーダルに必要な所有値と結果適用だけを保持し、待機中にアプリを借用しない。
     pub(super) fn defer_modal<T: 'static>(
         &mut self,
         run: impl FnOnce() -> T + 'static,

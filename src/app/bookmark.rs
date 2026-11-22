@@ -1,5 +1,3 @@
-//! ブックマークの保存と読み込み
-
 use super::{AppWindow, next_action};
 
 impl AppWindow {
@@ -15,7 +13,6 @@ impl AppWindow {
                 else {
                     return;
                 };
-                // 旧形式の拡張子判定と読み込みは、ダイアログを閉じた後の短い借用で行う。
                 let result = crate::bookmark::load_bookmark_from_path(&path, &|p| {
                     app.document.is_archive_path(p)
                 })
@@ -31,9 +28,6 @@ impl AppWindow {
                     .is_some()
                 {
                     app.file_operation_directory.reset();
-                    // 読み込み成功時のみ前回名キャッシュを更新する。
-                    // 反映後のファイルリスト先頭からコンテナ識別キーを取得し、
-                    // 選択パスのファイル名部分とペアで保持する。
                     if let (Some(key), Some(file_name)) = (
                         app.document
                             .file_list()
@@ -53,7 +47,6 @@ impl AppWindow {
     }
 
     pub(super) fn action_bookmark_save(&mut self) {
-        // 未展開コンテナがあれば全て同期展開 (ブックマークは完全な状態で保存する)
         if self.document.file_list().has_pending() {
             self.document.expand_all_pending_sync();
             self.process_document_events();
@@ -65,9 +58,6 @@ impl AppWindow {
             .files()
             .first()
             .map(|f| f.source.clone());
-        // 現在のコンテナ識別キーが前回キャッシュと一致する場合のみ前回ファイル名を流用する。
-        // 不一致 (別コンテナへ切り替えた直後など) では `None` を渡し、
-        // ヘルパー側で代表ステムベースの初期名に戻す。
         let current_key = first_source
             .as_ref()
             .and_then(crate::file_info::FileSource::bookmark_container_key);
@@ -90,17 +80,15 @@ impl AppWindow {
             move |app, result| {
                 if let Some(saved_path) =
                     app.take_success("ブックマークの保存", next_action::BOOKMARK_SAVE, result)
-                {
-                    // 保存成功時のみキャッシュを更新する。コンテナ識別キーは現在の先頭ソースから取得する。
-                    if let (Some(key), Some(file_name)) = (
+                    && let (Some(key), Some(file_name)) = (
                         current_key,
                         saved_path
                             .file_name()
                             .and_then(|n| n.to_str())
                             .map(str::to_string),
-                    ) {
-                        app.last_bookmark = Some((key, file_name));
-                    }
+                    )
+                {
+                    app.last_bookmark = Some((key, file_name));
                 }
             },
         );

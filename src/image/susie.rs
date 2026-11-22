@@ -1,11 +1,9 @@
-/// Susie画像プラグインのImageDecoderアダプタ
 use anyhow::Result;
 
 use crate::susie::plugin::SharedPlugin;
 
 use super::{DecodedImage, ImageDecoder, ImageMetadata, read_exif_fields};
 
-/// Susie画像プラグインをImageDecoderとして使うアダプタ
 pub struct SusieImageDecoder {
     plugin: SharedPlugin,
 }
@@ -28,7 +26,6 @@ impl ImageDecoder for SusieImageDecoder {
     }
 
     fn metadata(&self, data: &[u8], _filename_hint: &str) -> Result<ImageMetadata> {
-        // EXIFメタデータ (Susie経由でもraw bytesからEXIFを読み取れる)
         let exif = read_exif_fields(data);
         let plugin_path = self
             .plugin

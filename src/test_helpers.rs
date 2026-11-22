@@ -1,6 +1,3 @@
-//! テスト共通の画像素材とオブジェクト生成。
-//!
-//! テストの一時フォルダはTempDirで作成し、失敗時の巻き戻しでも回収する。
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
@@ -13,7 +10,6 @@ use crate::file_list::SortOrder;
 use crate::image::{DecodedImage, DecoderChain, StandardDecoder};
 use std::io::Write as _;
 
-/// 一意な一時フォルダを所有し、破棄時に回収する。
 pub struct TempDir(PathBuf);
 
 impl TempDir {
@@ -60,7 +56,6 @@ impl Drop for TempDir {
     }
 }
 
-/// 単色の画像を作成する。
 pub fn solid_image(width: u32, height: u32, rgba: [u8; 4]) -> DecodedImage {
     DecodedImage {
         data: rgba.repeat((width * height) as usize),
@@ -69,7 +64,6 @@ pub fn solid_image(width: u32, height: u32, rgba: [u8; 4]) -> DecodedImage {
     }
 }
 
-/// テスト素材の画像をPNGとして保存する。
 pub fn write_png(path: &Path, image: &DecodedImage) {
     image::RgbaImage::from_raw(image.width, image.height, image.data.clone())
         .expect("テスト素材の画素数が寸法と一致すること")
@@ -77,17 +71,14 @@ pub fn write_png(path: &Path, image: &DecodedImage) {
         .unwrap();
 }
 
-/// テスト用DecoderChainを生成する (StandardDecoderのみ)
 pub fn test_decoder() -> Arc<DecoderChain> {
     Arc::new(DecoderChain::new(vec![Box::new(StandardDecoder::new())]))
 }
 
-/// テスト用ArchiveManagerを生成する
 pub fn test_archive_manager(registry: &Arc<ExtensionRegistry>) -> ArchiveManager {
     ArchiveManager::new(Arc::clone(registry))
 }
 
-/// テスト用ZIPバッファを生成する
 pub fn test_zip_buffers() -> Arc<RwLock<HashMap<PathBuf, ZipBuffer>>> {
     Arc::new(RwLock::new(HashMap::new()))
 }
@@ -109,7 +100,6 @@ fn temp_dir_is_unique_and_removed_during_unwind() {
     assert!(!path.exists());
 }
 
-/// テスト用Documentとイベントレシーバーを生成する
 pub fn test_document() -> (Document, crossbeam_channel::Receiver<DocumentEvent>) {
     let (sender, receiver) = crossbeam_channel::unbounded();
     let registry = Arc::new(ExtensionRegistry::new());
@@ -125,7 +115,6 @@ pub fn test_document() -> (Document, crossbeam_channel::Receiver<DocumentEvent>)
     (doc, receiver)
 }
 
-/// テスト用: 1x1 白ピクセルのPNGバイナリを生成する
 pub fn create_1x1_white_png() -> Vec<u8> {
     use image::{ImageBuffer, Rgba};
     let img: ImageBuffer<Rgba<u8>, Vec<u8>> =
@@ -135,7 +124,6 @@ pub fn create_1x1_white_png() -> Vec<u8> {
     buf.into_inner()
 }
 
-/// テスト用: Orientationタグだけを持つEXIF (TIFF形式、リトルエンディアン) を生成する
 pub fn exif_with_orientation(orientation: u16) -> Vec<u8> {
     exif_with_entries(&[ExifEntry::new(
         ExifIfd::Primary,
@@ -144,28 +132,21 @@ pub fn exif_with_orientation(orientation: u16) -> Vec<u8> {
     )])
 }
 
-/// テスト用EXIFのタグを置くIFD
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExifIfd {
-    /// IFD0 (Model、Orientationなど)
     Primary,
-    /// Exif IFD (撮影条件、LensModelなど)
     Exif,
-    /// GPS IFD
     Gps,
 }
 
-/// テスト用EXIFのタグの値
 #[derive(Debug, Clone)]
 pub enum ExifValue {
     Ascii(&'static str),
     Short(u16),
     Long(u32),
-    /// (分子, 分母) の並び
     Rational(Vec<(u32, u32)>),
 }
 
-/// テスト用EXIFの1タグ
 #[derive(Debug, Clone)]
 pub struct ExifEntry {
     pub ifd: ExifIfd,
@@ -179,9 +160,6 @@ impl ExifEntry {
     }
 }
 
-/// テスト用: 任意のタグを持つEXIF (TIFF形式、リトルエンディアン) を生成する
-///
-/// Exif IFDとGPS IFDのタグがあれば、IFD0へ各IFDへのポインタ (0x8769、0x8825) を置く。
 pub fn exif_with_entries(entries: &[ExifEntry]) -> Vec<u8> {
     const EXIF_POINTER: u16 = 0x8769;
     const GPS_POINTER: u16 = 0x8825;
@@ -227,7 +205,6 @@ pub fn exif_with_entries(entries: &[ExifEntry]) -> Vec<u8> {
         primary
     };
 
-    // IFD0の長さはポインタの値に依存しないため、仮の値で長さを求めてから配置を決める
     let ifd0_len = build_ifd(8, primary_with_pointers(0, 0)).len() as u32;
     let exif_offset = 8 + ifd0_len;
     let exif_ifd = build_ifd(exif_offset, exif_entries.clone());
@@ -239,7 +216,7 @@ pub fn exif_with_entries(entries: &[ExifEntry]) -> Vec<u8> {
     let gps_offset = exif_offset + exif_len;
 
     let mut tiff = b"II*\0".to_vec();
-    tiff.extend_from_slice(&8u32.to_le_bytes()); // 最初のIFDの位置
+    tiff.extend_from_slice(&8u32.to_le_bytes());
     tiff.extend(build_ifd(8, primary_with_pointers(exif_offset, gps_offset)));
     if !exif_entries.is_empty() {
         tiff.extend(exif_ifd);
@@ -250,7 +227,6 @@ pub fn exif_with_entries(entries: &[ExifEntry]) -> Vec<u8> {
     tiff
 }
 
-/// 1つのIFDと、4バイトに収まらない値を置く後続のデータ領域を組み立てる (`start`はTIFF先頭からの位置)
 fn build_ifd(start: u32, mut entries: Vec<(u16, u16, u32, Vec<u8>)>) -> Vec<u8> {
     entries.sort_by_key(|(tag, ..)| *tag);
     let data_start = start + 2 + 12 * entries.len() as u32 + 4;
@@ -274,19 +250,17 @@ fn build_ifd(start: u32, mut entries: Vec<(u16, u16, u32, Vec<u8>)>) -> Vec<u8> 
             }
         }
     }
-    ifd.extend_from_slice(&0u32.to_le_bytes()); // 次のIFDなし
+    ifd.extend_from_slice(&0u32.to_le_bytes());
     ifd.extend(data);
     ifd
 }
 
-/// テスト用: 画素ごとに異なる色を持つ非対称な画像 (向きの判定用)
 pub fn asymmetric_rgba(width: u32, height: u32) -> image::RgbaImage {
     image::RgbaImage::from_fn(width, height, |x, y| {
         image::Rgba([(x * 60) as u8, (y * 90) as u8, (x + y * width) as u8, 255])
     })
 }
 
-/// テスト用: EXIFを埋め込んだ画像をエンコードする (`exif`がNoneなら埋め込まない)
 pub fn encode_with_exif(
     img: &image::RgbaImage,
     format: image::ImageFormat,
@@ -329,7 +303,6 @@ pub fn encode_with_exif(
     buf
 }
 
-/// テスト用: EXIFの向き (1〜8) を仕様どおりに適用した期待画像を、画素の座標対応から求める
 pub fn expected_oriented(src: &image::RgbaImage, orientation: u16) -> image::RgbaImage {
     let (w, h) = src.dimensions();
     let swapped = orientation >= 5;
@@ -351,14 +324,12 @@ pub fn expected_oriented(src: &image::RgbaImage, orientation: u16) -> image::Rgb
     out
 }
 
-/// tEXtチャンクを持つPNG素材。
 pub fn create_1x1_png_with_text() -> Vec<u8> {
     let mut buf = Vec::new();
     {
         let mut encoder = png::Encoder::new(std::io::Cursor::new(&mut buf), 1, 1);
         encoder.set_color(png::ColorType::Rgba);
         encoder.set_depth(png::BitDepth::Eight);
-        // tEXtチャンクを追加
         let text_chunk =
             png::text_metadata::TEXtChunk::new("Author".to_string(), "TestAuthor".to_string());
         let _ = encoder.add_text_chunk(text_chunk.keyword, text_chunk.text);
@@ -372,7 +343,6 @@ pub fn test_registry() -> Arc<ExtensionRegistry> {
     Arc::new(ExtensionRegistry::new())
 }
 
-/// テスト用のダミー画像ファイルを作成するヘルパー
 pub fn create_test_files(dir: &Path, names: &[&str]) {
     let _ = std::fs::create_dir_all(dir);
     for name in names {
@@ -381,7 +351,6 @@ pub fn create_test_files(dir: &Path, names: &[&str]) {
     }
 }
 
-/// テスト用のアーカイブエントリFileInfoを作成するヘルパー
 pub fn make_archive_file_info(archive: &str, entry: &str, file_name: &str) -> FileInfo {
     FileInfo {
         file_name: file_name.to_string(),
@@ -399,7 +368,6 @@ pub fn make_archive_file_info(archive: &str, entry: &str, file_name: &str) -> Fi
     }
 }
 
-/// テスト用の PendingContainer FileInfo を作成するヘルパー
 pub fn make_pending_container_info(container_path: &str) -> FileInfo {
     FileInfo {
         file_name: container_path.to_string(),
@@ -413,8 +381,6 @@ pub fn make_pending_container_info(container_path: &str) -> FileInfo {
     }
 }
 
-/// テスト用に任意の `FileSource` から `FileInfo` を生成するヘルパー。
-/// 表示名はソースの論理パスから生成する。
 pub fn make_file_info_with_source(
     source: FileSource,
     size: u64,
@@ -444,7 +410,6 @@ pub fn make_file_info_with_source(
     }
 }
 
-/// テスト用ZIPをメモリ上で作成してtempに保存する
 pub fn create_test_zip(path: &Path, entries: &[(&str, &[u8])]) {
     let file = std::fs::File::create(path).unwrap();
     let mut writer = zip::ZipWriter::new(file);
@@ -458,7 +423,6 @@ pub fn create_test_zip(path: &Path, entries: &[(&str, &[u8])]) {
     writer.finish().unwrap();
 }
 
-/// ZIPをメモリ上で作成しバイト列として返す
 pub fn create_test_zip_buffer(entries: &[(&str, &[u8])]) -> Vec<u8> {
     let mut buf = Vec::new();
     {
@@ -494,39 +458,37 @@ pub fn build_cp932_zip(entries: &[(&[u8], &[u8])]) -> Vec<u8> {
         let local_header_offset = buf.len() as u32;
         central_dir_offset_per_entry.push(local_header_offset);
 
-        // Local file header (signature 0x04034b50)
         buf.extend_from_slice(&0x04034b50u32.to_le_bytes());
-        buf.extend_from_slice(&20u16.to_le_bytes()); // version needed
-        buf.extend_from_slice(&0u16.to_le_bytes()); // general purpose bit flag (UTF-8 ビット非設定)
-        buf.extend_from_slice(&0u16.to_le_bytes()); // compression: stored
-        buf.extend_from_slice(&0u16.to_le_bytes()); // mod time
-        buf.extend_from_slice(&0u16.to_le_bytes()); // mod date
+        buf.extend_from_slice(&20u16.to_le_bytes());
+        buf.extend_from_slice(&0u16.to_le_bytes());
+        buf.extend_from_slice(&0u16.to_le_bytes());
+        buf.extend_from_slice(&0u16.to_le_bytes());
+        buf.extend_from_slice(&0u16.to_le_bytes());
         buf.extend_from_slice(&crc.to_le_bytes());
-        buf.extend_from_slice(&(data.len() as u32).to_le_bytes()); // compressed size
-        buf.extend_from_slice(&(data.len() as u32).to_le_bytes()); // uncompressed size
+        buf.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        buf.extend_from_slice(&(data.len() as u32).to_le_bytes());
         buf.extend_from_slice(&(name.len() as u16).to_le_bytes());
-        buf.extend_from_slice(&0u16.to_le_bytes()); // extra field length
+        buf.extend_from_slice(&0u16.to_le_bytes());
         buf.extend_from_slice(name);
         buf.extend_from_slice(data);
 
-        // Central directory record (構築は後段で行い、各エントリのバイト列だけを生成する)
         let mut cd = Vec::new();
-        cd.extend_from_slice(&0x02014b50u32.to_le_bytes()); // signature
-        cd.extend_from_slice(&20u16.to_le_bytes()); // version made by
-        cd.extend_from_slice(&20u16.to_le_bytes()); // version needed
-        cd.extend_from_slice(&0u16.to_le_bytes()); // general purpose bit flag
-        cd.extend_from_slice(&0u16.to_le_bytes()); // compression
-        cd.extend_from_slice(&0u16.to_le_bytes()); // mod time
-        cd.extend_from_slice(&0u16.to_le_bytes()); // mod date
+        cd.extend_from_slice(&0x02014b50u32.to_le_bytes());
+        cd.extend_from_slice(&20u16.to_le_bytes());
+        cd.extend_from_slice(&20u16.to_le_bytes());
+        cd.extend_from_slice(&0u16.to_le_bytes());
+        cd.extend_from_slice(&0u16.to_le_bytes());
+        cd.extend_from_slice(&0u16.to_le_bytes());
+        cd.extend_from_slice(&0u16.to_le_bytes());
         cd.extend_from_slice(&crc.to_le_bytes());
         cd.extend_from_slice(&(data.len() as u32).to_le_bytes());
         cd.extend_from_slice(&(data.len() as u32).to_le_bytes());
         cd.extend_from_slice(&(name.len() as u16).to_le_bytes());
-        cd.extend_from_slice(&0u16.to_le_bytes()); // extra field length
-        cd.extend_from_slice(&0u16.to_le_bytes()); // file comment length
-        cd.extend_from_slice(&0u16.to_le_bytes()); // disk number start
-        cd.extend_from_slice(&0u16.to_le_bytes()); // internal file attributes
-        cd.extend_from_slice(&0u32.to_le_bytes()); // external file attributes
+        cd.extend_from_slice(&0u16.to_le_bytes());
+        cd.extend_from_slice(&0u16.to_le_bytes());
+        cd.extend_from_slice(&0u16.to_le_bytes());
+        cd.extend_from_slice(&0u16.to_le_bytes());
+        cd.extend_from_slice(&0u32.to_le_bytes());
         cd.extend_from_slice(&local_header_offset.to_le_bytes());
         cd.extend_from_slice(name);
         central_dir_records.push(cd);
@@ -539,19 +501,17 @@ pub fn build_cp932_zip(entries: &[(&[u8], &[u8])]) -> Vec<u8> {
         central_dir_size += cd.len() as u32;
     }
 
-    // End of central directory record (signature 0x06054b50)
     buf.extend_from_slice(&0x06054b50u32.to_le_bytes());
-    buf.extend_from_slice(&0u16.to_le_bytes()); // disk number
-    buf.extend_from_slice(&0u16.to_le_bytes()); // disk where central dir starts
-    buf.extend_from_slice(&(entries.len() as u16).to_le_bytes()); // central dir records on this disk
-    buf.extend_from_slice(&(entries.len() as u16).to_le_bytes()); // total central dir records
+    buf.extend_from_slice(&0u16.to_le_bytes());
+    buf.extend_from_slice(&0u16.to_le_bytes());
+    buf.extend_from_slice(&(entries.len() as u16).to_le_bytes());
+    buf.extend_from_slice(&(entries.len() as u16).to_le_bytes());
     buf.extend_from_slice(&central_dir_size.to_le_bytes());
     buf.extend_from_slice(&central_dir_start.to_le_bytes());
-    buf.extend_from_slice(&0u16.to_le_bytes()); // comment length
+    buf.extend_from_slice(&0u16.to_le_bytes());
     buf
 }
 
-/// IEEE 802.3 CRC32 (zip仕様)。標準テーブル方式で1バイトずつ計算する
 fn crc32(data: &[u8]) -> u32 {
     const POLY: u32 = 0xEDB88320;
     let mut table = [0u32; 256];
@@ -587,14 +547,11 @@ pub fn assert_same_image(actual: &DecodedImage, expected: &DecodedImage) {
     assert_eq!(actual.data, expected.data);
 }
 
-/// バッチのバイト列から、テストに不要な行を無効化する。
-/// ASCIIプレフィクスで行を特定し、他の行の文字コードを保持する。
 pub fn neutralize_batch_line(bytes: &[u8], ascii_prefix: &[u8]) -> Vec<u8> {
     let crlf = b"\r\n";
     let mut result = Vec::new();
     let mut pos = 0;
     while pos < bytes.len() {
-        // 行末 (次のCRLFまたはEOF) を探す
         let line_end = bytes[pos..]
             .windows(2)
             .position(|w| w == crlf)
@@ -602,7 +559,6 @@ pub fn neutralize_batch_line(bytes: &[u8], ascii_prefix: &[u8]) -> Vec<u8> {
         let line = &bytes[pos..line_end];
 
         if line.starts_with(ascii_prefix) {
-            // "rem " + 元の行でコメントアウト
             result.extend_from_slice(b"rem ");
             result.extend_from_slice(line);
         } else {
@@ -619,7 +575,6 @@ pub fn neutralize_batch_line(bytes: &[u8], ascii_prefix: &[u8]) -> Vec<u8> {
     result
 }
 
-/// テスト用の一時ディレクトリにダミー画像を配置する
 pub fn setup_test_dir(name: &str, count: usize) -> TempDir {
     let dir = TempDir::new(name);
     std::fs::create_dir_all(&dir).unwrap();
@@ -642,16 +597,12 @@ pub fn persistent_filter_image() -> DecodedImage {
 
 pub fn color_filter_image() -> DecodedImage {
     DecodedImage {
-        data: vec![
-            100, 150, 200, 255, // pixel (0,0)
-            50, 100, 150, 128, // pixel (1,0)
-        ],
+        data: vec![100, 150, 200, 255, 50, 100, 150, 128],
         width: 2,
         height: 1,
     }
 }
 
-/// 4x4のテスト画像を作成 (各ピクセルが座標で識別可能)
 pub fn test_image_4x4() -> DecodedImage {
     let mut data = Vec::with_capacity(4 * 4 * 4);
     for y in 0..4u8 {
@@ -674,18 +625,15 @@ pub fn cache_image(size: usize) -> DecodedImage {
     }
 }
 
-/// テスト用のアーカイブ判定クロージャ
 pub fn test_is_archive(p: &Path) -> bool {
     crate::extension_registry::ExtensionRegistry::new().is_archive_extension(&p.to_string_lossy())
 }
 
-/// テスト用に文字列を UTF-16 LE バイト列に変換する
 pub fn to_utf16le(s: &str) -> Vec<u8> {
     s.encode_utf16().flat_map(u16::to_le_bytes).collect()
 }
 
 pub fn test_draw_rect() -> crate::render::layout::DrawRect {
-    // 画像100x100を画面の (10,10)-(210,210) に描画している想定
     crate::render::layout::DrawRect {
         x: 10.0,
         y: 10.0,
@@ -724,7 +672,6 @@ pub fn uniform_image(w: u32, h: u32, value: u8) -> DecodedImage {
     }
 }
 
-/// チェッカーパターン画像を生成 (偶数座標=c1, 奇数座標=c2)
 pub fn checker_image(w: u32, h: u32, c1: u8, c2: u8) -> DecodedImage {
     let mut data = vec![0u8; (w * h * 4) as usize];
     for y in 0..h {
@@ -744,7 +691,6 @@ pub fn checker_image(w: u32, h: u32, c1: u8, c2: u8) -> DecodedImage {
     }
 }
 
-/// 半透明の画素を含む8x6画像 (チェッカー背景と縮小ビットマップの作成に到達させる)
 pub fn translucent_image() -> DecodedImage {
     DecodedImage {
         data: [200, 100, 50, 128].repeat(8 * 6),
@@ -757,7 +703,6 @@ pub fn rect_tuple(rect: &crate::render::layout::DrawRect) -> (f32, f32, f32, f32
     (rect.x, rect.y, rect.width, rect.height)
 }
 
-/// 試験用の表示しないウィンドウ (クラス登録不要なSTATICを使う)。
 pub struct HiddenWindow(pub windows::Win32::Foundation::HWND);
 
 impl HiddenWindow {
@@ -794,7 +739,6 @@ impl Drop for HiddenWindow {
     }
 }
 
-/// 96DPIで4×2画素、アプリの150DPI描画で6×3画素になる白い1ページのPDF。
 pub fn minimal_pdf() -> Vec<u8> {
     let mut output = b"%PDF-1.4\n".to_vec();
     let objects = [
@@ -819,7 +763,6 @@ pub fn minimal_pdf() -> Vec<u8> {
     output
 }
 
-/// 実Shell操作のテストスレッドでSTAの初期化と解放を対応させる。
 #[cfg(test)]
 pub struct StaComGuard(std::marker::PhantomData<std::rc::Rc<()>>);
 

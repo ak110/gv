@@ -1,7 +1,3 @@
-//! システム操作アクション群
-//!
-//! アップデート確認、シェル統合登録・解除、各種フォルダ・ホームページを開く操作。
-
 use std::path::PathBuf;
 
 use anyhow::{Context as _, Result};
@@ -9,7 +5,6 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 
 use super::{AppWindow, next_action};
 
-/// フォルダが無ければ作成してから返す
 fn ensure_dir(dir: PathBuf) -> Result<PathBuf> {
     std::fs::create_dir_all(&dir)
         .with_context(|| format!("フォルダを作成できませんでした: {}", dir.display()))?;
@@ -17,17 +12,14 @@ fn ensure_dir(dir: PathBuf) -> Result<PathBuf> {
 }
 
 impl AppWindow {
-    /// アップデート確認・実行
     pub(crate) fn check_for_update(&mut self) {
         let hwnd = self.hwnd;
         self.defer_modal(
             move || {
-                // WaitCursor表示
                 let prev_cursor = unsafe { SetCursor(LoadCursorW(None, IDC_WAIT).ok()) };
 
                 let result = crate::updater::check_for_update();
 
-                // カーソル復元
                 unsafe {
                     let _ = SetCursor(Some(prev_cursor));
                 }
@@ -64,12 +56,10 @@ impl AppWindow {
                         };
 
                         if answer == IDYES {
-                            // WaitCursor表示
                             let prev = unsafe { SetCursor(LoadCursorW(None, IDC_WAIT).ok()) };
 
                             match crate::updater::perform_update(&info) {
                                 Ok(true) => {
-                                    // バッチスクリプト起動成功 → アプリ終了
                                     unsafe {
                                         let _ = SetCursor(Some(prev));
                                         let _ = DestroyWindow(hwnd);
@@ -101,7 +91,6 @@ impl AppWindow {
         );
     }
 
-    /// シェル統合 (ファイル関連付け・コンテキストメニュー・「送る」) を登録
     pub(crate) fn action_register_shell(&mut self) {
         let hwnd = self.hwnd;
         self.defer_modal(
@@ -141,7 +130,6 @@ impl AppWindow {
         );
     }
 
-    /// シェル統合 (ファイル関連付け・コンテキストメニュー・「送る」) を解除
     pub(crate) fn action_unregister_shell(&mut self) {
         let hwnd = self.hwnd;
         self.defer_modal(
@@ -199,7 +187,6 @@ impl AppWindow {
         self.open_folder_in_explorer("spiフォルダを開く操作", dir);
     }
 
-    /// フォルダの解決に成功した場合だけエクスプローラーで開き、失敗は通知する
     fn open_folder_in_explorer(&mut self, operation: &str, dir: Result<PathBuf>) {
         if let Some(dir) = self.take_success(operation, next_action::FOLDER_CREATE, dir.map(Some)) {
             self.open_in_explorer(&dir);

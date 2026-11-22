@@ -5,7 +5,6 @@ mod sendto;
 
 use anyhow::Result;
 
-/// 全てのシェル統合を登録する
 pub fn register_all() -> Result<()> {
     println!("シェル統合を登録しています...");
 
@@ -23,7 +22,6 @@ pub fn register_all() -> Result<()> {
     Ok(())
 }
 
-/// 全てのシェル統合を解除する
 pub fn unregister_all() -> Result<()> {
     println!("シェル統合を解除しています...");
 

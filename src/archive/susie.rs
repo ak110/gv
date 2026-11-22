@@ -1,4 +1,3 @@
-/// Susieアーカイブプラグインの ArchiveHandler アダプタ
 use std::path::Path;
 use std::sync::Arc;
 
@@ -9,11 +8,9 @@ use crate::extension_registry::ExtensionRegistry;
 use crate::susie::plugin::SharedPlugin;
 use crate::susie::util::from_ansi;
 
-/// SusieアーカイブプラグインをArchiveHandlerとして使うアダプタ
 pub struct SusieArchiveHandler {
     plugin: SharedPlugin,
     registry: Arc<ExtensionRegistry>,
-    /// キャッシュした拡張子リスト
     extensions: Vec<String>,
 }
 
@@ -44,13 +41,11 @@ impl ArchiveHandler for SusieArchiveHandler {
         let path_str = archive_path.to_string_lossy().to_string();
         let locked = self.plugin.lock().expect("Susie plugin lock poisoned");
 
-        // アーカイブ内のエントリ一覧を取得
         let entries = locked.get_archive_info(&path_str)?;
 
         let mut results = Vec::new();
 
         for entry in &entries {
-            // ファイル名を取得 (ANSI → UTF-8)
             let raw_filename = from_ansi(&entry.filename);
             let filename = extract_filename(&raw_filename);
 
@@ -58,7 +53,6 @@ impl ArchiveHandler for SusieArchiveHandler {
                 continue;
             }
 
-            // メモリに展開
             let position = { entry.position };
             match locked.get_file_to_memory(&path_str, position) {
                 Ok(data) => {

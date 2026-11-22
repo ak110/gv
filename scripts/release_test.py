@@ -1,5 +1,3 @@
-"""リリースの入力固定、タグ公開後の再開、欠落資産の補完を検証する。"""
-
 import contextlib
 import json
 import pathlib
@@ -84,7 +82,6 @@ def _prepare_cli(
 
 
 def test_prepare_keeps_dependencies_and_resumes_original_dispatch() -> None:
-    """初回の依存を維持し、タグpush後は元の起動commitから同じソースへ復帰する。"""
     with tempfile.TemporaryDirectory(prefix="gv_release_test_") as work:
         _check_prepare_resume(_repository(pathlib.Path(work)))
 
@@ -95,7 +92,7 @@ def _check_prepare_resume(repository: pathlib.Path) -> None:
     first = _prepare_cli(repository, source)
     assert first == {"version": "1.2.4", "tag": "v1.2.4", "rerun": "false"}
     after = tomllib.loads((repository / "Cargo.lock").read_text(encoding="utf-8"))
-    before["package"][0]["version"] = "1.2.4"  # gv自身の版数だけが変わる契約
+    before["package"][0]["version"] = "1.2.4"
     assert before == after
     subprocess.run(
         ["cargo", "metadata", "--locked", "--offline", "--format-version", "1"],
@@ -116,7 +113,6 @@ def _check_prepare_resume(repository: pathlib.Path) -> None:
 
 
 def test_prepare_rejects_unrelated_existing_tag() -> None:
-    """同じ名前のタグでも出所が異なれば既存タグとソースを変更しない。"""
     with tempfile.TemporaryDirectory(prefix="gv_release_test_") as work:
         repository = _repository(pathlib.Path(work))
         base = _git(repository, "rev-parse", "HEAD")
@@ -145,7 +141,6 @@ def test_prepare_rejects_unrelated_existing_tag() -> None:
 
 
 def test_prepare_preserves_minor_and_major_updates() -> None:
-    """既存の更新種別は、依存解決を変えずに版数へ反映する。"""
     for bump, version in [("MINOR", "1.3.0"), ("MAJOR", "2.0.0")]:
         with tempfile.TemporaryDirectory(prefix="gv_release_bump_") as work:
             repository = _repository(pathlib.Path(work))
@@ -156,7 +151,6 @@ def test_prepare_preserves_minor_and_major_updates() -> None:
 
 
 def test_publish_completes_missing_asset_without_overwriting() -> None:
-    """新規公開・Releaseだけ公開済み・資産も公開済みのすべてで再実行を完遂する。"""
     with tempfile.TemporaryDirectory(prefix="gv_release_asset_") as work:
         for has_release, has_asset in [(False, False), (True, False), (True, True)]:
             _check_publish(pathlib.Path(work), has_release, has_asset)
@@ -194,7 +188,6 @@ def _check_publish(tmp_path: pathlib.Path, has_release: bool, has_asset: bool) -
 
 
 def test_publish_does_not_treat_network_failure_as_missing_release() -> None:
-    """一覧取得不能は新規作成の認可にならず、その場で失敗する。"""
     calls: list[tuple[str, ...]] = []
 
     def fail_run(args: tuple[str, ...], **_kwargs: typing.Any) -> typing.NoReturn:
@@ -216,7 +209,6 @@ def test_publish_does_not_treat_network_failure_as_missing_release() -> None:
 
 
 def test_publish_requires_asset_after_upload() -> None:
-    """アップロードコマンド成功だけでは完了とせず、Release上の資産を確認する。"""
 
     def fake_run(args: tuple[str, ...], **_kwargs: typing.Any) -> types.SimpleNamespace:
         stdout = "v1.2.4" if args[1] == "api" else json.dumps({"assets": []})

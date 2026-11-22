@@ -1,22 +1,15 @@
-//! ぼかし・モザイクフィルタ
-
 use crate::image::DecodedImage;
 use crate::selection::PixelRect;
 
-/// 3x3 ぼかし (平均フィルタ)
 pub fn blur(image: &DecodedImage, region: Option<&PixelRect>) -> DecodedImage {
     box_blur(image, region, 1)
 }
 
-/// 5x5 ぼかし (強)
 pub fn blur_strong(image: &DecodedImage, region: Option<&PixelRect>) -> DecodedImage {
     box_blur(image, region, 2)
 }
 
-/// メディアンフィルタ (3x3)
 pub fn median_filter(image: &DecodedImage, region: Option<&PixelRect>) -> DecodedImage {
-    // ループ範囲は i32 (clamp で負値を扱うため)、インデックス計算は usize で行う
-    // (大きな画像で `i32` の `(ny * w + nx) * 4` が overflow するのを防ぐ)
     let w_u = image.width as usize;
     let w_i = image.width as i32;
     let h_i = image.height as i32;
@@ -37,7 +30,7 @@ pub fn median_filter(image: &DecodedImage, region: Option<&PixelRect>) -> Decode
                 }
                 values.sort_unstable();
                 let offset = (y as usize * w_u + x as usize) * 4 + ch;
-                data[offset] = values[4]; // 中央値
+                data[offset] = values[4];
             }
         }
     }
@@ -49,9 +42,7 @@ pub fn median_filter(image: &DecodedImage, region: Option<&PixelRect>) -> Decode
     }
 }
 
-/// ボックスブラー(半径指定)
 fn box_blur(image: &DecodedImage, region: Option<&PixelRect>, radius: i32) -> DecodedImage {
-    // ループ範囲は i32 (clamp で負値を扱うため)、インデックス計算は usize で行う。
     let w_u = image.width as usize;
     let w_i = image.width as i32;
     let h_i = image.height as i32;
@@ -84,7 +75,6 @@ fn box_blur(image: &DecodedImage, region: Option<&PixelRect>, radius: i32) -> De
     }
 }
 
-/// モザイク
 pub fn mosaic(image: &DecodedImage, region: Option<&PixelRect>, block_size: u32) -> DecodedImage {
     let block = block_size.max(1) as i32;
     let w_u = image.width as usize;
@@ -92,7 +82,6 @@ pub fn mosaic(image: &DecodedImage, region: Option<&PixelRect>, block_size: u32)
 
     let (x0, y0, x1, y1) = super::region_bounds(region, image.width, image.height);
 
-    // ブロック単位で処理
     let mut by = y0;
     while by < y1 {
         let mut bx = x0;
@@ -101,7 +90,6 @@ pub fn mosaic(image: &DecodedImage, region: Option<&PixelRect>, block_size: u32)
             let by_end = (by + block).min(y1);
             let count = ((bx_end - bx) * (by_end - by)) as u32;
 
-            // ブロック内の平均色を計算 (オフセットは usize で計算してオーバーフローを防ぐ)
             let mut r_sum = 0u32;
             let mut g_sum = 0u32;
             let mut b_sum = 0u32;
@@ -117,7 +105,6 @@ pub fn mosaic(image: &DecodedImage, region: Option<&PixelRect>, block_size: u32)
             let avg_g = (g_sum / count) as u8;
             let avg_b = (b_sum / count) as u8;
 
-            // ブロック内を平均色で塗り潰す
             for py in by..by_end {
                 for px in bx..bx_end {
                     let offset = (py as usize * w_u + px as usize) * 4;
@@ -139,13 +126,11 @@ pub fn mosaic(image: &DecodedImage, region: Option<&PixelRect>, block_size: u32)
     }
 }
 
-/// ガウスぼかし (近似: 2パスのボックスブラー)
 pub fn gaussian_blur(
     image: &DecodedImage,
     region: Option<&PixelRect>,
     radius: f64,
 ) -> DecodedImage {
-    // σ ≈ radius/3 でボックスブラーを3パス (ガウシアンの近似)
     let r = (radius.max(0.1) * 1.0).round() as i32;
     let r = r.max(1);
     let pass1 = box_blur(image, region, r);
@@ -153,7 +138,6 @@ pub fn gaussian_blur(
     box_blur(&pass2, region, r)
 }
 
-/// アンシャープマスク
 pub fn unsharp_mask(image: &DecodedImage, region: Option<&PixelRect>, radius: f64) -> DecodedImage {
     let blurred = gaussian_blur(image, region, radius);
     let w_u = image.width as usize;
@@ -165,7 +149,6 @@ pub fn unsharp_mask(image: &DecodedImage, region: Option<&PixelRect>, radius: f6
         for x in x0..x1 {
             let offset = (y as usize * w_u + x as usize) * 4;
             for ch in 0..3 {
-                // unsharp: original + (original - blurred)
                 let orig = image.data[offset + ch] as i32;
                 let blur_val = blurred.data[offset + ch] as i32;
                 let v = orig + (orig - blur_val);
@@ -191,7 +174,6 @@ mod tests {
     fn blur_uniform_unchanged() {
         let img = uniform_image(4, 4, 100);
         let result = blur(&img, None);
-        // 均一画像にぼかしをかけても値は変わらない
         for pixel in result.data.chunks_exact(4) {
             assert_eq!(pixel[0], 100);
         }
@@ -218,17 +200,13 @@ mod tests {
     #[test]
     fn blur_preserves_alpha() {
         let mut img = uniform_image(3, 3, 100);
-        img.data[3] = 128; // 1ピクセルだけalpha変更
+        img.data[3] = 128;
         let result = blur(&img, None);
-        // alpha チャネルは変更されない
         assert_eq!(result.data[3], 128);
     }
 
-    // --- gaussian_blur テスト ---
-
     #[test]
     fn gaussian_blur_uniform_unchanged() {
-        // 均一画像はぼかしても値が変わらない
         let img = uniform_image(8, 8, 120);
         let result = gaussian_blur(&img, None, 2.0);
         for pixel in result.data.chunks_exact(4) {
@@ -238,12 +216,10 @@ mod tests {
 
     #[test]
     fn gaussian_blur_min_radius() {
-        // radius=0.1 → 内部で最小r=1にクランプされる
         let img = uniform_image(4, 4, 80);
         let result = gaussian_blur(&img, None, 0.1);
         assert_eq!(result.width, 4);
         assert_eq!(result.height, 4);
-        // 均一画像なので値は変わらない
         for pixel in result.data.chunks_exact(4) {
             assert_eq!(pixel[0], 80);
         }
@@ -251,12 +227,10 @@ mod tests {
 
     #[test]
     fn gaussian_blur_large_radius() {
-        // radius=10.0 の大きなぼかし
         let img = checker_image(8, 8, 0, 200);
         let result = gaussian_blur(&img, None, 10.0);
         assert_eq!(result.width, 8);
         assert_eq!(result.height, 8);
-        // 大きなぼかしでチェッカーパターンが平滑化され、中央付近は平均値に近づく
         let center = ((4 * 8 + 4) * 4) as usize;
         let center_val = result.data[center] as i32;
         assert!(
@@ -267,10 +241,8 @@ mod tests {
 
     #[test]
     fn gaussian_blur_smooths_checker() {
-        // チェッカーパターンにぼかしをかけると差が縮まる
         let img = checker_image(8, 8, 0, 200);
         let result = gaussian_blur(&img, None, 2.0);
-        // 結果のピクセル値の最大・最小差が元 (200) より小さくなる
         let mut min_val = 255u8;
         let mut max_val = 0u8;
         for pixel in result.data.chunks_exact(4) {
@@ -287,18 +259,13 @@ mod tests {
     #[test]
     fn gaussian_blur_preserves_alpha() {
         let mut img = uniform_image(4, 4, 100);
-        img.data[3] = 50; // 1ピクセルのalphaを変更
+        img.data[3] = 50;
         let result = gaussian_blur(&img, None, 2.0);
-        // alphaチャネルはぼかし対象外
         assert_eq!(result.data[3], 50);
     }
 
-    // --- unsharp_mask テスト ---
-
     #[test]
     fn unsharp_mask_uniform_unchanged() {
-        // 均一画像にアンシャープマスクをかけても変わらない
-        // (original - blurred = 0 なので original + 0 = original)
         let img = uniform_image(8, 8, 150);
         let result = unsharp_mask(&img, None, 2.0);
         for pixel in result.data.chunks_exact(4) {
@@ -308,7 +275,6 @@ mod tests {
 
     #[test]
     fn unsharp_mask_min_radius() {
-        // radius=0.1(最小境界値)
         let img = uniform_image(4, 4, 100);
         let result = unsharp_mask(&img, None, 0.1);
         assert_eq!(result.width, 4);
@@ -320,20 +286,17 @@ mod tests {
 
     #[test]
     fn unsharp_mask_large_radius() {
-        // radius=10.0 (大きな値) でも正常に動作する
         let img = checker_image(8, 8, 50, 200);
         let result = unsharp_mask(&img, None, 10.0);
         assert_eq!(result.width, 8);
         assert_eq!(result.height, 8);
-        // アンシャープマスクはコントラストを強調する
-        // → チェッカーパターンの差が広がるか、clampで0/255に固定される
         let mut min_val = 255u8;
         let mut max_val = 0u8;
         for pixel in result.data.chunks_exact(4) {
             min_val = min_val.min(pixel[0]);
             max_val = max_val.max(pixel[0]);
         }
-        let original_range = 150; // 200 - 50
+        let original_range = 150;
         let result_range = max_val - min_val;
         assert!(
             result_range >= original_range as u8,
@@ -344,27 +307,22 @@ mod tests {
     #[test]
     fn unsharp_mask_preserves_alpha() {
         let mut img = uniform_image(4, 4, 100);
-        img.data[7] = 42; // 2番目のピクセルのalpha
+        img.data[7] = 42;
         let result = unsharp_mask(&img, None, 2.0);
         assert_eq!(result.data[7], 42);
     }
 
     #[test]
     fn unsharp_mask_clamps_values() {
-        // 極端な入力 (0と255のチェッカー) でもパニックせず正常に完了することを確認
         let img = checker_image(4, 4, 0, 255);
         let result = unsharp_mask(&img, None, 2.0);
-        // 結果のデータ長が正しいこと
         assert_eq!(result.data.len(), (4 * 4 * 4) as usize);
         assert_eq!(result.width, 4);
         assert_eq!(result.height, 4);
     }
 
-    // --- mosaic テスト ---
-
     #[test]
     fn mosaic_block_size_1_identity() {
-        // block_size=1 は各ピクセルが自身の平均=自身なので変化しない
         let img = checker_image(4, 4, 30, 220);
         let result = mosaic(&img, None, 1);
         assert_eq!(result.data, img.data);
@@ -372,7 +330,6 @@ mod tests {
 
     #[test]
     fn mosaic_block_size_0_treated_as_1() {
-        // block_size=0 は内部で1にクランプされるので同様に変化しない
         let img = checker_image(4, 4, 30, 220);
         let result = mosaic(&img, None, 0);
         assert_eq!(result.data, img.data);
@@ -380,7 +337,6 @@ mod tests {
 
     #[test]
     fn mosaic_uniform_unchanged() {
-        // 均一画像は任意のブロックサイズでも変わらない
         let img = uniform_image(8, 8, 100);
         let result = mosaic(&img, None, 4);
         for pixel in result.data.chunks_exact(4) {
@@ -390,10 +346,8 @@ mod tests {
 
     #[test]
     fn mosaic_large_block_averages_all() {
-        // ブロックサイズが画像全体を覆う場合、全ピクセルが画像全体の平均色になる
         let img = checker_image(4, 4, 0, 200);
-        let result = mosaic(&img, None, 100); // 4x4画像に対して100x100ブロック
-        // 4x4チェッカー: 8ピクセルが0、8ピクセルが200 → 平均=100
+        let result = mosaic(&img, None, 100);
         let expected = 100u8;
         for pixel in result.data.chunks_exact(4) {
             assert_eq!(pixel[0], expected);
@@ -404,15 +358,12 @@ mod tests {
 
     #[test]
     fn mosaic_2x2_block_on_checker() {
-        // 4x4チェッカーパターンに2x2モザイクをかける
         let img = checker_image(4, 4, 0, 200);
         let result = mosaic(&img, None, 2);
-        // 各2x2ブロック内のピクセルはすべて同じ色になる
         for by in (0..4).step_by(2) {
             for bx in (0..4).step_by(2) {
                 let offset0 = ((by * 4 + bx) * 4) as usize;
                 let block_val = result.data[offset0];
-                // 同じブロック内の4ピクセルが同じ値
                 for dy in 0..2 {
                     for dx in 0..2 {
                         let offset = (((by + dy) * 4 + (bx + dx)) * 4) as usize;

@@ -1,8 +1,3 @@
-//! ファイル操作アクション群
-//!
-//! 削除、移動、コピー、マーク操作、クリップボード貼り付けなど。
-//! 各操作の結果は`AppWindow::take_success`で成功・キャンセル・失敗へ分け、失敗だけを通知する。
-
 #[cfg(test)]
 use std::fs::OpenOptions;
 use std::io::Write as _;
@@ -40,15 +35,9 @@ impl FileOperationDirectory {
     }
 }
 
-/// ウィンドウが貼り付けで作成した一時ファイル
-///
-/// 貼り付けごとに一意なファイルを新規作成し、作成したウィンドウだけが所有・回収する。
-/// 固定名で共有すると、別ウィンドウや後の貼り付けが、表示中の画像の再読込・コピー・出力が
-/// 読む内容を置き換えるため。表示・再読込・出力は通常ファイルとして既存の経路で扱う。
 pub(super) struct PastedImageFiles {
     dir: PathBuf,
     files: Vec<PathBuf>,
-    /// 試験経路: 次の書き込みを失敗させる
     #[cfg(test)]
     fail_next_write: bool,
 }
@@ -63,9 +52,6 @@ impl PastedImageFiles {
         }
     }
 
-    /// 画像をPNGとして新しい一時ファイルへ保存し、そのパスを返す
-    ///
-    /// 失敗した場合は書き込み途中のファイルだけを削除し、以前に保存したファイルは残す。
     pub(super) fn save(&mut self, image: &DecodedImage) -> Result<PathBuf> {
         let img_buf = image::RgbaImage::from_raw(image.width, image.height, image.data.clone())
             .context("画像バッファの作成に失敗しました")?;
@@ -78,7 +64,6 @@ impl PastedImageFiles {
             .context("一時ファイルを作成できませんでした")?;
         #[cfg(test)]
         if std::mem::take(&mut self.fail_next_write) {
-            // 作成済みのファイルへ一部だけ書いた状態で失敗させる
             let _ = file.write_all(&png[..png.len() / 2]);
             png.clear();
             png.extend_from_slice(b"unused");
@@ -97,7 +82,6 @@ impl PastedImageFiles {
         Ok(path)
     }
 
-    /// このウィンドウが作成した一時ファイルだけを削除する (ウィンドウ破棄時の後始末)
     pub(super) fn remove_all(&mut self) {
         for path in self.files.drain(..) {
             let _ = std::fs::remove_file(path);
@@ -106,7 +90,6 @@ impl PastedImageFiles {
 }
 
 impl AppWindow {
-    /// Shellのファイル操作が奪ったフォーカスを元のウィンドウへ戻す。
     fn restore_file_operation_focus(&self) {
         let hwnd = self.hwnd;
         self.defer_ui(move || unsafe {
@@ -239,7 +222,6 @@ impl AppWindow {
         );
     }
 
-    /// マークごとの操作能力を判定する。表示中の行の種別には依存しない。
     fn marked_targets(&self, copy: bool) -> (Vec<usize>, usize) {
         let marked = self.document.file_list().marked_indices();
         let targets: Vec<_> = marked
@@ -270,7 +252,6 @@ impl AppWindow {
                 )
             };
             let notice = format!("対象外 {skipped} 件を処理しませんでした: {reason}");
-            // 同じ操作の失敗を表示中なら、上書きせずに並べて示す
             let notice = self
                 .title_state
                 .message()
@@ -446,7 +427,7 @@ impl AppWindow {
             move || crate::clipboard::paste_image_from_clipboard(hwnd),
             |app, result| match result {
                 Ok(Some(image)) => app.open_pasted_image(&image),
-                Ok(None) => {} // クリップボードに画像なし
+                Ok(None) => {}
                 Err(e) => app.show_error_title(
                     "貼り付けに失敗しました",
                     next_action::PASTE_READ,
@@ -456,7 +437,6 @@ impl AppWindow {
         );
     }
 
-    /// 貼り付けた画像を一時ファイルへ保存してから開く
     pub(super) fn open_pasted_image(&mut self, image: &DecodedImage) {
         let path = match self.pasted_images.save(image) {
             Ok(path) => path,
@@ -562,14 +542,12 @@ mod tests {
     use crate::app::test_support::TestApp;
     use crate::test_helpers::{TempDir, solid_image};
 
-    /// 貼り付け先を指定したフォルダへ向けたウィンドウ
     fn app_pasting_into(dir: &Path) -> TestApp {
         let app = TestApp::new();
         app.with_app(|state| state.pasted_images = PastedImageFiles::new(dir.to_path_buf()));
         app
     }
 
-    /// ウィンドウごとの貼り付け画像は、再読込・ファイル内容の取得・画像出力で他のウィンドウの画像に置き換わらない
     #[test]
     fn pasted_images_are_independent_between_windows() {
         let dir = TempDir::new("paste_windows");
@@ -596,7 +574,6 @@ mod tests {
         app_b.destroy();
     }
 
-    /// 同じウィンドウで繰り返し貼り付けると別のファイルを作成し、前の内容を変えない
     #[test]
     fn repeated_paste_creates_new_files() {
         let dir = TempDir::new("paste_repeat");
@@ -616,7 +593,6 @@ mod tests {
         app.destroy();
     }
 
-    /// 保存に失敗した貼り付けは通知し、以前に貼り付けたファイルと表示中の画像を変えない
     #[test]
     fn paste_save_failure_is_reported_and_keeps_previous() {
         let dir = TempDir::new("paste_fail");
@@ -626,7 +602,6 @@ mod tests {
         let previous = app.borrow().pasted_images.files[0].clone();
         let previous_bytes = std::fs::read(&previous).unwrap();
 
-        // 存在しないフォルダを保存先にして書き込みを失敗させる
         app.with_app(|state| state.pasted_images.dir = dir.join("missing"));
         app.with_app(super::super::AppWindow::begin_user_operation);
         app.with_app(|state| state.open_pasted_image(&solid_image(2, 2, [9, 9, 9, 255])));
@@ -642,7 +617,6 @@ mod tests {
         app.destroy();
     }
 
-    /// 書き込み途中で失敗した貼り付けは、書き込み途中のファイルだけを削除する
     #[test]
     fn write_failure_removes_partial_file() {
         let dir = TempDir::new("paste_partial");
@@ -670,7 +644,6 @@ mod tests {
         app.destroy();
     }
 
-    /// ウィンドウを閉じると、そのウィンドウが作成した貼り付けファイルだけを削除する
     #[test]
     fn destroying_window_removes_only_own_pasted_files() {
         let dir = TempDir::new("paste_destroy");
@@ -694,7 +667,6 @@ mod tests {
         app_b.destroy();
         assert!(!path_b.exists());
     }
-    /// 通常画像・ZIP・展開済み画像・PDFを同時に持つ受入用ウィンドウ。
     fn mixed_source_app(dir: &Path) -> (TestApp, PathBuf, Vec<crate::file_info::FileSource>) {
         use crate::file_info::{FileInfo, FileSource};
         let dir = crate::util::strip_extended_length_prefix(&std::fs::canonicalize(dir).unwrap());
@@ -796,7 +768,6 @@ mod tests {
                     title.contains("アーカイブ内画像・PDFページ・未展開コンテナ"),
                     "{title}"
                 );
-                // Shell境界のキャンセルでは対象行とマークを残す。
                 assert_eq!(app.borrow().document.file_list().len(), 4);
                 assert_eq!(app.borrow().document.file_list().marked_count(), 4);
             }
@@ -809,7 +780,6 @@ mod tests {
         app.close_without_release();
     }
 
-    /// 全表示元でロックされたコピー先と元データを保持し、解除後は同じ操作で保存する。
     #[test]
     fn single_copy_failure_keeps_existing_content_for_each_source_and_can_retry() {
         use std::os::windows::fs::OpenOptionsExt as _;

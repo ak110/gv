@@ -1,10 +1,7 @@
-//! 画像情報とヘルプの表示
-
 use super::{AppWindow, next_action};
 use crate::ui::info_dialog;
 
 impl AppWindow {
-    /// 数値を3桁カンマ区切りでフォーマットする
     pub(super) fn format_with_commas(n: u64) -> String {
         let s = n.to_string();
         let mut result = String::with_capacity(s.len() + s.len() / 3);
@@ -17,7 +14,6 @@ impl AppWindow {
         result
     }
 
-    /// 画像情報を表示する
     pub(super) fn show_image_info(&mut self) {
         let Some(info_lines) = self.build_image_info() else {
             return;
@@ -41,7 +37,6 @@ impl AppWindow {
         );
     }
 
-    /// 画像情報の表示行を組み立てる。メタデータ取得の失敗はタイトルバーへ通知し、取得済みの基本情報は返す
     pub(super) fn build_image_info(&mut self) -> Option<Vec<String>> {
         let source = self.document.current_source()?;
         let file_info = self.document.file_list().current()?;
@@ -57,14 +52,12 @@ impl AppWindow {
             info_lines.push(format!("画像サイズ: {} x {}", img.width, img.height));
         }
 
-        // メタデータ取得 (デコーダ経由)
         match self.document.current_metadata() {
             Ok(metadata) => {
                 info_lines.push(format!("フォーマット: {}", metadata.format));
                 for comment in &metadata.comments {
                     info_lines.push(comment.clone());
                 }
-                // EXIF情報
                 if !metadata.exif.is_empty() {
                     info_lines.push(String::new());
                     info_lines.push("--- EXIF ---".to_string());
@@ -83,7 +76,6 @@ impl AppWindow {
         Some(info_lines)
     }
 
-    /// ヘルプを表示する
     pub(super) fn show_help(&mut self) {
         let text = crate::help::build_help(&self.key_config);
 

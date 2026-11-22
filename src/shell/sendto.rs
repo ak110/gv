@@ -1,8 +1,3 @@
-//! 「送る」(SendTo) メニューへのショートカット登録
-//!
-//! SHGetKnownFolderPath(FOLDERID_SendTo) でフォルダを取得し、
-//! IShellLink COMでショートカット (.lnk) を作成する。
-
 use anyhow::{Context as _, Result};
 use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance, IPersistFile};
 use windows::Win32::UI::Shell::{
@@ -15,10 +10,8 @@ use crate::util::to_wide;
 const LNK_NAME: &str = "ぐらびゅ.lnk";
 const OLD_LNK_NAME: &str = "ぐらびゅ3.lnk";
 
-/// 「送る」にショートカットを登録する
 pub fn register() -> Result<()> {
     let sendto_dir = get_sendto_path()?;
-    // 旧ショートカットの削除
     let old_lnk = sendto_dir.join(OLD_LNK_NAME);
     if old_lnk.exists() {
         let _ = std::fs::remove_file(&old_lnk);
@@ -27,19 +20,15 @@ pub fn register() -> Result<()> {
     let exe = crate::paths::exe_path()?;
 
     unsafe {
-        // IShellLink COMオブジェクト作成
         let shell_link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)
             .context("IShellLink作成失敗")?;
 
-        // ショートカットのターゲットを設定
         let wide_exe = to_wide(&exe.to_string_lossy());
         shell_link.SetPath(windows::core::PCWSTR(wide_exe.as_ptr()))?;
 
-        // 説明
         let wide_desc = to_wide("ぐらびゅで開く");
         shell_link.SetDescription(windows::core::PCWSTR(wide_desc.as_ptr()))?;
 
-        // IPersistFileで保存
         let persist_file: IPersistFile = shell_link.cast()?;
         let wide_lnk = to_wide(&lnk_path.to_string_lossy());
         persist_file.Save(windows::core::PCWSTR(wide_lnk.as_ptr()), true)?;
@@ -48,10 +37,8 @@ pub fn register() -> Result<()> {
     Ok(())
 }
 
-/// 「送る」からショートカットを削除する
 pub fn unregister() -> Result<()> {
     let sendto_dir = get_sendto_path()?;
-    // 旧ショートカットも削除
     let old_lnk = sendto_dir.join(OLD_LNK_NAME);
     if old_lnk.exists() {
         let _ = std::fs::remove_file(&old_lnk);
@@ -64,7 +51,6 @@ pub fn unregister() -> Result<()> {
     Ok(())
 }
 
-/// SendToフォルダのパスを取得する
 fn get_sendto_path() -> Result<std::path::PathBuf> {
     unsafe {
         let pwstr = SHGetKnownFolderPath(&FOLDERID_SendTo, KNOWN_FOLDER_FLAG::default(), None)

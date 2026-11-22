@@ -1,22 +1,8 @@
-//! 旧 C++ 実装 (`.gvb`) 形式のブックマークパーサー
-//!
-//! 旧形式は UTF-16 LE BOM 付きテキストで、以下の構造を持つ:
-//! ```text
-//! [gvbookmark/ver:1]
-//! current:
-//! <現在表示中のファイルパス>
-//! files:
-//! <ファイルパス 1>
-//! <ファイルパス 2>
-//! ...
-//! ```
-
 use std::path::{Path, PathBuf};
 
 use crate::bookmark::BookmarkData;
 use crate::file_info::FileSource;
 
-/// UTF-16 LE バイト列 (BOM 除去済み) から旧形式ブックマークをパースする
 pub(super) fn parse_legacy_bookmark_utf16le(
     utf16le_bytes: &[u8],
     is_archive: &impl Fn(&Path) -> bool,
@@ -25,7 +11,6 @@ pub(super) fn parse_legacy_bookmark_utf16le(
     parse_legacy_bookmark(&text, is_archive)
 }
 
-/// UTF-16 LE バイト列を String にデコードする (不正シーケンスは U+FFFD に置換)
 fn decode_utf16le_lossy(bytes: &[u8]) -> String {
     let units: Vec<u16> = bytes
         .chunks_exact(2)
@@ -34,17 +19,12 @@ fn decode_utf16le_lossy(bytes: &[u8]) -> String {
     String::from_utf16_lossy(&units)
 }
 
-/// パース結果の中間表現
 struct ParsedSections {
     current: Option<String>,
     files: Vec<String>,
-    /// `archives:` セクションに列挙されたアーカイブ本体パス。
-    /// `files:` のエントリからもアーカイブパスは推測できるが、
-    /// `archives:` には files に画像が無いアーカイブも含まれうるため別途収集する。
     archives: Vec<String>,
 }
 
-/// テキストからセクションを解析する
 fn parse_sections(text: &str) -> ParsedSections {
     #[derive(Clone, Copy, PartialEq, Eq)]
     enum Section {
@@ -65,7 +45,6 @@ fn parse_sections(text: &str) -> ParsedSections {
             continue;
         }
 
-        // ヘッダー行 (例: "[gvbookmark/ver:1]") はスキップ
         if trimmed.starts_with('[') && trimmed.ends_with(']') {
             section = Section::None;
             continue;
@@ -86,20 +65,15 @@ fn parse_sections(text: &str) -> ParsedSections {
 
         match section {
             Section::Current => {
-                // 最初の非空行のみ採用
                 if current_path.is_none() {
                     current_path = Some(trimmed.to_string());
                 }
             }
-            Section::Files => {
+            Section::Files | Section::None => {
                 raw_files.push(trimmed.to_string());
             }
             Section::Archives => {
                 raw_archives.push(trimmed.to_string());
-            }
-            Section::None => {
-                // セクション外の行もファイルパスとして扱う (ベストエフォート)
-                raw_files.push(trimmed.to_string());
             }
         }
     }
@@ -111,11 +85,9 @@ fn parse_sections(text: &str) -> ParsedSections {
     }
 }
 
-/// 旧形式テキストをパースして `BookmarkData` を返す
 fn parse_legacy_bookmark(text: &str, is_archive: &impl Fn(&Path) -> bool) -> BookmarkData {
     let sections = parse_sections(text);
 
-    // current パスとの大文字小文字無視比較でインデックスを決定
     let index = sections
         .current
         .as_deref()
@@ -127,15 +99,12 @@ fn parse_legacy_bookmark(text: &str, is_archive: &impl Fn(&Path) -> bool) -> Boo
         })
         .unwrap_or(0);
 
-    // files セクションのエントリを分類
     let mut entries: Vec<FileSource> = sections
         .files
         .iter()
         .map(|raw| classify_raw_path(raw, is_archive))
         .collect();
 
-    // archives セクション: files エントリから検出されないアーカイブを PendingContainer として追加。
-    // files 内の ArchiveEntry から既知のアーカイブパスを収集し、archives にのみ存在するものを補完する。
     if !sections.archives.is_empty() {
         let known_archives: Vec<PathBuf> = entries
             .iter()
@@ -159,7 +128,6 @@ fn parse_legacy_bookmark(text: &str, is_archive: &impl Fn(&Path) -> bool) -> Boo
         }
     }
 
-    // インデックスをクランプ
     let index = if entries.is_empty() {
         0
     } else {
@@ -169,11 +137,6 @@ fn parse_legacy_bookmark(text: &str, is_archive: &impl Fn(&Path) -> bool) -> Boo
     BookmarkData { entries, index }
 }
 
-/// 生パス文字列を `FileSource` に分類する
-///
-/// - アーカイブ内エントリ (例: `foo.zip\inside.jpg`) → `ArchiveEntry`
-/// - アーカイブ本体だけ (例: `vol21.zip`) → `PendingContainer`
-/// - 上記以外 → `File`
 fn classify_raw_path(raw: &str, is_archive: &impl Fn(&Path) -> bool) -> FileSource {
     if let Some((archive, entry)) = split_archive_path(raw, is_archive) {
         return FileSource::ArchiveEntry {
@@ -195,15 +158,9 @@ fn classify_raw_path(raw: &str, is_archive: &impl Fn(&Path) -> bool) -> FileSour
     FileSource::File(PathBuf::from(raw))
 }
 
-/// パス文字列からアーカイブとエントリを分離する
-///
-/// `Path::ancestors()` で走査し、アーカイブ拡張子を持つ最も根に近い先祖で分割する。
-/// パス自体がアーカイブの場合 (エントリ部分が空) は `None` を返す。
 fn split_archive_path(raw: &str, is_archive: &impl Fn(&Path) -> bool) -> Option<(PathBuf, String)> {
     let full = Path::new(raw);
 
-    // ancestors() は最長 (自身) → 最短 (ルート) の順で返す。
-    // 上書きを続けることで最も根に近い (最短の) アーカイブを選ぶ。
     let mut matched: Option<&Path> = None;
     for ancestor in full.ancestors().skip(1) {
         if ancestor.as_os_str().is_empty() {
@@ -219,7 +176,6 @@ fn split_archive_path(raw: &str, is_archive: &impl Fn(&Path) -> bool) -> Option<
     let entry = rel.to_string_lossy().replace('\\', "/");
 
     if entry.is_empty() {
-        // パス自体がアーカイブ (エントリなし) — 呼び出し側で PendingContainer にする
         None
     } else {
         Some((archive.to_path_buf(), entry))
@@ -231,8 +187,6 @@ mod tests {
     use super::*;
     use crate::test_helpers::test_is_archive;
     use crate::test_helpers::to_utf16le;
-
-    // --- parse_legacy_bookmark_utf16le ---
 
     #[test]
     fn parse_normal() {
@@ -381,7 +335,6 @@ mod tests {
 
     #[test]
     fn parse_odd_byte_count() {
-        // 奇数バイト: 末尾 1 バイトは破棄されるがパニックしない
         let mut bytes = to_utf16le("files:\r\na.jpg\r\n");
         bytes.push(0xFF);
         let data = parse_legacy_bookmark_utf16le(&bytes, &test_is_archive);
@@ -395,8 +348,6 @@ mod tests {
         let data = parse_legacy_bookmark_utf16le(&bytes, &test_is_archive);
         assert_eq!(data.entries.len(), 2);
     }
-
-    // --- split_archive_path ---
 
     #[test]
     fn split_at_zip() {
@@ -426,8 +377,6 @@ mod tests {
         assert!(result.is_none());
     }
 
-    // --- classify_raw_path ---
-
     #[test]
     fn classify_archive_body_becomes_pending() {
         let source = classify_raw_path(r"E:\manga\vol21.zip", &test_is_archive);
@@ -446,16 +395,11 @@ mod tests {
         assert!(matches!(source, FileSource::File(_)));
     }
 
-    // --- archives: セクション ---
-
     #[test]
     fn parse_archives_section_adds_unknown_containers() {
-        // files にはvol1のエントリのみ、archives にはvol1とvol2が列挙される。
-        // vol2は files から検出されないため PendingContainer として追加される。
         let text = "[gvbookmark/ver:1]\r\ncurrent:\r\nE:\\vol1.zip\\01.jpg\r\nfiles:\r\nE:\\vol1.zip\\01.jpg\r\nE:\\vol1.zip\\02.jpg\r\narchives:\r\nE:\\vol1.zip\r\nE:\\vol2.zip\r\n";
         let bytes = to_utf16le(text);
         let data = parse_legacy_bookmark_utf16le(&bytes, &test_is_archive);
-        // files: 2 エントリ (ArchiveEntry) + archives から 1 PendingContainer (vol2)
         assert_eq!(data.entries.len(), 3);
         assert!(matches!(&data.entries[0], FileSource::ArchiveEntry { .. }));
         assert!(matches!(&data.entries[1], FileSource::ArchiveEntry { .. }));
@@ -468,7 +412,6 @@ mod tests {
 
     #[test]
     fn parse_archives_section_no_duplicates() {
-        // files のエントリから既知のアーカイブは archives に重複があっても追加しない
         let text =
             "[gvbookmark/ver:1]\r\nfiles:\r\nE:\\vol1.zip\\01.jpg\r\narchives:\r\nE:\\vol1.zip\r\n";
         let bytes = to_utf16le(text);
@@ -479,7 +422,6 @@ mod tests {
 
     #[test]
     fn parse_archives_only_no_files() {
-        // files が空で archives のみ → 全て PendingContainer
         let text = "[gvbookmark/ver:1]\r\narchives:\r\nE:\\vol1.zip\r\nE:\\vol2.zip\r\n";
         let bytes = to_utf16le(text);
         let data = parse_legacy_bookmark_utf16le(&bytes, &test_is_archive);

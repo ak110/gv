@@ -1,13 +1,3 @@
-//! Windows エクスプローラー互換の自然順比較。
-//!
-//! `shlwapi.dll` の `StrCmpLogicalW` を呼び出し、エクスプローラー表示と事実上同じ並びを得る。
-//! クロスプラットフォーム実装 (例: `natord`) は先頭ゼロ付き数値の扱いがエクスプローラーと
-//! 乖離するため使わない。例えば `018, 19, 020` の並びは、`natord` では `018, 020, 19` と
-//! なるが、`StrCmpLogicalW` では `018, 19, 020` となりエクスプローラーと一致する。
-//!
-//! `StrCmpLogicalW` は仕様上ケースインセンシティブのため、大小文字無視の自然順比較として
-//! そのまま利用できる。
-
 use std::cmp::Ordering;
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
@@ -15,9 +5,6 @@ use std::os::windows::ffi::OsStrExt;
 use windows::Win32::UI::Shell::StrCmpLogicalW;
 use windows::core::PCWSTR;
 
-/// エクスプローラー互換の自然順比較を行う。
-///
-/// 文字列をヌル終端 UTF-16 列に変換してから `StrCmpLogicalW` を呼ぶ。
 pub(super) fn compare_explorer(a: &str, b: &str) -> Ordering {
     let wa = to_wide_null(a);
     let wb = to_wide_null(b);
@@ -28,7 +15,6 @@ pub(super) fn compare_explorer(a: &str, b: &str) -> Ordering {
     result.cmp(&0)
 }
 
-/// `&str` を末尾ヌル付きの UTF-16 バッファに変換する。
 fn to_wide_null(s: &str) -> Vec<u16> {
     OsStr::new(s)
         .encode_wide()
@@ -48,14 +34,12 @@ mod tests {
 
     #[test]
     fn leading_zero_user_scenario() {
-        // ユーザー提示シナリオ: 19 が 100 の方へ移動せず、018 と 020 の間に位置する
         let result = sorted(&["018.jpg", "19.jpg", "020.jpg"]);
         assert_eq!(result, vec!["018.jpg", "19.jpg", "020.jpg"]);
     }
 
     #[test]
     fn leading_zero_with_three_digit_neighbor() {
-        // 旧 natord では 19 が 100 の手前に位置するが、エクスプローラーでは 100 より前に位置する
         let result = sorted(&["019.jpg", "020.jpg", "099.jpg", "19.jpg", "100.jpg"]);
         assert_eq!(
             result,

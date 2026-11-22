@@ -1,25 +1,17 @@
-//! シャープフィルタ
-
 use crate::image::DecodedImage;
 use crate::selection::PixelRect;
 
-/// シャープ (3x3ラプラシアンシャープ)
 pub fn sharpen(image: &DecodedImage, region: Option<&PixelRect>) -> DecodedImage {
-    // カーネル: [0, -1, 0, -1, 5, -1, 0, -1, 0]
     apply_kernel(image, region, &SHARPEN_KERNEL)
 }
 
-/// シャープ (強)
 pub fn sharpen_strong(image: &DecodedImage, region: Option<&PixelRect>) -> DecodedImage {
-    // カーネル: [-1, -1, -1, -1, 9, -1, -1, -1, -1]
     apply_kernel(image, region, &SHARPEN_STRONG_KERNEL)
 }
 
-// 3x3カーネル (行優先、スケール1)
 const SHARPEN_KERNEL: [i32; 9] = [0, -1, 0, -1, 5, -1, 0, -1, 0];
 const SHARPEN_STRONG_KERNEL: [i32; 9] = [-1, -1, -1, -1, 9, -1, -1, -1, -1];
 
-/// 3x3カーネルを適用する
 fn apply_kernel(
     image: &DecodedImage,
     region: Option<&PixelRect>,
@@ -64,7 +56,6 @@ mod tests {
 
     #[test]
     fn sharpen_uniform_unchanged() {
-        // 均一画像にシャープをかけても値は変わらない (カーネルの合計が1なので)
         let img = uniform_image(4, 4, 100);
         let result = sharpen(&img, None);
         for pixel in result.data.chunks_exact(4) {

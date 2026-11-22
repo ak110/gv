@@ -1,9 +1,3 @@
-//! 画像編集・フィルタダイアログ群
-//!
-//! AppWindowの画像編集関連アクションをまとめる。
-//! 回転、リサイズ、レベル補正、ガンマ、明るさ/コントラスト、モザイク、
-//! ガウスぼかし、アンシャープマスク、およびそれらの永続フィルタ版。
-
 use crate::filter_spec::{FilterKind, FilterSpec};
 
 use super::{AppWindow, next_action};
@@ -143,7 +137,6 @@ impl AppWindow {
 }
 
 impl AppWindow {
-    /// パラメータ付き永続フィルタのトグル (既存なら削除してtrue、なければfalse)
     pub(super) fn remove_persistent_filter_if_exists(
         &mut self,
         kind: crate::filter_spec::FilterKind,

@@ -1,11 +1,8 @@
-//! 表示画像と選択範囲のファイル出力
-
 use super::{AppWindow, next_action};
 use anyhow::{Context as _, Result};
 use std::path::Path;
 
 impl AppWindow {
-    /// 画像を指定フォーマットで保存する
     pub(super) fn export_image(&mut self, format: ExportFormat) {
         if self.document.current_image().is_none() {
             return;
@@ -49,7 +46,6 @@ impl AppWindow {
         );
     }
 
-    /// 表示中の画像 (選択範囲があればその範囲) を指定形式でファイルへ保存する
     pub(super) fn write_current_image(&self, format: ExportFormat, path: &Path) -> Result<()> {
         let img = self
             .document
@@ -59,8 +55,6 @@ impl AppWindow {
         write_image_to_path(target.width, target.height, &target.data, format, path)
     }
 }
-/// 画像保存フォーマット。各バリアントが拡張子・フィルタ表示・`image::ImageFormat`
-/// を一元管理する。`Action::Export*` から `export_image` に渡される。
 #[derive(Copy, Clone)]
 pub(super) enum ExportFormat {
     Png,
@@ -102,12 +96,6 @@ impl ExportFormat {
     }
 }
 
-/// RGBA バッファを指定パスへ指定フォーマットで保存する。
-///
-/// `image::ImageBuffer<Rgba<u8>, _>` を直接エンコードすると、JPEG エンコーダ
-/// が RGBA を受け付けず色型エラーで失敗する。`DynamicImage` を経由することで `image`
-/// crate 側が必要な色変換 (RGBA→RGB 等) を自動で行う。フォーマットを引数で明示する
-/// ため、保存先パスの拡張子有無に依存しない。
 pub(super) fn write_image_to_path(
     width: u32,
     height: u32,

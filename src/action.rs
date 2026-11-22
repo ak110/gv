@@ -1,9 +1,5 @@
-//! キー入力・メニュー・アプリ層が共有する操作体系。
-
-/// 全操作を列挙するenum
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum::EnumIter)]
 pub enum Action {
-    // --- ナビゲーション ---
     NavigateBack,
     NavigateForward,
     Navigate5Back,
@@ -22,7 +18,6 @@ pub enum Action {
     ShuffleAll,
     ShuffleGroups,
 
-    // --- 表示モード ---
     DisplayAutoShrink,
     DisplayAutoFit,
     ZoomIn,
@@ -31,7 +26,6 @@ pub enum Action {
     ToggleMargin,
     CycleAlphaBackground,
 
-    // --- ウィンドウ ---
     ToggleFullscreen,
     Minimize,
     ToggleMaximize,
@@ -39,7 +33,6 @@ pub enum Action {
     ToggleCursorHide,
     ToggleMenuBar,
 
-    // --- ファイル操作 ---
     NewWindow,
     OpenFile,
     OpenFolder,
@@ -58,7 +51,6 @@ pub enum Action {
     ExportPng,
     ShowImageInfo,
 
-    // --- マーク操作 ---
     MarkSet,
     MarkUnset,
     MarkInvertAll,
@@ -69,7 +61,6 @@ pub enum Action {
     MarkedCopy,
     MarkedCopyNames,
 
-    // --- 編集 ---
     DeselectSelection,
     Crop,
     FlipHorizontal,
@@ -80,7 +71,6 @@ pub enum Action {
     RotateArbitrary,
     Resize,
 
-    // --- フィルタ (画像メニュー) ---
     Fill,
     Levels,
     Gamma,
@@ -98,7 +88,6 @@ pub enum Action {
     SharpenStrong,
     MedianFilter,
 
-    // --- 永続フィルタ ---
     PFilterToggle,
     PFilterFlipH,
     PFilterFlipV,
@@ -120,14 +109,11 @@ pub enum Action {
     PFilterInvertColors,
     PFilterApplyAlpha,
 
-    // --- ブックマーク ---
     BookmarkSave,
     BookmarkLoad,
 
-    // --- ファイルリスト ---
     ToggleFileList,
 
-    // --- ユーティリティ ---
     OpenExeFolder,
     OpenBookmarkFolder,
     OpenSpiFolder,
@@ -139,7 +125,6 @@ pub enum Action {
     UnregisterShell,
     Exit,
 
-    // --- スライドショー ---
     SlideshowToggle,
     SlideshowFaster,
     SlideshowSlower,

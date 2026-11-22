@@ -26,7 +26,6 @@ def _version(commit: str) -> str:
 
 
 def _dependencies(lock: str) -> list[dict[str, object]]:
-    # アプリ自身の版数だけは更新する。依存・チェックサム・機能解決は保持する。
     return [
         package
         for package in tomllib.loads(lock)["package"]
@@ -49,7 +48,6 @@ def _bumped_version(version: str, bump: str) -> str:
 
 
 def prepare(source_commit: str, bump: str) -> dict[str, str]:
-    """既存タグの由来を照合し、再実行では同じリリースソースを再利用する。"""
     source = _run(
         "git",
         "rev-parse",
@@ -135,7 +133,6 @@ def _update_version(source: str, next_version: str) -> None:
 def publish(
     repository: str, tag: str, asset: pathlib.Path, notes: pathlib.Path
 ) -> None:
-    """既存Releaseの欠落資産を補い、資産を確認してから成功を返す。"""
     if not asset.is_file() or asset.stat().st_size == 0:
         raise ValueError(f"配布ZIPがないか空である: {asset}。ZIPを再生成してください")
     releases = _run(
@@ -179,7 +176,6 @@ def publish(
 
 
 def main() -> int:
-    """準備結果をGitHub Actionsへ渡し、失敗は公開前に停止する。"""
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     prepare_parser = commands.add_parser("prepare")

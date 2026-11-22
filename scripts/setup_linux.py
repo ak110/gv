@@ -1,13 +1,3 @@
-"""LinuxからWindows向けにクロスビルドする環境を構築する（`mise run setup-linux`から起動）。
-
-Debian/Ubuntuを前提に、cargo-xwinが使うLLVMツール、Rustのターゲット、cargo-xwinを導入する。
-続けて`cargo xwin env`が示す環境変数をGit管理外の`.mise.local.toml`へ保存し、
-以後の`mise run test`・`mise run build`とpre-commitのpyfltr hookがWindowsターゲットでビルドするようにする。
-cargo-xwinはMicrosoftのCRT・Windows SDKを取得し、その利用はMicrosoftのライセンスへの同意を前提とする。
-
-再実行しても同じ結果になるよう、`.mise.local.toml`は毎回全体を生成し直す。
-"""
-
 import json
 import os
 import pathlib
@@ -38,7 +28,6 @@ _EXCLUDED = {
 
 
 def main() -> None:
-    """環境を構築し、`.mise.local.toml`を保存する。"""
     env = _clean_env()
     _run(["sudo", "apt-get", "install", "-y", "clang", "lld", "llvm"], env)
     _run(["rustup", "target", "add", _TARGET], env)
@@ -77,7 +66,6 @@ def _clean_env() -> dict[str, str]:
 
 
 def _run(command: list[str], env: dict[str, str], capture: bool = False) -> str:
-    """コマンドを実行し、失敗したら同じ終了コードで終了する。"""
     print("+ " + " ".join(command), flush=True)
     result = subprocess.run(
         command,
@@ -99,10 +87,6 @@ def _run(command: list[str], env: dict[str, str], capture: bool = False) -> str:
 def _parse_xwin_env(
     output: str, env: dict[str, str]
 ) -> tuple[dict[str, str], list[str]]:
-    """`cargo xwin env`のexport行を読み、環境変数と`PATH`へ追加された要素に分ける。
-
-    `PATH`は実行時の`PATH`全体を含むため、追加された要素だけを取り出す。
-    """
     current_path = env.get("PATH", "").split(os.pathsep)
     variables: dict[str, str] = {}
     paths: list[str] = []
@@ -128,7 +112,6 @@ def _parse_xwin_env(
 
 
 def _render(variables: dict[str, str], paths: list[str]) -> str:
-    """`.mise.local.toml`の本文を生成する。値はJSON文字列としてTOMLの基本文字列へ埋め込む。"""
     lines = [
         "# scripts/setup_linux.py が生成するLinuxクロスビルド用の設定（Git管理外）。",
         "# 再生成は`mise run setup-linux`で行う。",

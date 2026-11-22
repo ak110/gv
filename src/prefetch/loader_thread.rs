@@ -13,7 +13,6 @@ use crate::file_info::FileSource;
 use crate::image::{DecodedImage, DecoderChain};
 use crate::persistent_filter::PersistentFilter;
 
-/// ワーカースレッドへのリクエスト
 enum LoadRequest {
     Load {
         index: usize,
@@ -24,7 +23,6 @@ enum LoadRequest {
     Shutdown,
 }
 
-/// ワーカースレッドからのレスポンス
 pub enum LoadResponse {
     Loaded {
         index: usize,
@@ -37,21 +35,15 @@ pub enum LoadResponse {
     },
 }
 
-/// 先読みエンジン (ワーカースレッド管理)
 pub struct PrefetchEngine {
     request_tx: Sender<LoadRequest>,
     response_rx: Receiver<LoadResponse>,
     worker_handle: Option<JoinHandle<()>>,
-    /// ワーカーと共有する世代カウンタ
     current_generation: Arc<AtomicU64>,
-    /// メインスレッド側のローカルコピー
     generation: u64,
 }
 
 impl PrefetchEngine {
-    /// ワーカースレッドを起動する
-    /// `notify`はレスポンス送信後に呼ばれるコールバック (UIスレッドへの通知用)
-    /// `decoder`は画像デコーダチェーン (Susieプラグイン含む)
     pub fn new(
         notify: Box<dyn Fn() + Send>,
         decoder: Arc<DecoderChain>,
@@ -87,7 +79,6 @@ impl PrefetchEngine {
         })
     }
 
-    /// 現在のgenerationを付与してロードリクエストを送信
     pub fn request_load(&self, index: usize, source: FileSource, filter: PersistentFilter) {
         let _ = self.request_tx.send(LoadRequest::Load {
             index,
@@ -97,7 +88,6 @@ impl PrefetchEngine {
         });
     }
 
-    /// 全レスポンスをノンブロッキングで取得
     pub fn drain_responses(&self) -> Vec<LoadResponse> {
         let mut responses = Vec::new();
         while let Ok(resp) = self.response_rx.try_recv() {
@@ -106,10 +96,6 @@ impl PrefetchEngine {
         responses
     }
 
-    /// テスト用: 最初の1件をブロッキングで受信し、続けてノンブロッキングで残りを回収する。
-    ///
-    /// `recv_timeout` で確定的に待機するため、`thread::sleep` ベースのポーリングより
-    /// 高速かつ flaky になりにくい。
     #[cfg(test)]
     pub fn recv_responses_blocking(&self, timeout: std::time::Duration) -> Vec<LoadResponse> {
         let mut responses = Vec::new();
@@ -123,12 +109,10 @@ impl PrefetchEngine {
         responses
     }
 
-    /// 現在の世代
     pub fn generation(&self) -> u64 {
         self.generation
     }
 
-    /// 世代を進行 (AtomicU64も更新)
     pub fn advance_generation(&mut self) -> u64 {
         self.generation += 1;
         self.current_generation
@@ -146,13 +130,11 @@ impl Drop for PrefetchEngine {
     }
 }
 
-/// COMの初期化/解放を管理するDropガード
 struct ComGuard;
 
 impl ComGuard {
     fn init() -> Self {
         unsafe {
-            // ワーカースレッドではMTAモードで初期化
             let _ = windows::Win32::System::Com::CoInitializeEx(
                 None,
                 windows::Win32::System::Com::COINIT_MULTITHREADED,
@@ -170,7 +152,6 @@ impl Drop for ComGuard {
     }
 }
 
-/// ワーカースレッドのメインループ
 fn worker_loop(
     request_rx: Receiver<LoadRequest>,
     response_tx: Sender<LoadResponse>,
@@ -191,7 +172,6 @@ fn worker_loop(
                 filter,
                 generation,
             } => {
-                // デコード前に世代チェック → 古いリクエストはスキップ
                 if generation < current_generation.load(Ordering::Relaxed) {
                     continue;
                 }
@@ -250,7 +230,6 @@ mod tests {
         .expect("test PrefetchEngine::new");
         engine.request_load(0, FileSource::File(path), PersistentFilter::new());
 
-        // ワーカーの処理完了を recv_timeout で確定的に待つ
         let responses = engine.recv_responses_blocking(std::time::Duration::from_secs(1));
         let mut loaded = false;
         for resp in responses {
@@ -288,15 +267,11 @@ mod tests {
         )
         .expect("test PrefetchEngine::new");
 
-        // generation=0でリクエストを送信する前に世代を進める
         engine.request_load(0, FileSource::File(path.clone()), PersistentFilter::new());
-        engine.advance_generation(); // → generation=1
+        engine.advance_generation();
 
-        // generation=1で新しいリクエスト
         engine.request_load(1, FileSource::File(path), PersistentFilter::new());
 
-        // generation=1 のレスポンスが届くまで recv_timeout で確定的に待機する。
-        // generation=0 のレスポンスはスキップされる可能性があるため has_gen1 まで繰り返す。
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         let mut has_gen1 = false;
         while std::time::Instant::now() < deadline {
@@ -351,7 +326,6 @@ mod tests {
         )
         .expect("test PrefetchEngine::new");
         drop(engine);
-        // パニックせずに終了すればOK
     }
     #[test]
     fn synchronous_and_prefetch_use_original_hint_and_request_filter() {

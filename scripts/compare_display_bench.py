@@ -1,24 +1,14 @@
-"""`mise run bench`が保存した表示時間の測定結果2件を比較する。
-
-入力種別×シナリオごとに、基準と比較対象の中央値・p95、その差と比率、失敗件数を表示する。
-素材・測定条件・先読み設定・実行環境・ビルド条件が異なる場合は、値の比較より先にその差を表示する。
-条件が異なる結果どうしの差は、変更の効果と条件の差を区別できないためである。
-"""
-
 import argparse
 import json
 import pathlib
 import sys
 import typing
 
-# 値を比べる前に一致を確かめる項目 (結果JSONの最上位キー)
 _CONDITION_KEYS = ("material", "settings", "prefetch", "window_client_size")
-# 実行環境のうち、比較の前提として差を示す項目
 _ENVIRONMENT_KEYS = ("profile", "rustc", "os", "cpu", "gpu")
 
 
 def main() -> None:
-    """2つの結果を読み込み、条件の差と値の差を表示する。"""
     parser = argparse.ArgumentParser(description="表示時間の測定結果2件を比較する。")
     parser.add_argument("base", type=pathlib.Path, help="基準とする結果JSON")
     parser.add_argument("target", type=pathlib.Path, help="比較する結果JSON")

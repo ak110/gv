@@ -1,5 +1,3 @@
-//! マウス入力と矩形選択
-
 use super::AppWindow;
 use crate::selection::{HandleKind, HitTestResult};
 use crate::ui::key_config::Modifiers;
@@ -12,7 +10,6 @@ const VK_SHIFT: i32 = 0x10;
 const VK_MENU: i32 = 0x12;
 
 impl AppWindow {
-    /// 現在の修飾キー状態を取得
     pub(super) fn current_modifiers() -> Modifiers {
         unsafe {
             Modifiers {
@@ -23,7 +20,6 @@ impl AppWindow {
         }
     }
 
-    /// マウス左ボタン押下: 選択ドラッグ開始
     pub(super) fn on_lbutton_down(&mut self, lparam: LPARAM) {
         self.begin_user_operation();
         let Some(draw_rect) = self.renderer.last_draw_rect().copied() else {
@@ -40,7 +36,6 @@ impl AppWindow {
             .on_mouse_down(sx, sy, &draw_rect, img.width, img.height);
 
         if self.selection.is_dragging() {
-            // マウスキャプチャ (ウィンドウ外でもドラッグイベントを受け取る)
             unsafe {
                 windows::Win32::UI::Input::KeyboardAndMouse::SetCapture(self.hwnd);
             }
@@ -49,7 +44,6 @@ impl AppWindow {
         }
     }
 
-    /// マウス移動: ドラッグ中の矩形更新
     pub(super) fn on_mouse_move(&mut self, lparam: LPARAM) {
         if !self.selection.is_dragging() {
             return;
@@ -70,7 +64,6 @@ impl AppWindow {
         self.update_title();
     }
 
-    /// マウス左ボタンリリース: ドラッグ終了
     pub(super) fn on_lbutton_up(&mut self) {
         if !self.selection.is_dragging() {
             return;
@@ -87,8 +80,6 @@ impl AppWindow {
         self.update_title();
     }
 
-    /// WM_SETCURSOR: 選択ハンドル上でカーソルを変更
-    /// trueを返した場合はDefWindowProcを呼ばない
     pub(super) fn on_set_cursor(&self) -> bool {
         if !self.selection.is_selected() {
             return false;
@@ -100,7 +91,6 @@ impl AppWindow {
             return false;
         };
 
-        // 現在のマウス位置を取得
         let mut pt = windows::Win32::Foundation::POINT::default();
         unsafe {
             let _ =

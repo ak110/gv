@@ -2,8 +2,6 @@ use std::collections::HashMap;
 
 use crate::image::DecodedImage;
 
-/// デコード済み画像のキャッシュ
-/// インデックスベースのHashMapで管理し、メモリ使用量を追跡する
 pub struct PageCache {
     cache: HashMap<usize, DecodedImage>,
     max_memory: usize,
@@ -19,11 +17,9 @@ impl PageCache {
         }
     }
 
-    /// 画像をキャッシュに格納する。メモリ超過時はfalseを返し格納しない
     pub fn insert(&mut self, index: usize, image: DecodedImage) -> bool {
         let size = image.memory_size();
 
-        // 同じインデックスの既存エントリを除去
         if let Some(old) = self.cache.remove(&index) {
             self.current_memory -= old.memory_size();
         }
@@ -37,13 +33,11 @@ impl PageCache {
         true
     }
 
-    /// 参照取得 (テスト用API)
     #[cfg(test)]
     pub fn get(&self, index: usize) -> Option<&DecodedImage> {
         self.cache.get(&index)
     }
 
-    /// 所有権取得+キャッシュ除去+メモリ使用量更新
     pub fn take(&mut self, index: usize) -> Option<DecodedImage> {
         if let Some(image) = self.cache.remove(&index) {
             self.current_memory -= image.memory_size();
@@ -57,7 +51,6 @@ impl PageCache {
         self.cache.contains_key(&index)
     }
 
-    /// 指定範囲外のエントリを全削除
     pub fn evict_outside(&mut self, center: usize, range_back: usize, range_fwd: usize) {
         let low = center.saturating_sub(range_back);
         let high = center.saturating_add(range_fwd);
@@ -91,36 +84,29 @@ mod tests {
     use super::*;
     use crate::test_helpers::cache_image as make_image;
 
-    /// CRUD + メモリ予算 + evict + clear のシナリオを 1 関数にまとめた統合テスト。
     #[test]
     fn page_cache_crud_scenario() {
         let mut cache = PageCache::new(1024);
 
-        // insert + get + contains
         assert!(cache.insert(0, make_image(100)));
         assert!(cache.contains(0));
         assert!(cache.get(0).is_some());
 
-        // 同一 index への上書き (古いエントリのメモリ解放を確認)
         assert!(cache.insert(0, make_image(150)));
         assert_eq!(cache.current_memory, 150);
 
-        // take: 取り出し後はキャッシュから消えメモリ使用量も戻る
         let taken = cache.take(0);
         assert!(taken.is_some());
         assert!(!cache.contains(0));
         assert_eq!(cache.current_memory, 0);
 
-        // 存在しない index の take は None
         assert!(cache.take(99).is_none());
 
-        // メモリ予算超過時は insert が false を返し、エントリは追加されない
         let mut tight = PageCache::new(200);
         assert!(tight.insert(0, make_image(150)));
-        assert!(!tight.insert(1, make_image(100))); // 150 + 100 > 200
+        assert!(!tight.insert(1, make_image(100)));
         assert!(!tight.contains(1));
 
-        // evict_outside: center=5, back=2, fwd=2 → keep 3..=7
         let mut wide = PageCache::new(10000);
         for i in 0..10 {
             wide.insert(i, make_image(100));
@@ -135,9 +121,8 @@ mod tests {
         for i in 8..10 {
             assert!(!wide.contains(i), "index {i} should be evicted");
         }
-        assert_eq!(wide.current_memory, 500); // 5 entries × 100
+        assert_eq!(wide.current_memory, 500);
 
-        // clear で全削除
         wide.clear();
         for i in 0..10 {
             assert!(!wide.contains(i));

@@ -1,5 +1,3 @@
-//! 画像フィルタ・変換モジュール
-
 pub mod blur;
 pub mod brightness;
 pub mod color;
@@ -9,7 +7,6 @@ pub mod transform;
 use crate::image::DecodedImage;
 use crate::selection::PixelRect;
 
-/// 選択領域の境界 (x0, y0, x1, y1) を計算する。選択なしなら全画像を返す。
 pub(super) fn region_bounds(
     region: Option<&PixelRect>,
     width: u32,
@@ -23,7 +20,6 @@ pub(super) fn region_bounds(
     }
 }
 
-/// 選択領域内のピクセルに変換関数を適用する (選択なしなら全画像)
 pub(super) fn apply_to_region(
     image: &DecodedImage,
     region: Option<&PixelRect>,

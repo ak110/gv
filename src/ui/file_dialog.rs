@@ -1,5 +1,3 @@
-//! ファイル・フォルダ・ブックマークのコモンダイアログ
-
 use crate::util::to_wide;
 use anyhow::{Context as _, Result};
 use std::os::windows::ffi::OsStrExt;
@@ -10,7 +8,6 @@ use windows::Win32::UI::Shell::{
     FOS_PICKFOLDERS, IFileOpenDialog, IFileSaveDialog,
 };
 
-/// HRESULT_FROM_WIN32(ERROR_CANCELLED)
 const ERROR_CANCELLED_HRESULT: u32 = 0x800704C7;
 
 fn extension_filter_spec<'a>(extensions: impl IntoIterator<Item = &'a str>) -> String {
@@ -21,7 +18,6 @@ fn extension_filter_spec<'a>(extensions: impl IntoIterator<Item = &'a str>) -> S
         .join(";")
 }
 
-/// ロード済みプラグインを含む対応形式から、表示順にファイル種類を作成する。
 fn open_file_filters(
     registry: &crate::extension_registry::ExtensionRegistry,
 ) -> Vec<(&'static str, String)> {
@@ -84,7 +80,6 @@ mod tests {
     }
 }
 
-/// ファイル選択ダイアログ (IFileOpenDialog)
 pub fn open_file_dialog(
     hwnd: HWND,
     initial_dir: Option<&Path>,
@@ -101,7 +96,6 @@ pub fn open_file_dialog(
         let options = dialog.GetOptions()?;
         dialog.SetOptions(options | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST | FOS_PATHMUSTEXIST)?;
 
-        // 初期ディレクトリ設定
         if let Some(dir) = initial_dir
             && let Some(item) = create_shell_item(dir)
         {
@@ -126,7 +120,7 @@ pub fn open_file_dialog(
 
         match dialog.Show(Some(hwnd)) {
             Ok(()) => {}
-            Err(e) if e.code().0 as u32 == ERROR_CANCELLED_HRESULT => return Ok(None), // ユーザーキャンセル
+            Err(e) if e.code().0 as u32 == ERROR_CANCELLED_HRESULT => return Ok(None),
             Err(e) => return Err(e.into()),
         }
 
@@ -138,12 +132,10 @@ pub fn open_file_dialog(
     }
 }
 
-/// フォルダ選択ダイアログ (IFileOpenDialog + FOS_PICKFOLDERS)
 pub fn open_folder_dialog(hwnd: HWND, initial_dir: Option<&Path>) -> Result<Option<PathBuf>> {
     select_folder_dialog(hwnd, "フォルダを開く", initial_dir)
 }
 
-/// フォルダ選択ダイアログ (移動/コピー先選択用)
 pub fn select_folder_dialog(
     hwnd: HWND,
     title: &str,
@@ -167,7 +159,6 @@ pub fn select_folder_dialog(
         let title_wide = to_wide(title);
         dialog.SetTitle(windows::core::PCWSTR(title_wide.as_ptr()))?;
 
-        // 初期ディレクトリ設定
         if let Some(dir) = initial_dir
             && let Some(item) = create_shell_item(dir)
         {
@@ -188,15 +179,6 @@ pub fn select_folder_dialog(
     }
 }
 
-/// `save_file_dialog` の設定パラメータ。
-///
-/// - `default_name`: デフォルトファイル名 (拡張子付きを推奨)。
-/// - `filter_name` / `filter_ext`: ファイル種別フィルタの表示名と spec (`"*.png"` 等)。
-/// - `default_ext`: 拡張子文字列 (`"png"` のように先頭ドット無し)。ユーザーがファイル名
-///   から拡張子を削除した場合に Windows 側で自動補完される。補完が不要な場合 (`*.*`
-///   フィルタなど) は空文字を渡す。
-/// - `initial_dir`: 指定すればそのフォルダを初期表示する。
-/// - `title` / `ok_button_label`: ダイアログのタイトルと OK ボタンラベルのカスタマイズ。
 #[derive(Default)]
 pub struct SaveFileDialogParams<'a> {
     pub default_name: &'a str,
@@ -208,7 +190,6 @@ pub struct SaveFileDialogParams<'a> {
     pub ok_button_label: Option<&'a str>,
 }
 
-/// 保存先ダイアログ (`IFileSaveDialog`) を表示してユーザーにパスを選択させる。
 pub fn save_file_dialog(hwnd: HWND, params: SaveFileDialogParams<'_>) -> Result<Option<PathBuf>> {
     #[cfg(test)]
     if let Some(path) = crate::shell::file_operations::test_driver::selected_path() {
@@ -234,7 +215,6 @@ pub fn save_file_dialog(hwnd: HWND, params: SaveFileDialogParams<'_>) -> Result<
         let options = dialog.GetOptions()?;
         dialog.SetOptions(options | FOS_FORCEFILESYSTEM | FOS_OVERWRITEPROMPT)?;
 
-        // タイトル・OKボタンラベルのカスタマイズ
         if let Some(t) = title {
             let wide = to_wide(t);
             dialog.SetTitle(windows::core::PCWSTR(wide.as_ptr()))?;
@@ -244,14 +224,12 @@ pub fn save_file_dialog(hwnd: HWND, params: SaveFileDialogParams<'_>) -> Result<
             dialog.SetOkButtonLabel(windows::core::PCWSTR(wide.as_ptr()))?;
         }
 
-        // 初期ディレクトリ設定
         if let Some(dir) = initial_dir
             && let Some(item) = create_shell_item(dir)
         {
             dialog.SetFolder(&item)?;
         }
 
-        // フィルタ設定
         let fname = to_wide(filter_name);
         let fspec = to_wide(filter_ext);
         let filters = [windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC {
@@ -268,7 +246,6 @@ pub fn save_file_dialog(hwnd: HWND, params: SaveFileDialogParams<'_>) -> Result<
             dialog.SetDefaultExtension(windows::core::PCWSTR(ext_wide.as_ptr()))?;
         }
 
-        // デフォルトファイル名
         let name_wide = to_wide(default_name);
         dialog.SetFileName(windows::core::PCWSTR(name_wide.as_ptr()))?;
 
@@ -286,7 +263,6 @@ pub fn save_file_dialog(hwnd: HWND, params: SaveFileDialogParams<'_>) -> Result<
     }
 }
 
-/// ブックマーク読み込みダイアログ (.gvbmフィルタ + bookmarksフォルダ初期表示)
 pub fn open_bookmark_dialog(hwnd: HWND) -> Result<Option<PathBuf>> {
     unsafe {
         let dialog: IFileOpenDialog = windows::Win32::System::Com::CoCreateInstance(
@@ -299,14 +275,12 @@ pub fn open_bookmark_dialog(hwnd: HWND) -> Result<Option<PathBuf>> {
         let options = dialog.GetOptions()?;
         dialog.SetOptions(options | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST | FOS_PATHMUSTEXIST)?;
 
-        // 初期ディレクトリ: bookmarksフォルダ
         let bookmark_dir = crate::bookmark::bookmark_dir();
         let _ = std::fs::create_dir_all(&bookmark_dir);
         if let Some(item) = create_shell_item(&bookmark_dir) {
             dialog.SetFolder(&item)?;
         }
 
-        // フィルタ: ブックマーク + すべてのファイル
         let filter_name = to_wide("ぐらびゅブックマーク");
         let filter_spec = to_wide(&extension_filter_spec(
             crate::bookmark::BOOKMARK_EXTENSIONS.iter().copied(),
@@ -340,8 +314,6 @@ pub fn open_bookmark_dialog(hwnd: HWND) -> Result<Option<PathBuf>> {
     }
 }
 
-/// SHCreateItemFromParsingNameでIShellItemを取得するヘルパー
-/// ダイアログの初期フォルダ設定用: 失敗時はNoneを返す
 fn create_shell_item(dir: &Path) -> Option<windows::Win32::UI::Shell::IShellItem> {
     unsafe {
         let dir_wide: Vec<u16> = dir

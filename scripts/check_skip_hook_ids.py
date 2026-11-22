@@ -1,13 +1,3 @@
-"""文書が案内するSKIP指定とprek設定のhook IDを照合する検査。
-
-`AGENTS.md`などが案内する`SKIP=`の値は`.pre-commit-config.yaml`が定義するhook IDの転記であり、
-hook構成が変わっても文書側に追随の契機が無い。不一致のまま案内どおり実行すると、
-prekは該当hookが無いと警告するだけで、無効化を意図したhookをそのまま実行する。
-
-不一致は文書の案内が成立しないことを意味するためerror区分とし、終了コード1で終わる。
-prek設定の読み取りに失敗した場合は検査そのものを開始できないため、違反と区別して終了コード2で終わる。
-"""
-
 import argparse
 import pathlib
 import re
@@ -19,7 +9,6 @@ _SKIP_PATTERN = re.compile(r"SKIP=([A-Za-z0-9_.,-]+)")
 
 
 def main() -> None:
-    """照合を実行し、不一致の有無を終了コードで返す。"""
     parser = argparse.ArgumentParser(
         description="文書が案内するSKIP指定とprek設定のhook IDを照合する。"
     )
@@ -52,7 +41,6 @@ def main() -> None:
 
 
 def _load_hook_ids(config: pathlib.Path) -> set[str]:
-    """prek設定からhook IDの集合を読む。repoの別は問わず全hookを対象とする。"""
     try:
         lines = config.read_text(encoding="utf-8").splitlines()
     except OSError as e:
@@ -74,7 +62,6 @@ def _load_hook_ids(config: pathlib.Path) -> set[str]:
 
 
 def _tracked_markdown() -> list[pathlib.Path]:
-    """Gitの追跡下にあるMarkdownの一覧を返す。"""
     try:
         proc = subprocess.run(
             ["git", "ls-files", "-z", "*.md"],
@@ -95,7 +82,6 @@ def _tracked_markdown() -> list[pathlib.Path]:
 def _collect_violations(
     docs: list[pathlib.Path], hook_ids: set[str]
 ) -> list[tuple[pathlib.Path, int, str]]:
-    """走査対象の各文書から、hook IDに存在しないSKIP指定を集める。"""
     violations: list[tuple[pathlib.Path, int, str]] = []
     for doc in docs:
         try:

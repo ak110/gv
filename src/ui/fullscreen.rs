@@ -3,7 +3,6 @@ use windows::Win32::Graphics::Gdi::MONITOR_DEFAULTTONEAREST;
 use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MONITORINFO, MonitorFromWindow};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-/// フルスクリーン状態管理 (ボーダーレス最大化)
 pub struct FullscreenState {
     is_fullscreen: bool,
     saved_style: WINDOW_STYLE,
@@ -28,7 +27,6 @@ impl FullscreenState {
         self.is_fullscreen
     }
 
-    /// 表示希望を先に確定し、同期通知を送るWin32操作を所有値で返す。
     pub fn prepare_toggle(
         &mut self,
         hwnd: HWND,

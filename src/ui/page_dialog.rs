@@ -1,4 +1,3 @@
-//! ページ指定移動
 use super::form_dialog::{FieldDef, NumberRule, show_form_dialog};
 use anyhow::{Context as _, Result};
 use windows::Win32::Foundation::HWND;

@@ -1,8 +1,4 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-// 本番から到達しないコードを残さないため、非テストのビルドでは未使用を誤りにし、
-// 局所の`allow(dead_code)`による抑制も拒否する。テストビルドはテストハーネスが生成する
-// `main`へ`allow(dead_code)`を付けるため、`forbid`と衝突しないよう対象から外す。
-// テスト専用のAPIは`#[cfg(test)]`で限定する。
 #![cfg_attr(not(test), forbid(dead_code))]
 
 mod action;
@@ -49,7 +45,6 @@ fn main() {
             "--help" | "-h" | "--register" | "--unregister"
         )
     }) {
-        // コンソールが無い起動では接続に失敗し、GUIと同じく出力先を持たない。
         unsafe {
             let _ = windows::Win32::System::Console::AttachConsole(
                 windows::Win32::System::Console::ATTACH_PARENT_PROCESS,
@@ -57,7 +52,6 @@ fn main() {
         }
     }
 
-    // CLIフラグの分岐 (DPI/COM初期化前に処理: 副作用不要なもの)
     if let Some(arg) = std::env::args().nth(1) {
         match arg.as_str() {
             "--help" | "-h" => {
@@ -73,17 +67,14 @@ fn main() {
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     }
 
-    // COM初期化
     if let Err(e) = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok() } {
         exit_with_startup_error("COMの初期化に失敗しました", &format!("{e:#}"));
     }
 
-    // 起動時マイグレーション・クリーンアップ
     migrate_old_filenames();
     temp_cleanup::cleanup_orphaned_temp_dirs();
     updater::cleanup_old_exe();
 
-    // CLI分岐 (--register / --unregister: COM初期化後に実行)
     if let Some(arg) = std::env::args().nth(1) {
         match arg.as_str() {
             "--register" => {
@@ -98,10 +89,8 @@ fn main() {
         }
     }
 
-    // 設定ファイル読み込み
     let config = config::Config::load();
 
-    // コマンドライン引数からファイルパスを収集 (--で始まるフラグは除外)
     let initial_files: Vec<PathBuf> = std::env::args_os()
         .skip(1)
         .filter(|arg| !arg.to_str().is_some_and(|s| s.starts_with("--")))
@@ -115,7 +104,6 @@ fn main() {
         Err(e) => exit_with_startup_error("ウィンドウの作成に失敗しました", &format!("{e:#}")),
     };
 
-    // メッセージループ
     let exit_code = ui::window::run_message_loop();
     std::process::exit(exit_code);
 }
@@ -134,11 +122,9 @@ fn exit_with_startup_error(summary: &str, detail: &str) -> ! {
     std::process::exit(1);
 }
 
-/// 起動の失敗で示す次の操作
 const STARTUP_NEXT_ACTION: &str = "ぐらびゅをもう一度起動してください。繰り返し失敗する場合は、\
      ホームページ（https://github.com/ak110/gv）のIssuesへこの内容を添えて報告してください";
 
-/// `--register`・`--unregister`の失敗を理由と次の操作とともにコンソールへ出力し、非0で終了する
 fn finish_shell_command(result: anyhow::Result<()>, operation: &str, flag: &str) {
     if let Err(e) = result {
         eprintln!("{}", shell_command_error_text(operation, flag, &e));
@@ -146,7 +132,6 @@ fn finish_shell_command(result: anyhow::Result<()>, operation: &str, flag: &str)
     }
 }
 
-/// `--register`・`--unregister`の失敗の文面を、要約、次の操作、詳細の順に組み立てる
 fn shell_command_error_text(operation: &str, flag: &str, error: &anyhow::Error) -> String {
     util::format_error_text(
         &format!("{operation}に失敗しました"),
@@ -158,7 +143,6 @@ fn shell_command_error_text(operation: &str, flag: &str, error: &anyhow::Error) 
     )
 }
 
-/// 旧ファイル名 (gv3.*) を新ファイル名 (ぐらびゅ.*) にリネームする
 fn migrate_old_filenames() {
     let Ok(dir) = crate::paths::exe_dir() else {
         return;
@@ -188,7 +172,6 @@ fn print_help() {
 mod tests {
     use super::*;
 
-    /// 起動失敗のダイアログは理由と次の操作を示す
     #[test]
     fn startup_error_box_shows_reason_and_next_action() {
         let text = util::format_error_box_text(
@@ -209,7 +192,6 @@ mod tests {
         assert!(text.ends_with("詳細:\n原因"), "{text}");
     }
 
-    /// `--register`の失敗は再実行の方法と原因を示す
     #[test]
     fn shell_command_error_shows_rerun_and_detail() {
         let text = shell_command_error_text(

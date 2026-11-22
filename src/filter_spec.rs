@@ -1,5 +1,3 @@
-//! フィルターの操作対応とパラメーター仕様
-
 use crate::action::Action;
 use crate::persistent_filter::FilterOperation;
 use crate::ui::form_dialog::{FieldDef, NumberRule};

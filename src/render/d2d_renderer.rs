@@ -20,7 +20,6 @@ use crate::config::DisplayConfig;
 use crate::image::DecodedImage;
 use crate::selection::{self, HANDLE_DRAW_SIZE, PixelRect};
 
-/// αチャネル背景モード
 #[derive(Debug, Clone, Copy, PartialEq, Default, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AlphaBackground {
@@ -30,39 +29,26 @@ pub enum AlphaBackground {
     Checker,
 }
 
-/// プリスケール済みビットマップのキャッシュエントリ
 struct PrescaledEntry {
-    source_key: usize, // 元画像データのポインタ (同一性判定用)
-    width: u32,        // プリスケール後の幅
-    height: u32,       // プリスケール後の高さ
+    source_key: usize,
+    width: u32,
+    height: u32,
     bitmap: ID2D1Bitmap,
 }
 
-/// 1回の描画の結果
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DrawOutcome {
-    /// 描画を確定できた
     Drawn,
-    /// レンダーターゲットが失効したため資源を破棄した。次の描画で再作成するため再描画が必要
     TargetLost,
 }
 
-/// レンダーターゲットと、そのターゲットから作成してキャッシュする資源
-///
-/// ターゲットが失効すると配下のビットマップ・ブラシも使えなくなる。
-/// 寿命を1つの所有単位へまとめ、失効時は単位ごと破棄して旧ターゲットの資源を残さない。
-/// ターゲットへ到達できるのはこの単位の内側だけとし、新しいキャッシュ資源もここへ置く。
 struct TargetResources {
     render_target: ID2D1HwndRenderTarget,
-    /// 現在キャッシュ中のD2Dビットマップとそのソースポインタ (同一画像の再描画を高速化)
     cached_bitmap: Option<(usize, ID2D1Bitmap)>,
-    /// CPU Lanczos3プリスケール済みビットマップのキャッシュ
     prescaled: Option<PrescaledEntry>,
-    /// チェッカーパターンブラシ (遅延初期化)
     checker_brush: Option<ID2D1BitmapBrush>,
 }
 
-/// 1フレーム分の描画パラメーター (ターゲットの外に置く表示状態)
 struct FrameParams<'a> {
     image: Option<&'a DecodedImage>,
     selection_rect: Option<&'a PixelRect>,
@@ -71,39 +57,26 @@ struct FrameParams<'a> {
     draw_offset_x: f32,
 }
 
-/// 1フレーム分の描画結果
 struct FrameResult {
-    /// 画像を描いた矩形 (画像なしならNone)
     draw_rect: Option<DrawRect>,
-    /// BeginDraw〜EndDrawの間で発生した資源作成などの失敗
     content: Result<()>,
-    /// EndDrawの結果
     end_draw: windows::core::Result<()>,
 }
 
-/// Direct2D描画エンジン
 pub struct D2DRenderer {
-    /// 描画先の失効後に再作成するため、レンダラーの寿命の間保持する
     factory: ID2D1Factory,
     hwnd: HWND,
-    /// 失効後は次の描画まで`None`
     target: Option<TargetResources>,
     layout: Layout,
-    /// αチャネル背景モード
     alpha_bg: AlphaBackground,
-    /// 描画領域の左オフセット (ファイルリストパネル分)
     draw_offset_x: f32,
-    /// 最後に描画した画像の描画矩形 (選択の座標変換用)
     last_draw_rect: Option<DrawRect>,
-    /// 試験経路: 次の描画でEndDrawの結果をこのエラーへ置き換える
     #[cfg(test)]
     injected_end_draw_error: Option<windows::core::Error>,
-    /// 試験経路: 次のターゲット作成を失敗させる
     #[cfg(test)]
     fail_next_target_creation: bool,
 }
 
-// 背景色: ダークグレー (#333333)
 const BG_COLOR: D2D1_COLOR_F = D2D1_COLOR_F {
     r: 0.2,
     g: 0.2,
@@ -131,12 +104,10 @@ impl D2DRenderer {
             #[cfg(test)]
             fail_next_target_creation: false,
         };
-        // 起動時に作成できない環境は描画できないため、起動エラーとして扱う
         renderer.target = Some(renderer.create_target_resources()?);
         Ok(renderer)
     }
 
-    /// レンダーターゲットを作成する (初回と失効後の復旧で共用する)
     fn create_target_resources(&mut self) -> Result<TargetResources> {
         #[cfg(test)]
         if std::mem::take(&mut self.fail_next_target_creation) {
@@ -180,9 +151,6 @@ impl D2DRenderer {
         }
     }
 
-    /// ウィンドウリサイズ時に呼ぶ
-    ///
-    /// ターゲットが失効していた場合は資源を破棄し、次の描画が現在のクライアントサイズで再作成する。
     pub fn resize(&mut self, width: u32, height: u32) -> Result<()> {
         let Some(target) = &self.target else {
             return Ok(());
@@ -198,11 +166,6 @@ impl D2DRenderer {
         }
     }
 
-    /// 画像を描画する。imageがNoneなら背景のみ。
-    /// `selection_rect`: 選択矩形がある場合はオーバーレイ描画する
-    ///
-    /// ターゲットが失効していた場合は`DrawOutcome::TargetLost`を返す。
-    /// 呼出側は再描画を要求し、次の描画で初回と同じ手順により資源を再作成する。
     pub fn draw(
         &mut self,
         image: Option<&DecodedImage>,
@@ -250,7 +213,6 @@ impl D2DRenderer {
         &mut self.layout
     }
 
-    /// αチャネル背景を巡回切替 (White → Black → Checker → White)
     pub fn cycle_alpha_background(&mut self) {
         self.alpha_bg = match self.alpha_bg {
             AlphaBackground::White => AlphaBackground::Black,
@@ -259,29 +221,24 @@ impl D2DRenderer {
         };
     }
 
-    /// 描画領域の左オフセットを設定 (ファイルリストパネル幅)
     pub fn set_draw_offset(&mut self, offset_x: f32) {
         self.draw_offset_x = offset_x;
     }
 
-    /// 最後に描画した画像の描画矩形を返す (選択の座標変換用)
     pub fn last_draw_rect(&self) -> Option<&DrawRect> {
         self.last_draw_rect.as_ref()
     }
 
-    /// 試験経路: 次の描画でEndDrawがターゲット失効を返したものとして扱う
     #[cfg(test)]
     pub(crate) fn simulate_target_loss_on_next_draw(&mut self) {
         self.injected_end_draw_error = Some(D2DERR_RECREATE_TARGET.into());
     }
 
-    /// 試験経路: 次のターゲット作成を失敗させる
     #[cfg(test)]
     pub(crate) fn fail_next_target_creation(&mut self) {
         self.fail_next_target_creation = true;
     }
 
-    /// 試験用: ターゲットの有無と、キャッシュ資源の有無
     #[cfg(test)]
     pub(crate) fn target_snapshot(&self) -> Option<TargetSnapshot> {
         self.target.as_ref().map(|t| TargetSnapshot {
@@ -291,7 +248,6 @@ impl D2DRenderer {
     }
 }
 
-/// 試験用: ターゲットの状態
 #[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TargetSnapshot {
@@ -300,15 +256,12 @@ pub(crate) struct TargetSnapshot {
 }
 
 impl TargetResources {
-    /// BeginDraw〜EndDrawを実行する。途中の失敗があってもEndDrawまで到達させる
     unsafe fn draw_frame(&mut self, params: &FrameParams<'_>) -> FrameResult {
         unsafe {
             self.render_target.BeginDraw();
 
             let size = self.render_target.GetSize();
 
-            // ファイルリストパネルの右側のみに描画を制限
-            // Clear() 前にクリップを設定し、パネル領域を塗りつぶさないようにする
             let has_clip = params.draw_offset_x > 0.0;
             if has_clip {
                 let clip = D2D_RECT_F {
@@ -323,18 +276,15 @@ impl TargetResources {
                 );
             }
 
-            // クリップ設定後にクリア (パネル領域は保護される)
             self.render_target.Clear(Some(&BG_COLOR));
 
             let mut draw_rect_out = None;
             let content = if let Some(img) = params.image {
-                // パネル幅を差し引いた描画領域でレイアウト計算
                 let avail_width = size.width - params.draw_offset_x;
                 let mut draw_rect =
                     params
                         .layout
                         .calculate(img.width, img.height, avail_width, size.height);
-                // オフセットを加算して実際の描画位置に変換
                 draw_rect.x += params.draw_offset_x;
                 draw_rect_out = Some(draw_rect);
                 self.draw_image(img, &draw_rect, params)
@@ -355,7 +305,6 @@ impl TargetResources {
         }
     }
 
-    /// 画像・α背景・ピクセルグリッド・選択矩形を描画する
     unsafe fn draw_image(
         &mut self,
         img: &DecodedImage,
@@ -363,22 +312,18 @@ impl TargetResources {
         params: &FrameParams<'_>,
     ) -> Result<()> {
         unsafe {
-            // αチャネル背景を画像領域に描画
             self.draw_alpha_background(draw_rect, params.alpha_bg)?;
 
-            // CPU Lanczos3プリスケーリングで高品質描画
             let target_w = (draw_rect.width as u32).max(1);
             let target_h = (draw_rect.height as u32).max(1);
             let bitmap = self.get_prescaled_bitmap(img, target_w, target_h)?;
             self.draw_bitmap(&bitmap, draw_rect);
 
-            // ピクセルグリッド (8倍以上で表示)
             let scale = draw_rect.width / img.width as f32;
             if scale >= 8.0 {
                 self.draw_pixel_grid(draw_rect, img.width, img.height, scale);
             }
 
-            // 選択矩形オーバーレイ
             if let Some(sel_rect) = params.selection_rect {
                 self.draw_selection_overlay(sel_rect, draw_rect, img.width, img.height);
             }
@@ -386,9 +331,7 @@ impl TargetResources {
         }
     }
 
-    /// DecodedImageからD2Dビットマップを取得 (キャッシュ付き)
     unsafe fn get_or_create_bitmap(&mut self, image: &DecodedImage) -> Result<ID2D1Bitmap> {
-        // ソースデータのポインタで同一性を判定
         let key = image.data.as_ptr() as usize;
         if let Some((cached_key, ref bitmap)) = self.cached_bitmap
             && cached_key == key
@@ -401,8 +344,6 @@ impl TargetResources {
         Ok(bitmap)
     }
 
-    /// 表示サイズにプリスケールしたD2Dビットマップを取得 (キャッシュ付き)
-    /// 原寸表示の場合はプリスケールせず原画像のビットマップを返す
     unsafe fn get_prescaled_bitmap(
         &mut self,
         image: &DecodedImage,
@@ -411,7 +352,6 @@ impl TargetResources {
     ) -> Result<ID2D1Bitmap> {
         let key = image.data.as_ptr() as usize;
 
-        // キャッシュヒット: ソース・サイズ両方一致
         if let Some(ref entry) = self.prescaled
             && entry.source_key == key
             && entry.width == target_width
@@ -420,15 +360,10 @@ impl TargetResources {
             return Ok(entry.bitmap.clone());
         }
 
-        // 原寸表示ならプリスケール不要
         if target_width == image.width && target_height == image.height {
             return unsafe { self.get_or_create_bitmap(image) };
         }
 
-        // 縮小率に応じた動的アルゴリズム選択:
-        //   拡大: Lanczos3（シャープネス重視）
-        //   軽度縮小 (50%以上): Mitchell（負のローブが小さくモアレ抑制）
-        //   大幅縮小 (50%未満): 多段階Mitchell→最終Lanczos3（エイリアシング防止）
         let scale = (f64::from(target_width) / f64::from(image.width))
             .min(f64::from(target_height) / f64::from(image.height));
         let resized_data = if scale >= 1.0 {
@@ -475,8 +410,6 @@ impl TargetResources {
         Ok(bitmap)
     }
 
-    /// RGBA画像データからD2Dビットマップを作成
-    /// image crateはRGBA、D2DはBGRA前提なのでチャネル入れ替え + premultiplied alpha変換が必要
     unsafe fn create_bitmap_from_image(&self, image: &DecodedImage) -> Result<ID2D1Bitmap> {
         let bgra_data = rgba_to_premultiplied_bgra(&image.data);
 
@@ -511,7 +444,6 @@ impl TargetResources {
         }
     }
 
-    /// αチャネル背景を描画 (画像領域のみ)
     unsafe fn draw_alpha_background(
         &mut self,
         rect: &DrawRect,
@@ -550,7 +482,6 @@ impl TargetResources {
         Ok(())
     }
 
-    /// チェッカーパターンブラシを遅延作成
     fn ensure_checker_brush(&mut self) -> Result<ID2D1BitmapBrush> {
         if let Some(brush) = &self.checker_brush {
             return Ok(brush.clone());
@@ -560,9 +491,7 @@ impl TargetResources {
         Ok(brush)
     }
 
-    /// 16x16の2色チェッカーパターンブラシを作成
     unsafe fn create_checker_brush(&self) -> Result<ID2D1BitmapBrush> {
-        // 16x16ピクセル、8x8ブロックのチェッカーパターン (#CCCCCC + #FFFFFF)
         const TILE_SIZE: u32 = 16;
         const BLOCK_SIZE: u32 = 8;
         let mut pixels = vec![0u8; (TILE_SIZE * TILE_SIZE * 4) as usize];
@@ -571,10 +500,10 @@ impl TargetResources {
                 let offset = ((y * TILE_SIZE + x) * 4) as usize;
                 let is_light = ((x / BLOCK_SIZE) + (y / BLOCK_SIZE)).is_multiple_of(2);
                 let color: u8 = if is_light { 0xFF } else { 0xCC };
-                pixels[offset] = color; // B
-                pixels[offset + 1] = color; // G
-                pixels[offset + 2] = color; // R
-                pixels[offset + 3] = 0xFF; // A
+                pixels[offset] = color;
+                pixels[offset + 1] = color;
+                pixels[offset + 2] = color;
+                pixels[offset + 3] = 0xFF;
             }
         }
 
@@ -635,7 +564,6 @@ impl TargetResources {
         }
     }
 
-    /// ピクセルグリッドを描画する (拡大時のピクセル境界表示)
     unsafe fn draw_pixel_grid(
         &self,
         draw_rect: &DrawRect,
@@ -658,7 +586,6 @@ impl TargetResources {
 
             let half = 0.25;
 
-            // 垂直線 (細い矩形で描画)
             for x in 0..=img_width {
                 let sx = draw_rect.x + x as f32 * scale;
                 let rect = D2D_RECT_F {
@@ -671,7 +598,6 @@ impl TargetResources {
                     .FillRectangle(std::ptr::from_ref(&rect), &brush);
             }
 
-            // 水平線 (細い矩形で描画)
             for y in 0..=img_height {
                 let sy = draw_rect.y + y as f32 * scale;
                 let rect = D2D_RECT_F {
@@ -686,7 +612,6 @@ impl TargetResources {
         }
     }
 
-    /// 選択矩形のオーバーレイを描画する (白+黒の2本線 + ハンドル)
     unsafe fn draw_selection_overlay(
         &self,
         sel_rect: &PixelRect,
@@ -695,7 +620,6 @@ impl TargetResources {
         img_height: u32,
     ) {
         unsafe {
-            // 選択矩形のスクリーン座標を計算
             let (left, top) = selection::image_to_screen(
                 sel_rect.x, sel_rect.y, draw_rect, img_width, img_height,
             );
@@ -714,7 +638,6 @@ impl TargetResources {
                 bottom,
             };
 
-            // 黒線 (外側)
             if let Ok(black_brush) = self.render_target.CreateSolidColorBrush(
                 &D2D1_COLOR_F {
                     r: 0.0,
@@ -732,7 +655,6 @@ impl TargetResources {
                 );
             }
 
-            // 白線 (内側、破線風に表示される)
             if let Ok(white_brush) = self.render_target.CreateSolidColorBrush(
                 &D2D1_COLOR_F {
                     r: 1.0,
@@ -749,7 +671,6 @@ impl TargetResources {
                     None,
                 );
 
-                // 8箇所のリサイズハンドルを描画
                 let handles = selection::handle_positions(sel_rect);
                 let hs = HANDLE_DRAW_SIZE;
                 for (_kind, hx, hy) in &handles {
@@ -769,27 +690,23 @@ impl TargetResources {
     }
 }
 
-/// RGBA → premultiplied BGRA変換 (rayon並列化)
 fn rgba_to_premultiplied_bgra(rgba: &[u8]) -> Vec<u8> {
     let mut bgra = rgba.to_vec();
-    let row_bytes = 4 * 256; // 256ピクセル単位でチャンク分割
+    let row_bytes = 4 * 256;
     bgra.par_chunks_mut(row_bytes).for_each(|chunk| {
         for pixel in chunk.chunks_exact_mut(4) {
             let r = pixel[0];
             let g = pixel[1];
             let b = pixel[2];
             let a = pixel[3] as u16;
-            // premultiplied alpha: 各チャネルにalpha/255を乗算
-            pixel[0] = ((b as u16 * a) / 255) as u8; // B
-            pixel[1] = ((g as u16 * a) / 255) as u8; // G
-            pixel[2] = ((r as u16 * a) / 255) as u8; // R
-            // pixel[3] = a (そのまま)
+            pixel[0] = ((b as u16 * a) / 255) as u8;
+            pixel[1] = ((g as u16 * a) / 255) as u8;
+            pixel[2] = ((r as u16 * a) / 255) as u8;
         }
     });
     bgra
 }
 
-/// fast_image_resizeによるリサイズ (SIMD加速)
 fn fir_resize(
     src: &[u8],
     src_w: u32,
@@ -809,11 +726,6 @@ fn fir_resize(
     Ok(dst_image.into_vec())
 }
 
-/// 大幅縮小（50%未満）時の多段階ダウンスケーリング
-///
-/// 半分ずつConvolution(Mitchell)で繰り返し縮小し、最終段でConvolution(Lanczos3)を適用する。
-/// 各段で十分なサンプリングが行われるため、単一パスでは避けられないエイリアシングを防止する。
-/// スクリーントーン等の規則的パターンで特に効果的。
 fn fir_resize_multistage(
     src: &[u8],
     src_w: u32,
@@ -827,7 +739,6 @@ fn fir_resize_multistage(
     let mut cur_w = src_w;
     let mut cur_h = src_h;
 
-    // 半分ずつMitchellで縮小（目標サイズの2倍より大きい間）
     while cur_w > dst_w * 2 && cur_h > dst_h * 2 {
         let next_w = (cur_w / 2).max(dst_w);
         let next_h = (cur_h / 2).max(dst_h);
@@ -836,7 +747,6 @@ fn fir_resize_multistage(
         cur_h = next_h;
     }
 
-    // 最終段: Lanczos3でシャープに仕上げ
     fir_resize(
         &current_data,
         cur_w,
@@ -854,7 +764,6 @@ mod tests {
     use crate::test_helpers::rect_tuple;
     use crate::test_helpers::translucent_image;
 
-    /// 失効後の最初の描画は再描画要求を返し、次の描画で同じ表示状態のまま資源を再作成する
     #[test]
     fn recovers_after_target_loss_with_same_layout() {
         let window = HiddenWindow::new();
@@ -880,7 +789,6 @@ mod tests {
             renderer.draw(Some(&image), Some(&selection)).unwrap(),
             DrawOutcome::TargetLost
         );
-        // 旧ターゲットの資源を残さない
         assert!(renderer.target_snapshot().is_none());
 
         assert_eq!(
@@ -892,7 +800,6 @@ mod tests {
         assert_eq!(rect_tuple(renderer.last_draw_rect().unwrap()), rect_before);
     }
 
-    /// 失効中のリサイズは失敗にせず、次の描画でターゲットを再作成する
     #[test]
     fn resize_without_target_is_deferred_to_next_draw() {
         let window = HiddenWindow::new();
@@ -913,7 +820,6 @@ mod tests {
 
     #[test]
     fn fir_resize_shrink_output_size() {
-        // 4x4 → 2x2: 出力バッファサイズの検証
         let src: Vec<u8> = [100, 150, 200, 255].repeat(16);
         let result = fir_resize(
             &src,
@@ -929,7 +835,6 @@ mod tests {
 
     #[test]
     fn fir_resize_enlarge_output_size() {
-        // 2x2 → 4x4: 出力バッファサイズの検証
         let src: Vec<u8> = [100, 150, 200, 255].repeat(4);
         let result = fir_resize(
             &src,
@@ -945,7 +850,6 @@ mod tests {
 
     #[test]
     fn fir_resize_uniform_shrink() {
-        // 均一色画像の縮小 → 結果も同じ色 (alpha=255なので誤差なし)
         let src: Vec<u8> = [100, 150, 200, 255].repeat(16);
         let result = fir_resize(
             &src,
@@ -963,15 +867,13 @@ mod tests {
 
     #[test]
     fn fir_resize_alpha_no_halo() {
-        // 半透明境界のリサイズでハロー (白フリンジ) が出ないことを検証
-        // 上半分: 赤 (alpha=255)、下半分: 赤 (alpha=0)
         let mut src = Vec::with_capacity(4 * 4 * 4);
         for y in 0..4u32 {
             for _ in 0..4u32 {
                 if y < 2 {
-                    src.extend_from_slice(&[255, 0, 0, 255]); // 不透明な赤
+                    src.extend_from_slice(&[255, 0, 0, 255]);
                 } else {
-                    src.extend_from_slice(&[0, 0, 0, 0]); // 完全透明
+                    src.extend_from_slice(&[0, 0, 0, 0]);
                 }
             }
         }
@@ -984,11 +886,9 @@ mod tests {
             fr::ResizeAlg::Convolution(fr::FilterType::Mitchell),
         )
         .unwrap();
-        // alpha境界付近のピクセルで、RGB値が不自然に白くならないことを確認
         for pixel in result.chunks_exact(4) {
             let a = pixel[3] as u16;
             if a > 0 {
-                // alpha > 0 のピクセルは、G/Bチャネルが不自然に高くならない
                 assert!(
                     pixel[1] < 30 && pixel[2] < 30,
                     "ハロー検出: pixel={pixel:?}"
@@ -999,7 +899,6 @@ mod tests {
 
     #[test]
     fn fir_resize_multistage_output_size() {
-        // 16x16 → 2x2: 多段階ダウンスケーリングの出力サイズ検証
         let src: Vec<u8> = [100, 150, 200, 255].repeat(16 * 16);
         let result = fir_resize_multistage(&src, 16, 16, 2, 2).unwrap();
         assert_eq!(result.len(), 2 * 2 * 4);
@@ -1007,11 +906,9 @@ mod tests {
 
     #[test]
     fn fir_resize_multistage_uniform_color() {
-        // 均一色画像の多段階縮小 → 結果も同じ色
         let src: Vec<u8> = [80, 120, 200, 255].repeat(32 * 32);
         let result = fir_resize_multistage(&src, 32, 32, 4, 4).unwrap();
         for pixel in result.chunks_exact(4) {
-            // Mitchellの丸め誤差を許容（±1）
             assert!(
                 (pixel[0] as i16 - 80).unsigned_abs() <= 1,
                 "R: {}",

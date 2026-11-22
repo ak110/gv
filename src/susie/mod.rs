@@ -1,5 +1,3 @@
-/// Susieプラグインシステム
-/// 64bit Susieプラグイン (.sph / .spi) の検出・ロード・管理
 mod ffi;
 pub mod plugin;
 pub mod util;
@@ -13,16 +11,12 @@ use crate::image::ImageDecoder;
 
 use plugin::{SharedPlugin, SusiePlugin, SusiePluginType};
 
-/// Susieプラグインマネージャ
-/// spiディレクトリからプラグインを検出・ロードする
 #[derive(Default)]
 pub struct SusieManager {
     plugins: Vec<SharedPlugin>,
 }
 
 impl SusieManager {
-    /// spiディレクトリからプラグインを自動検出・ロードする
-    /// ロード失敗は警告表示してスキップ (アプリ起動は止めない)
     pub fn discover(spi_dir: &Path) -> Self {
         let mut plugins = Vec::new();
 
@@ -44,7 +38,6 @@ impl SusieManager {
                 continue;
             }
 
-            // .sph / .spi 拡張子のみ対象
             let ext = path
                 .extension()
                 .and_then(|e| e.to_str())
@@ -73,7 +66,6 @@ impl SusieManager {
         Self { plugins }
     }
 
-    /// プラグインが報告する拡張子をExtensionRegistryに登録する
     pub fn register_extensions(&self, registry: &mut ExtensionRegistry) {
         for plugin in &self.plugins {
             let locked = plugin.lock().expect("Susie plugin lock poisoned");
@@ -89,7 +81,6 @@ impl SusieManager {
         }
     }
 
-    /// 画像プラグインからImageDecoderアダプタを生成する
     pub fn create_image_decoders(&self) -> Vec<Box<dyn ImageDecoder>> {
         self.plugins
             .iter()
@@ -103,7 +94,6 @@ impl SusieManager {
             .collect()
     }
 
-    /// アーカイブプラグインからArchiveHandlerアダプタを生成する
     pub fn create_archive_handlers(
         &self,
         registry: Arc<ExtensionRegistry>,

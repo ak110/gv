@@ -1,5 +1,3 @@
-//! GUIとCLIが共有する、読み込み済みキー設定からのヘルプ生成。
-
 use std::fmt::Write as _;
 
 use crate::action::Action;

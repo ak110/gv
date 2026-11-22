@@ -5,7 +5,6 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::PCWSTR;
 
-/// ウィンドウクラス登録 (アイコン指定可能)
 pub fn register_window_class_with_icon(
     class_name: PCWSTR,
     wnd_proc: WNDPROC,
@@ -16,7 +15,7 @@ pub fn register_window_class_with_icon(
 
         let wc = WNDCLASSEXW {
             cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
-            style: CS_DBLCLKS, // D2Dが再描画を管理するためCS_HREDRAW|CS_VREDRAWは不要
+            style: CS_DBLCLKS,
             lpfnWndProc: wnd_proc,
             hInstance: instance.into(),
             hCursor: LoadCursorW(None, IDC_ARROW)?,
@@ -27,7 +26,6 @@ pub fn register_window_class_with_icon(
         };
 
         let atom = RegisterClassExW(std::ptr::from_ref(&wc));
-        // 同じプロセスで2つ目以降のウィンドウを作成する場合 (テストなど) は登録済みのクラスを使う
         if atom == 0
             && windows::Win32::Foundation::GetLastError()
                 != windows::Win32::Foundation::ERROR_CLASS_ALREADY_EXISTS
@@ -38,7 +36,6 @@ pub fn register_window_class_with_icon(
     Ok(())
 }
 
-/// ウィンドウ作成
 pub fn create_window(class_name: PCWSTR, title: PCWSTR, width: i32, height: i32) -> Result<HWND> {
     unsafe {
         let instance = GetModuleHandleW(None).context("GetModuleHandleW失敗")?;
@@ -62,14 +59,12 @@ pub fn create_window(class_name: PCWSTR, title: PCWSTR, width: i32, height: i32)
     }
 }
 
-/// GWLP_USERDATAにポインタを格納
 pub fn set_window_data<T>(hwnd: HWND, data: *mut T) {
     unsafe {
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, data as isize);
     }
 }
 
-/// クライアント領域のサイズを取得
 pub fn get_client_size(hwnd: HWND) -> (u32, u32) {
     unsafe {
         let mut rc = std::mem::zeroed();
@@ -78,7 +73,6 @@ pub fn get_client_size(hwnd: HWND) -> (u32, u32) {
     }
 }
 
-/// メッセージループ実行
 pub fn run_message_loop() -> i32 {
     unsafe {
         let mut msg = std::mem::zeroed();

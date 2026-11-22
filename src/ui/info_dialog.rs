@@ -1,4 +1,3 @@
-//! 選択・コピーできる情報表示
 use anyhow::Result;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Gdi::HFONT;

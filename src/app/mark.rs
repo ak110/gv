@@ -1,5 +1,3 @@
-//! マークと一覧からの除外操作
-
 use super::AppWindow;
 
 impl AppWindow {

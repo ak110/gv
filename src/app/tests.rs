@@ -1,5 +1,3 @@
-//! ウィンドウ操作と描画の結合テスト
-
 use super::export::{ExportFormat, write_image_to_path};
 use super::test_support::TestApp;
 use super::*;
@@ -7,7 +5,6 @@ use crate::render::layout::DisplayMode;
 use crate::test_helpers::{TempDir, solid_image, write_png};
 use std::fs;
 
-/// 借用中の同期描画・サイズ通知は、その場で状態を変更せず、借用終了後に再描画できる。
 #[test]
 fn synchronous_paint_and_size_are_deferred_until_borrow_ends() {
     use windows::Win32::Foundation::RECT;
@@ -62,7 +59,6 @@ fn synchronous_paint_and_size_are_deferred_until_borrow_ends() {
     app.destroy();
 }
 
-/// モーダル実行中もアプリを借用して親を描画・配置でき、親破棄後は結果を適用しない。
 #[test]
 fn modal_reentry_paints_resizes_and_skips_result_after_parent_destroy() {
     use std::cell::Cell;
@@ -138,7 +134,6 @@ fn modal_reentry_paints_resizes_and_skips_result_after_parent_destroy() {
     assert!(!pasted.exists());
 }
 
-/// ListViewへの同期通知はモーダル実行中に応答し、指定容量の終端NULとバッファ外を守る。
 #[test]
 fn modal_listview_text_notification_returns_label_within_buffer_limit() {
     use windows::Win32::UI::Controls::{
@@ -202,11 +197,9 @@ fn modal_listview_text_notification_returns_label_within_buffer_limit() {
     app.destroy();
 }
 
-/// 全画面ではパネル幅を画像領域から除き、復帰時はF4の表示希望を反映する。
 #[test]
 fn fullscreen_hides_panel_and_restores_image_origin() {
     let app = TestApp::new();
-    // 横長画像をAutoFitで描画し、画像矩形の左端を描画領域の左端にそろえる。
     app.with_app(|state| {
         state
             .document
@@ -253,7 +246,6 @@ fn fullscreen_hides_panel_and_restores_image_origin() {
     app.destroy();
 }
 
-/// 失効前後で比べる閲覧状態
 #[derive(Debug, PartialEq)]
 struct ViewState {
     image: Vec<u8>,
@@ -284,7 +276,6 @@ fn view_state(state: &AppWindow) -> ViewState {
     }
 }
 
-/// 拡大・パネル表示・編集・選択のある状態で失効しても、開き直さずに同じ状態で描画を再開する
 #[test]
 fn paint_recovers_after_target_loss_keeping_state() {
     let dir = TempDir::new("paint_recover");
@@ -313,8 +304,6 @@ fn paint_recovers_after_target_loss_keeping_state() {
     app.destroy();
 }
 
-/// ターゲットの再作成失敗と連続した失効は通知して自動の再描画要求を止め、
-/// 次のリサイズで再試行して成功したら描画エラーの表示を解除する
 #[test]
 fn paint_reports_recreate_failure_without_endless_redraw() {
     let dir = TempDir::new("paint_fail");
@@ -324,7 +313,6 @@ fn paint_reports_recreate_failure_without_endless_redraw() {
     app.open_image_file(&path);
     app.with_app(super::AppWindow::on_paint);
 
-    // 再作成の失敗: 通知し、再描画を要求しない
     app.with_app(|state| state.renderer.simulate_target_loss_on_next_draw());
     assert!(app.paint_and_check_redraw());
     app.with_app(|state| state.renderer.fail_next_target_creation());
@@ -335,7 +323,6 @@ fn paint_reports_recreate_failure_without_endless_redraw() {
         app.title()
     );
 
-    // 次のリサイズで再試行して成功し、描画エラーの表示を解除する
     let (w, h) = window::get_client_size(app.hwnd());
     let before = app.borrow().redraw_request_count.get();
     app.with_app(|state| state.on_size(w, h));
@@ -344,7 +331,6 @@ fn paint_reports_recreate_failure_without_endless_redraw() {
     assert!(app.borrow().renderer.target_snapshot().is_some());
     assert!(!app.title().contains("エラー"), "{}", app.title());
 
-    // 連続した失効: 上限回数までは再描画を要求し、超えたら通知して止める
     for _ in 0..MAX_RENDER_RECOVERY_ATTEMPTS {
         app.with_app(|state| state.renderer.simulate_target_loss_on_next_draw());
         assert!(app.paint_and_check_redraw());
@@ -360,8 +346,6 @@ fn paint_reports_recreate_failure_without_endless_redraw() {
     app.destroy();
 }
 
-/// 失敗は操作名と原因をタイトルバーへ表示し、同じ処理のリスト・選択更新で消えない。
-/// 利用者の次の操作の開始で解除する
 #[test]
 fn operation_failure_is_shown_and_survives_title_update() {
     let dir = TempDir::new("op_fail");
@@ -376,7 +360,6 @@ fn operation_failure_is_shown_and_survives_title_update() {
         None
     );
     let title = app.title();
-    // 要約、次の操作、詳細の順に表示する
     assert!(
         title.contains(
             "ファイルの移動に失敗しました。移動先を確認する。詳細: アクセスが拒否されました"
@@ -384,7 +367,6 @@ fn operation_failure_is_shown_and_survives_title_update() {
         "{title}"
     );
 
-    // 同じ処理内のリスト更新・選択更新
     app.with_app(|state| state.document.reload());
     app.with_app(super::AppWindow::process_document_events);
     assert_eq!(app.title(), title);
@@ -401,7 +383,6 @@ fn operation_failure_is_shown_and_survives_title_update() {
     app.destroy();
 }
 
-/// 開いた後に読めなくなったファイルへの移動は、原因とパスを表示する
 #[test]
 fn document_read_failure_is_shown() {
     let dir = TempDir::new("read_fail");
@@ -422,7 +403,6 @@ fn document_read_failure_is_shown() {
     app.destroy();
 }
 
-/// キャンセル・中止・成功は失敗として通知せず、成功時だけ値を返す
 #[test]
 fn cancel_and_success_are_not_reported_as_failure() {
     let app = TestApp::new();
@@ -470,7 +450,6 @@ fn cancel_and_success_are_not_reported_as_failure() {
     app.destroy();
 }
 
-/// 向きを補正した画像は、画面の向きと座標でトリミング・出力され、元ファイルは変わらない
 #[test]
 fn oriented_image_is_exported_as_displayed() {
     use crate::test_helpers::{
@@ -485,13 +464,12 @@ fn oriented_image_is_exported_as_displayed() {
     );
     let path = dir.join("photo.png");
     fs::write(&path, &original).unwrap();
-    let displayed = expected_oriented(&src, 6); // 3x4
+    let displayed = expected_oriented(&src, 6);
 
     let app = TestApp::new();
     app.open_image_file(&path);
     app.with_app(super::AppWindow::on_paint);
 
-    // 全体の出力 (PNG・BMPは可逆のため画素を、JPEGは寸法を比べる)
     for (format, name, lossless) in [
         (ExportFormat::Png, "out.png", true),
         (ExportFormat::Bmp, "out.bmp", true),
@@ -506,7 +484,6 @@ fn oriented_image_is_exported_as_displayed() {
         }
     }
 
-    // 画面座標での選択範囲の出力とトリミング
     app.drag_select((0, 1), (2, 3));
     let sel = app.borrow().selection.current_rect().expect("selected");
     let expected_crop = image::imageops::crop_imm(
@@ -531,9 +508,6 @@ fn oriented_image_is_exported_as_displayed() {
     app.destroy();
 }
 
-/// 拡張子なしパスでも PNG として保存できる (本バグ修正の回帰テスト)。
-/// 修正前は `image::RgbaImage::save()` がパスから形式を推定できず
-/// "The image format could not be determined" で失敗していた。
 #[test]
 fn write_png_with_extensionless_path_succeeds() {
     let image = solid_image(1, 1, [255, 255, 255, 255]);
@@ -552,9 +526,6 @@ fn write_png_with_extensionless_path_succeeds() {
     );
 }
 
-/// `.txt` のような不一致拡張子でも、指定したフォーマットでバイト列が書かれる
-/// (形式指定による挙動保証)。同時に `DynamicImage` 経由
-/// による RGBA→RGB 自動変換が JPEG エンコーダで動くことを検証する。
 #[test]
 fn write_jpg_with_txt_extension_writes_jpeg_bytes() {
     let image = solid_image(1, 1, [255, 255, 255, 255]);
@@ -567,10 +538,9 @@ fn write_jpg_with_txt_extension_writes_jpeg_bytes() {
         "txt extension with Jpg format should succeed: {result:?}"
     );
     let bytes = fs::read(&path).unwrap();
-    assert_eq!(&bytes[..2], &[0xFF, 0xD8]); // JPEG SOI マーカー
+    assert_eq!(&bytes[..2], &[0xFF, 0xD8]);
 }
 
-/// BMP も拡張子なしパスで成功すること。
 #[test]
 fn write_bmp_with_extensionless_path_succeeds() {
     let image = solid_image(1, 1, [255, 255, 255, 255]);
@@ -586,7 +556,6 @@ fn write_bmp_with_extensionless_path_succeeds() {
     assert_eq!(&bytes[..2], b"BM");
 }
 
-/// `ExportFormat` の各バリアントが期待どおりの拡張子を返すこと。
 #[test]
 fn export_format_returns_expected_extensions() {
     assert_eq!(ExportFormat::Png.extension(), "png");
@@ -594,7 +563,6 @@ fn export_format_returns_expected_extensions() {
     assert_eq!(ExportFormat::Bmp.extension(), "bmp");
 }
 
-/// 出力先がロックされていても元の画像ファイルと編集状態を保ち、解除後は保存できる。
 #[test]
 fn image_export_failure_keeps_existing_file_and_can_retry() {
     use std::os::windows::fs::OpenOptionsExt as _;
@@ -631,7 +599,6 @@ fn image_export_failure_keeps_existing_file_and_can_retry() {
     assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
 }
 
-/// 一部のコンテナを開けなかった通知は、続行できることと確認対象を示す
 #[test]
 fn partial_container_failure_shows_next_action() {
     let dir = TempDir::new("partial_container");

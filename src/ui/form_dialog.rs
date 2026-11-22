@@ -1,5 +1,3 @@
-//! 数値フォームの項目定義と入力検証
-
 use anyhow::Result;
 use windows::Win32::Foundation::HWND;
 

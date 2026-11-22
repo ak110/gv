@@ -1,6 +1,3 @@
-//! Document モジュールのコンテナ展開機能
-//! ZIP/PDF/RAR/7z などのアーカイブ形式の読み込みと展開を担当する。
-
 use std::fs::File;
 use std::path::Path;
 
@@ -8,7 +5,6 @@ use crate::archive::ArchiveManager;
 
 use super::types::{ContainerResult, ZipBuffer};
 
-/// 単一コンテナを処理し、ファイルリストへ統合する前の結果を返す
 pub(super) fn process_single_container(
     path: &Path,
     archive_manager: &ArchiveManager,
@@ -26,7 +22,6 @@ pub(super) fn process_single_container(
             },
         }
     } else if archive_manager.supports_on_demand(path) {
-        // ZIP: mmapで読み込み
         // SAFETY:
         // - memmap2::Mmap::map は対象ファイルが mmap 中に外部から書き換えられないことを
         //   呼び出し側が保証する必要がある (Rust 的には UB の可能性)。本アプリでは
@@ -58,7 +53,6 @@ pub(super) fn process_single_container(
             },
         }
     } else {
-        // RAR/7z/Susie: temp展開
         let temp_dir =
             match crate::temp_cleanup::create_temp_dir(crate::temp_cleanup::TempPurpose::Archive) {
                 Ok(dir) => dir,

@@ -1,5 +1,3 @@
-//! 画像の幾何変換 (トリミング等)
-
 use std::borrow::Cow;
 
 use anyhow::{Context as _, Result};
@@ -7,11 +5,9 @@ use anyhow::{Context as _, Result};
 use crate::image::DecodedImage;
 use crate::selection::PixelRect;
 
-/// 画像をトリミングする
 pub fn crop(image: &DecodedImage, rect: &PixelRect) -> DecodedImage {
     let rect = rect.clamped(image.width, image.height);
     if !rect.is_valid() {
-        // 空の矩形の場合は元画像をそのまま返す
         return DecodedImage {
             data: image.data.clone(),
             width: image.width,
@@ -38,14 +34,6 @@ pub fn crop(image: &DecodedImage, rect: &PixelRect) -> DecodedImage {
     }
 }
 
-/// 選択範囲を反映した出力対象の画像を返す
-///
-/// 選択範囲がある場合は、その範囲を切り出した画像を返す。無い場合は元画像をそのまま返す。
-/// 選択範囲が画像の範囲を超える場合は`crop`が画像境界へクランプし、
-/// 画像と交差しない場合は元画像と同じ内容を返す。
-///
-/// 「選択範囲があればその領域、なければ画像全体」の判定はこの関数だけが持ち、
-/// 呼び出し元は戻り値をそのまま出力対象として扱う。
 pub fn output_image(image: &DecodedImage, selection: Option<PixelRect>) -> Cow<'_, DecodedImage> {
     match selection {
         Some(rect) => Cow::Owned(crop(image, &rect)),
@@ -53,7 +41,6 @@ pub fn output_image(image: &DecodedImage, selection: Option<PixelRect>) -> Cow<'
     }
 }
 
-/// 左右反転
 pub fn flip_horizontal(image: &DecodedImage) -> DecodedImage {
     let w = image.width as usize;
     let h = image.height as usize;
@@ -72,7 +59,6 @@ pub fn flip_horizontal(image: &DecodedImage) -> DecodedImage {
     }
 }
 
-/// 上下反転
 pub fn flip_vertical(image: &DecodedImage) -> DecodedImage {
     let w = image.width as usize;
     let h = image.height as usize;
@@ -91,12 +77,10 @@ pub fn flip_vertical(image: &DecodedImage) -> DecodedImage {
     }
 }
 
-/// 時計回りに90度回転
 pub fn rotate_90(image: &DecodedImage) -> DecodedImage {
     let w = image.width as usize;
     let h = image.height as usize;
     let mut data = vec![0u8; w * h * 4];
-    // 新サイズ: (h, w) → width=h, height=w
     for y in 0..h {
         for x in 0..w {
             let src = (y * w + x) * 4;
@@ -111,7 +95,6 @@ pub fn rotate_90(image: &DecodedImage) -> DecodedImage {
     }
 }
 
-/// 180度回転
 pub fn rotate_180(image: &DecodedImage) -> DecodedImage {
     let total = image.data.len();
     let mut data = vec![0u8; total];
@@ -128,7 +111,6 @@ pub fn rotate_180(image: &DecodedImage) -> DecodedImage {
     }
 }
 
-/// 反時計回りに90度回転
 pub fn rotate_270(image: &DecodedImage) -> DecodedImage {
     let w = image.width as usize;
     let h = image.height as usize;
@@ -147,8 +129,6 @@ pub fn rotate_270(image: &DecodedImage) -> DecodedImage {
     }
 }
 
-/// 任意角度回転 (度数法、時計回り)
-/// 回転後の画像は元画像を包む最小矩形サイズになる
 pub fn rotate_arbitrary(image: &DecodedImage, degrees: f64) -> DecodedImage {
     let rad = degrees.to_radians();
     let cos = rad.cos();
@@ -156,7 +136,6 @@ pub fn rotate_arbitrary(image: &DecodedImage, degrees: f64) -> DecodedImage {
     let w = image.width as f64;
     let h = image.height as f64;
 
-    // 回転後のバウンディングボックス
     let corners = [(0.0, 0.0), (w, 0.0), (0.0, h), (w, h)];
     let (mut min_x, mut min_y) = (f64::MAX, f64::MAX);
     let (mut max_x, mut max_y) = (f64::MIN, f64::MIN);
@@ -182,9 +161,8 @@ pub fn rotate_arbitrary(image: &DecodedImage, degrees: f64) -> DecodedImage {
     let src_w = image.width as usize;
     let mut data = vec![0u8; (new_w * new_h * 4) as usize];
 
-    // 逆変換: 出力ピクセル→元画像座標
-    let cos_inv = cos; // cos(-θ) = cos(θ)
-    let sin_inv = -sin; // sin(-θ) = -sin(θ)
+    let cos_inv = cos;
+    let sin_inv = -sin;
     for dy in 0..new_h {
         for dx in 0..new_w {
             let rx = dx as f64 + min_x;
@@ -192,7 +170,6 @@ pub fn rotate_arbitrary(image: &DecodedImage, degrees: f64) -> DecodedImage {
             let sx = rx * cos_inv - ry * sin_inv;
             let sy = rx * sin_inv + ry * cos_inv;
 
-            // バイリニア補間
             let sx_floor = sx.floor();
             let sy_floor = sy.floor();
             let fx = sx - sx_floor;
@@ -201,7 +178,7 @@ pub fn rotate_arbitrary(image: &DecodedImage, degrees: f64) -> DecodedImage {
             let iy = sy_floor as i32;
 
             if ix < 0 || iy < 0 || ix + 1 >= image.width as i32 || iy + 1 >= image.height as i32 {
-                continue; // 範囲外は透明
+                continue;
             }
 
             let dst = ((dy * new_w + dx) * 4) as usize;
@@ -229,10 +206,6 @@ pub fn rotate_arbitrary(image: &DecodedImage, degrees: f64) -> DecodedImage {
     }
 }
 
-/// 解像度変更 (Lanczos3リサイズ、SIMD加速)
-///
-/// 入力サイズが極端な場合 (ゼロや fast_image_resize が受け付けないサイズ) は
-/// `Err` を返す。呼び出し側で `show_error_title` 等へ渡すこと。
 pub fn resize(image: &DecodedImage, new_width: u32, new_height: u32) -> Result<DecodedImage> {
     if new_width == 0 || new_height == 0 {
         return Ok(DecodedImage {
@@ -286,7 +259,6 @@ mod tests {
         assert_eq!(cropped.width, 2);
         assert_eq!(cropped.height, 2);
         assert_eq!(cropped.data, crop(&img, &rect).data);
-        // 切り出しの起点が選択矩形であることを、左上ピクセルの色で確認する
         assert_eq!(cropped.data[0], 60);
         assert_eq!(cropped.data[1], 60);
     }
@@ -334,7 +306,6 @@ mod tests {
         assert_eq!(cropped.width, 2);
         assert_eq!(cropped.height, 2);
         assert_eq!(cropped.data.len(), 2 * 2 * 4);
-        // (1,1) のピクセル: R=60, G=60
         assert_eq!(cropped.data[0], 60);
         assert_eq!(cropped.data[1], 60);
     }
@@ -408,7 +379,6 @@ mod tests {
 
     #[test]
     fn rotate_90_2x1() {
-        // 2x1 → 1x2 (rotated CW)
         let img = DecodedImage {
             data: vec![255, 0, 0, 255, 0, 255, 0, 255],
             width: 2,
@@ -448,8 +418,6 @@ mod tests {
 
     #[test]
     fn resize_zero_returns_original_clone() {
-        // 縦横ゼロは「元画像のクローンを返す」フォールバック動作。
-        // パニックせず Ok を返すことを保証する (リサイズダイアログでの保険)。
         let img = test_image_4x4();
         let r = resize(&img, 0, 0).expect("resize zero");
         assert_eq!(r.width, img.width);
@@ -458,13 +426,10 @@ mod tests {
 
     #[test]
     fn rotate_arbitrary_0_identity() {
-        // 0度回転は元画像と同じサイズになる
         let img = test_image_4x4();
         let rotated = rotate_arbitrary(&img, 0.0);
         assert_eq!(rotated.width, img.width);
         assert_eq!(rotated.height, img.height);
-        // 内部ピクセルも概ね一致 (バイリニア補間で端は除外)
-        // ピクセル (row=1, col=1) のバイトオフセット
         let center_src = (4 + 1) * 4;
         let center_dst = (rotated.width as usize + 1) * 4;
         for ch in 0..4 {
@@ -488,7 +453,6 @@ mod tests {
         assert_eq!(cropped.width, 1);
         assert_eq!(cropped.height, 1);
         assert_eq!(cropped.data.len(), 4);
-        // (3,3) のピクセル: R=3*60=180, G=3*60=180
         assert_eq!(cropped.data[0], 180);
         assert_eq!(cropped.data[1], 180);
     }

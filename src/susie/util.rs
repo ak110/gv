@@ -1,12 +1,9 @@
-/// Susieプラグイン用ユーティリティ
 use anyhow::{Result, bail};
 use windows::Win32::Foundation::HLOCAL;
 use windows::Win32::System::Memory::{LocalLock, LocalSize, LocalUnlock};
 
 use crate::image::DecodedImage;
 
-/// Rust文字列をANSI (CP_ACP) バイト列に変換する
-/// Susieプラグインは ANSI 文字列を要求する
 pub fn to_ansi(s: &str) -> Vec<u8> {
     use windows::Win32::Globalization::{CP_ACP, WC_NO_BEST_FIT_CHARS, WideCharToMultiByte};
 
@@ -18,13 +15,12 @@ pub fn to_ansi(s: &str) -> Vec<u8> {
     // SAFETY: Win32 WideCharToMultiByte の規定通り、まず len 取得呼び出しで必要バイト数を確認し、
     // その +1 サイズの buf を渡してエンコードする。出力先バッファは buf スライスで境界が保証される。
     unsafe {
-        // 必要バッファサイズを取得
         let len = WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, &wide, None, None, None);
         if len == 0 {
             return vec![0];
         }
 
-        let mut buf = vec![0u8; len as usize + 1]; // +1 for null terminator
+        let mut buf = vec![0u8; len as usize + 1];
         WideCharToMultiByte(
             CP_ACP,
             WC_NO_BEST_FIT_CHARS,
@@ -33,7 +29,6 @@ pub fn to_ansi(s: &str) -> Vec<u8> {
             None,
             None,
         );
-        // null terminatorを確保
         if !buf.is_empty() && *buf.last().unwrap() != 0 {
             buf.push(0);
         }
@@ -41,11 +36,9 @@ pub fn to_ansi(s: &str) -> Vec<u8> {
     }
 }
 
-/// ANSIバイト列をRust文字列に変換する
 pub fn from_ansi(bytes: &[u8]) -> String {
     use windows::Win32::Globalization::{CP_ACP, MB_PRECOMPOSED, MultiByteToWideChar};
 
-    // null終端を探す
     let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
     let ansi = &bytes[..end];
     if ansi.is_empty() {
@@ -55,7 +48,6 @@ pub fn from_ansi(bytes: &[u8]) -> String {
     // SAFETY: Win32 MultiByteToWideChar の規定通り、まず wlen 取得呼び出しで必要ワイド文字数を
     // 確認し、その分の Vec<u16> を渡してデコードする。
     unsafe {
-        // 必要なワイド文字数を取得
         let wlen = MultiByteToWideChar(CP_ACP, MB_PRECOMPOSED, ansi, None);
         if wlen == 0 {
             return String::new();
@@ -68,22 +60,18 @@ pub fn from_ansi(bytes: &[u8]) -> String {
     }
 }
 
-/// LocalAlloc で確保されたメモリのRAIIガード
-/// Drop時に LocalFree を呼ぶ
 pub struct HLocalGuard(pub HLOCAL);
 
 impl Drop for HLocalGuard {
     fn drop(&mut self) {
         if !self.0.is_invalid() {
             unsafe {
-                // LocalFreeは windows 0.61 では Foundation::HLOCAL を直接受け取る
                 windows::Win32::Foundation::LocalFree(Some(self.0));
             }
         }
     }
 }
 
-/// isize値からHLOCALを作成するヘルパー
 pub fn hlocal_from_isize(val: isize) -> HLOCAL {
     HLOCAL(val as *mut _)
 }
@@ -107,12 +95,10 @@ pub fn dib_to_rgba(bmi_ptr: *const u8, bits_ptr: *const u8) -> Result<DecodedIma
         bail!("DIBポインタがnull");
     }
 
-    // BITMAPINFOHEADERを読み取り
-    // BITMAPINFOHEADERは先頭に配置されるため、アライメントは保証されている
     #[allow(clippy::cast_ptr_alignment)]
     let bih = unsafe { &*bmi_ptr.cast::<BitmapInfoHeader>() };
     let width = bih.bi_width;
-    let height = bih.bi_height; // 正: bottom-up, 負: top-down
+    let height = bih.bi_height;
     let bit_count = bih.bi_bit_count;
 
     if width <= 0 {
@@ -124,7 +110,6 @@ pub fn dib_to_rgba(bmi_ptr: *const u8, bits_ptr: *const u8) -> Result<DecodedIma
     let w = width as u32;
     let h = abs_height;
 
-    // パレット取得 (1/4/8bit時)
     let palette = if bit_count <= 8 {
         let colors_used = if bih.bi_clr_used > 0 {
             bih.bi_clr_used as usize
@@ -135,7 +120,6 @@ pub fn dib_to_rgba(bmi_ptr: *const u8, bits_ptr: *const u8) -> Result<DecodedIma
         let mut pal = Vec::with_capacity(colors_used);
         for i in 0..colors_used {
             let entry = unsafe { palette_ptr.add(i * 4) };
-            // RGBQUAD: B, G, R, Reserved
             let b = unsafe { *entry };
             let g = unsafe { *entry.add(1) };
             let r = unsafe { *entry.add(2) };
@@ -146,13 +130,11 @@ pub fn dib_to_rgba(bmi_ptr: *const u8, bits_ptr: *const u8) -> Result<DecodedIma
         Vec::new()
     };
 
-    // ソース行ストライド (4バイトアライン)
     let stride = (width as usize * bit_count as usize).div_ceil(32) * 4;
 
     let mut rgba = vec![0u8; w as usize * h as usize * 4];
 
     for y in 0..h {
-        // bottom-upの場合、ソース行は逆順
         let src_y = if is_bottom_up { h - 1 - y } else { y };
         let src_row = unsafe { bits_ptr.add(src_y as usize * stride) };
         let dst_offset = y as usize * w as usize * 4;
@@ -238,9 +220,8 @@ pub fn dib_to_rgba(bmi_ptr: *const u8, bits_ptr: *const u8) -> Result<DecodedIma
     })
 }
 
-/// BITMAPINFOHEADER (40 bytes)
 #[repr(C)]
-#[allow(clippy::struct_field_names)] // Windows APIの構造体名に合わせている
+#[allow(clippy::struct_field_names)]
 struct BitmapInfoHeader {
     bi_size: u32,
     bi_width: i32,
@@ -255,7 +236,6 @@ struct BitmapInfoHeader {
     bi_clr_important: u32,
 }
 
-/// HLOCAL をロックし、処理を行い、アンロックするヘルパー
 pub fn with_local_lock<F, R>(handle: HLOCAL, f: F) -> R
 where
     F: FnOnce(*mut core::ffi::c_void) -> R,
@@ -268,7 +248,6 @@ where
     result
 }
 
-/// HLOCAL のメモリサイズを取得
 pub fn local_size(handle: HLOCAL) -> usize {
     unsafe { LocalSize(handle) }
 }
@@ -298,11 +277,10 @@ mod tests {
 
     #[test]
     fn dib_to_rgba_24bit_2x2() {
-        // 2x2 bottom-up 24bit BMP
         let bih = BitmapInfoHeader {
             bi_size: 40,
             bi_width: 2,
-            bi_height: 2, // bottom-up
+            bi_height: 2,
             bi_planes: 1,
             bi_bit_count: 24,
             bi_compression: 0,
@@ -319,26 +297,19 @@ mod tests {
             )
         };
 
-        // row stride: (2*24+31)/32 * 4 = 8 bytes per row
-        // bottom row (y=0 in source, displayed as y=1): red, green
-        // top row (y=1 in source, displayed as y=0): blue, white
         #[rustfmt::skip]
         let bits: Vec<u8> = vec![
-            // row 0 (bottom): pixel(0,0)=red(BGR:0,0,255), pixel(1,0)=green(BGR:0,255,0), pad
             0, 0, 255,  0, 255, 0,  0, 0,
-            // row 1 (top): pixel(0,1)=blue(BGR:255,0,0), pixel(1,1)=white(BGR:255,255,255), pad
             255, 0, 0,  255, 255, 255,  0, 0,
         ];
 
         let result = dib_to_rgba(bih_bytes.as_ptr(), bits.as_ptr()).unwrap();
         assert_eq!(result.width, 2);
         assert_eq!(result.height, 2);
-        // row 0 (displayed top = source row 1): blue, white
-        assert_eq!(&result.data[0..4], &[0, 0, 255, 255]); // blue
-        assert_eq!(&result.data[4..8], &[255, 255, 255, 255]); // white
-        // row 1 (displayed bottom = source row 0): red, green
-        assert_eq!(&result.data[8..12], &[255, 0, 0, 255]); // red
-        assert_eq!(&result.data[12..16], &[0, 255, 0, 255]); // green
+        assert_eq!(&result.data[0..4], &[0, 0, 255, 255]);
+        assert_eq!(&result.data[4..8], &[255, 255, 255, 255]);
+        assert_eq!(&result.data[8..12], &[255, 0, 0, 255]);
+        assert_eq!(&result.data[12..16], &[0, 255, 0, 255]);
     }
 
     #[test]

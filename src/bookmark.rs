@@ -1,5 +1,3 @@
-//! ブックマーク機能 (ファイルリストの保存/復元)
-
 mod legacy;
 
 use std::fmt::Write as _;
@@ -19,13 +17,11 @@ pub const BOOKMARK_EXTENSIONS: &[&str] = &[
     LEGACY_BOOKMARK_EXTENSION,
 ];
 
-/// ブックマークデータ
 pub struct BookmarkData {
     pub entries: Vec<FileSource>,
     pub index: usize,
 }
 
-/// パスがブックマーク拡張子 (.gvbm / .gv3bm / .gvb) を持つか判定する
 pub fn is_bookmark_file(path: &Path) -> bool {
     path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
         BOOKMARK_EXTENSIONS
@@ -34,25 +30,14 @@ pub fn is_bookmark_file(path: &Path) -> bool {
     })
 }
 
-/// ブックマークフォルダのパスを返す (exeと同じディレクトリの"bookmarks")
 pub fn bookmark_dir() -> PathBuf {
     crate::paths::bookmark_dir()
 }
 
-/// ブックマーク保存ダイアログの初期名 (`.gvbm` 拡張子付き) を組み立てる
-///
-/// 呼び出し元はセッション内の前回名キャッシュを持ち、コンテナ識別キーが一致したときのみ
-/// `previous_name` を渡す前提とする。
-///
-/// 優先順:
-/// 1. `previous_name` が指定されていればそのまま返す
-/// 2. `first_source` から代表ステムを取得できればステムに拡張子を付与して返す
-/// 3. どちらも得られなければ UNIX 秒ベースのタイムスタンプ名 (`bookmark_<秒>.gvbm`) を返す
 pub fn build_initial_save_name(
     previous_name: Option<&str>,
     first_source: Option<&FileSource>,
 ) -> String {
-    // システムクロックがUNIX epochより前にずれている場合は 0 秒として扱う
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or(std::time::Duration::ZERO)
@@ -77,10 +62,6 @@ fn build_initial_save_name_at(
         )
 }
 
-/// ブックマークを保存する
-///
-/// `initial_name` はダイアログに渡す拡張子付き初期ファイル名 (例: `photos.gvbm`)。
-/// ユーザーが保存を完了したパスを `Ok(Some(path))`、キャンセル時は `Ok(None)` で返す。
 pub fn save_bookmark(
     hwnd: HWND,
     entries: &[FileSource],
@@ -108,7 +89,7 @@ pub fn save_bookmark(
     )?;
 
     let Some(save_path) = save_path else {
-        return Ok(None); // キャンセル
+        return Ok(None);
     };
 
     let content = format_bookmark(entries, current_index);
@@ -129,7 +110,6 @@ fn format_bookmark(entries: &[FileSource], current_index: Option<usize>) -> Stri
                 let _ = writeln!(content, "file\t{}", path.display());
             }
             FileSource::ArchiveEntry { archive, entry, .. } => {
-                // on_demandフラグは保存しない (復元時にopen_containersで再判定)
                 let _ = writeln!(content, "archive\t{}\t{}", archive.display(), entry);
             }
             FileSource::PdfPage {
@@ -138,15 +118,12 @@ fn format_bookmark(entries: &[FileSource], current_index: Option<usize>) -> Stri
             } => {
                 let _ = writeln!(content, "pdf\t{}\t{}", pdf_path.display(), page_index);
             }
-            FileSource::PendingContainer { .. } => {
-                // 未展開コンテナはスキップ (保存前にexpand_all_pending_syncで展開済みのはず)
-            }
+            FileSource::PendingContainer { .. } => {}
         }
     }
     content
 }
 
-/// 指定パスからブックマークを読み込む (CLI 引数・シェル関連付け経由用)
 pub fn load_bookmark_from_path(
     path: &Path,
     is_archive: &impl Fn(&Path) -> bool,
@@ -154,18 +131,15 @@ pub fn load_bookmark_from_path(
     let bytes = std::fs::read(path)
         .with_context(|| format!("ブックマーク読み込み失敗: {}", path.display()))?;
 
-    // UTF-16 LE BOM → 旧形式 (.gvb)
     if let Some(rest) = bytes.strip_prefix(&[0xFF, 0xFE]) {
         return Ok(legacy::parse_legacy_bookmark_utf16le(rest, is_archive));
     }
 
-    // 新形式 (UTF-8)
     let content = std::str::from_utf8(&bytes)
         .with_context(|| format!("ブックマークのUTF-8デコード失敗: {}", path.display()))?;
     Ok(parse_bookmark(content))
 }
 
-/// ブックマークテキストをパースする
 fn parse_bookmark(content: &str) -> BookmarkData {
     let mut entries = Vec::new();
     let mut index = 0;
@@ -176,9 +150,7 @@ fn parse_bookmark(content: &str) -> BookmarkData {
             continue;
         }
 
-        // コメント行
         if line.starts_with('#') {
-            // index指定を読み取る
             if let Some(idx_str) = line.strip_prefix("# index:")
                 && let Ok(idx) = idx_str.trim().parse::<usize>()
             {
@@ -187,7 +159,6 @@ fn parse_bookmark(content: &str) -> BookmarkData {
             continue;
         }
 
-        // タブ区切り
         let parts: Vec<&str> = line.splitn(3, '\t').collect();
         match parts.as_slice() {
             ["file", path] => {
@@ -197,9 +168,9 @@ fn parse_bookmark(content: &str) -> BookmarkData {
                 entries.push(FileSource::ArchiveEntry {
                     archive: PathBuf::from(archive_path),
                     entry: entry.to_string(),
-                    on_demand: false, // 復元時にopen_containersで再判定
+                    on_demand: false,
                     temp_path: None,
-                    entry_index: None, // 復元時はインデックス不明、open後の再構築でSomeになる
+                    entry_index: None,
                 });
             }
             ["pdf", pdf_path, page_index_str] => {
@@ -211,13 +182,11 @@ fn parse_bookmark(content: &str) -> BookmarkData {
                 }
             }
             _ => {
-                // 後方互換: タブ区切りでないパスは通常ファイルとして扱う
                 entries.push(FileSource::File(PathBuf::from(line)));
             }
         }
     }
 
-    // indexがリスト範囲外ならクランプ
     if !entries.is_empty() && index >= entries.len() {
         index = entries.len() - 1;
     }
@@ -232,8 +201,6 @@ mod tests {
 
     #[test]
     fn build_initial_save_name_uses_previous_name_when_present() {
-        // 前回採用ファイル名が指定された場合は、ファイルリスト先頭の代表ステムに関係なく
-        // 入力文字列をそのまま返す
         let source = FileSource::File(PathBuf::from(r"C:\photos\sunset.jpg"));
         let name = build_initial_save_name(Some("custom.gvbm"), Some(&source));
         assert_eq!(name, "custom.gvbm");
@@ -241,7 +208,6 @@ mod tests {
 
     #[test]
     fn build_initial_save_name_uses_stem_when_no_previous_name() {
-        // 前回名が無い場合は、先頭ソースの代表ステムに `.gvbm` を付与する
         let source = FileSource::File(PathBuf::from(r"C:\photos\sunset.jpg"));
         let name = build_initial_save_name(None, Some(&source));
         assert_eq!(name, "photos.gvbm");
@@ -338,7 +304,7 @@ pdf	C:\docs\test.pdf	2
     fn parse_bookmark_index_clamp() {
         let content = "# index: 999\nfile\ttest.jpg\n";
         let data = parse_bookmark(content);
-        assert_eq!(data.index, 0); // clamped to 0
+        assert_eq!(data.index, 0);
     }
 
     #[test]
@@ -353,7 +319,7 @@ pdf	C:\docs\test.pdf	2
         let content = "# gv3 bookmark v1\n# index: 5\n";
         let data = parse_bookmark(content);
         assert!(data.entries.is_empty());
-        assert_eq!(data.index, 5); // エントリが空なのでクランプされず、パースされたindex値がそのまま残る
+        assert_eq!(data.index, 5);
     }
 
     #[test]
@@ -361,12 +327,11 @@ pdf	C:\docs\test.pdf	2
         let content = "# gv3 bookmark v1\nfile\ttest.jpg\nfile\ttest2.jpg\n";
         let data = parse_bookmark(content);
         assert_eq!(data.entries.len(), 2);
-        assert_eq!(data.index, 0); // デフォルト0
+        assert_eq!(data.index, 0);
     }
 
     #[test]
     fn parse_bookmark_invalid_index_value() {
-        // index行のパースに失敗 → デフォルト0のまま
         let content = "# index: abc\nfile\ttest.jpg\n";
         let data = parse_bookmark(content);
         assert_eq!(data.index, 0);
@@ -377,7 +342,7 @@ pdf	C:\docs\test.pdf	2
     fn parse_bookmark_negative_index() {
         let content = "# index: -1\nfile\ttest.jpg\n";
         let data = parse_bookmark(content);
-        assert_eq!(data.index, 0); // usize::parseに失敗 → デフォルト0
+        assert_eq!(data.index, 0);
     }
 
     #[test]
@@ -391,26 +356,20 @@ pdf	C:\docs\test.pdf	2
     fn parse_bookmark_whitespace_lines_ignored() {
         let content = "   \n\tfile\ta.jpg\n   \n";
         let data = parse_bookmark(content);
-        // "file\ta.jpg" はtrim後に正しくパースされる想定。
-        // ただし "\tfile\ta.jpg" をtrimすると "file\ta.jpg" になり、
-        // splitn(3, '\t') → ["file", "a.jpg"] にマッチ
         assert_eq!(data.entries.len(), 1);
         assert!(matches!(&data.entries[0], FileSource::File(p) if p == Path::new("a.jpg")));
     }
 
     #[test]
     fn parse_bookmark_unknown_type_falls_back_to_file() {
-        // 未知のタイプ名は後方互換でFileとして扱われる
         let content = "unknown\tpath\textra\n";
         let data = parse_bookmark(content);
         assert_eq!(data.entries.len(), 1);
-        // 後方互換: タブ区切りでない行 or マッチしない行はそのままFileとして扱う
         assert!(matches!(&data.entries[0], FileSource::File(_)));
     }
 
     #[test]
     fn parse_bookmark_bare_path_without_type() {
-        // タブ区切りでない行 → 後方互換でそのままファイルパスとして扱う
         let content = r"C:\images\photo.jpg";
         let data = parse_bookmark(content);
         assert_eq!(data.entries.len(), 1);
@@ -421,7 +380,6 @@ pdf	C:\docs\test.pdf	2
 
     #[test]
     fn parse_bookmark_pdf_invalid_page_index() {
-        // page_indexがu32にパースできない → エントリはスキップされる
         let content = "pdf\tC:\\test.pdf\tabc\n";
         let data = parse_bookmark(content);
         assert!(data.entries.is_empty());
@@ -431,7 +389,7 @@ pdf	C:\docs\test.pdf	2
     fn parse_bookmark_pdf_negative_page_index() {
         let content = "pdf\tC:\\test.pdf\t-1\n";
         let data = parse_bookmark(content);
-        assert!(data.entries.is_empty()); // u32パース失敗
+        assert!(data.entries.is_empty());
     }
 
     #[test]
@@ -468,18 +426,17 @@ file	C:\images\c.bmp
 
     #[test]
     fn parse_bookmark_index_clamp_exact_boundary() {
-        // index == entries.len() → len-1にクランプ
         let content = "# index: 3\nfile\ta.jpg\nfile\tb.jpg\nfile\tc.jpg\n";
         let data = parse_bookmark(content);
         assert_eq!(data.entries.len(), 3);
-        assert_eq!(data.index, 2); // 3 >= 3 なのでクランプ
+        assert_eq!(data.index, 2);
     }
 
     #[test]
     fn parse_bookmark_index_within_range() {
         let content = "# index: 2\nfile\ta.jpg\nfile\tb.jpg\nfile\tc.jpg\n";
         let data = parse_bookmark(content);
-        assert_eq!(data.index, 2); // 範囲内なのでそのまま
+        assert_eq!(data.index, 2);
     }
 
     #[test]

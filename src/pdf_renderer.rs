@@ -34,10 +34,8 @@ use windows::core::{IUnknown, Interface as _};
 
 use crate::image::DecodedImage;
 
-/// レンダリング解像度スケール (150 DPI / 96 DPI ≈ 1.5625)
 const DPI_SCALE: f64 = 1.5625;
 
-/// PDFのページ数を取得する (高速: ページデータはロードしない)
 pub fn get_pdf_page_count(pdf_path: &Path) -> Result<u32> {
     let clean_path = crate::util::strip_extended_length_prefix(pdf_path);
     let path_str = clean_path.to_str().unwrap_or("");
@@ -59,7 +57,6 @@ pub fn get_pdf_page_count(pdf_path: &Path) -> Result<u32> {
     doc.PageCount().context("ページ数取得失敗")
 }
 
-/// 単一PDFページをDecodedImageにレンダリングする (150 DPI)
 pub fn render_pdf_page(pdf_path: &Path, page_index: u32) -> Result<DecodedImage> {
     let clean_path = crate::util::strip_extended_length_prefix(pdf_path);
     let path_str = clean_path.to_str().unwrap_or("");
@@ -86,14 +83,12 @@ pub fn render_pdf_page(pdf_path: &Path, page_index: u32) -> Result<DecodedImage>
     let page = doc.GetPage(page_index).context("ページ取得失敗")?;
     let size = page.Size().context("ページサイズ取得失敗")?;
 
-    // 150 DPIにスケール
     let render_width = (size.Width as f64 * DPI_SCALE) as u32;
     let render_height = (size.Height as f64 * DPI_SCALE) as u32;
 
     render_page_to_rgba(&page, render_width.max(1), render_height.max(1))
 }
 
-/// ハードウェアのDirect3D 11デバイスを作成し、作成できなければWARPデバイスを作成する
 fn create_d3d_device() -> Result<(ID3D11Device, ID3D11DeviceContext)> {
     for driver in [D3D_DRIVER_TYPE_HARDWARE, D3D_DRIVER_TYPE_WARP] {
         let mut device = None;
@@ -103,7 +98,6 @@ fn create_d3d_device() -> Result<(ID3D11Device, ID3D11DeviceContext)> {
                 None,
                 driver,
                 HMODULE::default(),
-                // PDFレンダラーはBGRAのサーフェスへ描画するためBGRA対応を要求する
                 D3D11_CREATE_DEVICE_BGRA_SUPPORT,
                 None,
                 D3D11_SDK_VERSION,
@@ -119,7 +113,6 @@ fn create_d3d_device() -> Result<(ID3D11Device, ID3D11DeviceContext)> {
     bail!("Direct3Dデバイス作成失敗")
 }
 
-/// PDFページをgvが所有するDirect3Dデバイスで白背景へ描画し、RGBAで返す
 fn render_page_to_rgba(page: &PdfPage, width: u32, height: u32) -> Result<DecodedImage> {
     let (device, context) = create_d3d_device()?;
 
@@ -143,7 +136,6 @@ fn render_page_to_rgba(page: &PdfPage, width: u32, height: u32) -> Result<Decode
         .context("描画先テクスチャ作成失敗")?;
     let target = target.context("描画先テクスチャ作成失敗")?;
 
-    // 描画先はCPUから読めないため、読み取り用のテクスチャへ複写してから読む
     let staging_desc = D3D11_TEXTURE2D_DESC {
         Usage: D3D11_USAGE_STAGING,
         BindFlags: 0,
@@ -158,7 +150,6 @@ fn render_page_to_rgba(page: &PdfPage, width: u32, height: u32) -> Result<Decode
     let renderer = unsafe { PdfCreateRenderer(&device.cast::<IDXGIDevice>()?) }
         .context("PDFレンダラー作成失敗")?;
     let params = PDF_RENDER_PARAMS {
-        // 既定値（全0）の矩形はページ全体を描画する
         SourceRect: D2D_RECT_F::default(),
         DestinationWidth: width,
         DestinationHeight: height,
@@ -228,7 +219,6 @@ pub fn get_pdf_page_count_safe(pdf_path: &Path) -> Result<u32> {
     .map_err(|_| anyhow::anyhow!("PDFスレッドがパニック"))?
 }
 
-/// STAメインスレッドから安全にPDFページをレンダリングする
 pub fn render_pdf_page_safe(pdf_path: &Path, page_index: u32) -> Result<DecodedImage> {
     let path = pdf_path.to_path_buf();
     std::thread::spawn(move || {

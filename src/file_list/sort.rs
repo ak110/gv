@@ -1,34 +1,19 @@
-//! ソート順と比較ロジック。
-
 use crate::file_info::FileInfo;
 use crate::file_list::natural_sort::compare_explorer;
 
-/// ソート順
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SortOrder {
-    /// ファイル名順
     Name,
-    /// ファイル名順 (大文字小文字区別なし)
     #[serde(rename = "name_nocase")]
     NameNoCase,
-    /// ファイルサイズ順
     Size,
-    /// 最終更新日時順
     Date,
-    /// 自然順ソート (Windows エクスプローラー互換)
     #[default]
     Natural,
 }
 
 impl SortOrder {
-    /// ソート順による比較。
-    ///
-    /// 比較キーは論理パス (`FileSource::display_path()` 相当) を基本とする。
-    /// 通常ファイルはフルパス、アーカイブはアーカイブパス＋内部パス、PDF はファイルパス＋ページ番号となる。
-    ///
-    /// - `Name` / `NameNoCase` / `Natural`: 論理パスを直接比較する
-    /// - `Size` / `Date`: 値を主キーとし、同値時に論理パスを副キーとする (タイブレーカー)
     pub(crate) fn compare(self, a: &FileInfo, b: &FileInfo) -> std::cmp::Ordering {
         let path_a = a.source.display_path();
         let path_b = b.source.display_path();

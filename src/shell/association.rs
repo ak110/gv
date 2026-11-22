@@ -1,18 +1,8 @@
-//! ファイル関連付け登録 (OpenWithProgids方式)
-//!
-//! 既存の既定アプリを上書きせず、「プログラムから開く」候補にぐらびゅを追加する安全な方式。
-//! - HKCU\Software\Classes\gv.ImageFile  → 画像用ProgID
-//! - HKCU\Software\Classes\gv.ArchiveFile → アーカイブ用ProgID
-//! - 各拡張子の OpenWithProgids に上記ProgIDを追加
-//!
-//! gv3.* 旧ProgIDは初回起動時のマイグレーションでクリーンアップされる
-
 use anyhow::Result;
 use windows::Win32::Foundation::ERROR_SUCCESS;
 use windows::Win32::System::Registry::*;
 use windows::Win32::UI::Shell::{SHCNE_ASSOCCHANGED, SHCNF_IDLIST, SHChangeNotify};
 
-/// exeの絶対パスを返す
 fn exe_path() -> Result<String> {
     let path = crate::paths::exe_path()?;
     Ok(path.to_string_lossy().into_owned())
@@ -20,7 +10,6 @@ fn exe_path() -> Result<String> {
 
 use crate::util::to_wide;
 
-/// レジストリキーを再帰的に削除する
 pub(super) fn delete_key_tree(hkey: HKEY, subkey: &str) -> Result<()> {
     let result = unsafe { RegDeleteTreeW(hkey, windows::core::PCWSTR(to_wide(subkey).as_ptr())) };
     if result != ERROR_SUCCESS && result != windows::Win32::Foundation::ERROR_FILE_NOT_FOUND {
@@ -29,12 +18,10 @@ pub(super) fn delete_key_tree(hkey: HKEY, subkey: &str) -> Result<()> {
     Ok(())
 }
 
-/// レジストリキーを作成してデフォルト値を設定する
 pub(super) fn set_key_value(root: HKEY, subkey: &str, value: &str) -> Result<()> {
     let wide_key = to_wide(subkey);
     let wide_val = to_wide(value);
 
-    // RegCreateKeyWでキーを作成 (存在すれば開く)
     let mut hkey = HKEY::default();
     let result = unsafe {
         RegCreateKeyW(
@@ -70,7 +57,6 @@ pub(super) fn set_key_value(root: HKEY, subkey: &str, value: &str) -> Result<()>
     Ok(())
 }
 
-/// 拡張子のOpenWithProgidsにProgIDを追加する
 fn add_open_with_progid(extension: &str, progid: &str) -> Result<()> {
     let subkey = format!(r"Software\Classes\{extension}\OpenWithProgids");
     let wide_key = to_wide(&subkey);
@@ -88,7 +74,6 @@ fn add_open_with_progid(extension: &str, progid: &str) -> Result<()> {
         anyhow::bail!("OpenWithProgids キー作成失敗: {extension}");
     }
 
-    // 空のREG_NONE値を設定 (値の存在がProgID登録を意味する)
     let result = unsafe {
         RegSetValueExW(
             hkey,
@@ -107,7 +92,6 @@ fn add_open_with_progid(extension: &str, progid: &str) -> Result<()> {
     Ok(())
 }
 
-/// 拡張子のOpenWithProgidsからProgIDを削除する
 fn remove_open_with_progid(extension: &str, progid: &str) {
     let subkey = format!(r"Software\Classes\{extension}\OpenWithProgids");
 
@@ -122,7 +106,7 @@ fn remove_open_with_progid(extension: &str, progid: &str) {
         )
     };
     if result != ERROR_SUCCESS {
-        return; // キーがなければ何もしない
+        return;
     }
 
     let _ = unsafe { RegDeleteValueW(hkey, windows::core::PCWSTR(to_wide(progid).as_ptr())) };
@@ -138,19 +122,15 @@ const IMAGE_PROGID: &str = "gv.ImageFile";
 const ARCHIVE_PROGID: &str = "gv.ArchiveFile";
 const BOOKMARK_PROGID: &str = "gv.Bookmark";
 
-// 旧ProgID(gv3 → gv リネーム時のマイグレーション用)
 const OLD_IMAGE_PROGID: &str = "gv3.ImageFile";
 const OLD_ARCHIVE_PROGID: &str = "gv3.ArchiveFile";
 const OLD_BOOKMARK_PROGID: &str = "gv3.Bookmark";
 
-/// ファイル関連付けを登録する
 pub fn register() -> Result<()> {
-    // 旧ProgIDのクリーンアップ
     let _ = cleanup_old_progids();
 
     let exe = exe_path()?;
 
-    // 画像用ProgID
     let progid_key = format!(r"Software\Classes\{IMAGE_PROGID}");
     set_key_value(HKEY_CURRENT_USER, &progid_key, "ぐらびゅ 画像ファイル")?;
     set_key_value(
@@ -159,7 +139,6 @@ pub fn register() -> Result<()> {
         &format!("\"{exe}\" \"%1\""),
     )?;
 
-    // アーカイブ用ProgID
     let progid_key = format!(r"Software\Classes\{ARCHIVE_PROGID}");
     set_key_value(
         HKEY_CURRENT_USER,
@@ -172,7 +151,6 @@ pub fn register() -> Result<()> {
         &format!("\"{exe}\" \"%1\""),
     )?;
 
-    // DefaultIcon設定 (リソースID: 0=icon1, 1=icon2, 2=icon3)
     set_key_value(
         HKEY_CURRENT_USER,
         &format!(r"Software\Classes\{IMAGE_PROGID}\DefaultIcon"),
@@ -184,7 +162,6 @@ pub fn register() -> Result<()> {
         &format!("\"{exe}\",2"),
     )?;
 
-    // ブックマーク用ProgID (.gv3bm)
     let bm_key = format!(r"Software\Classes\{BOOKMARK_PROGID}");
     set_key_value(HKEY_CURRENT_USER, &bm_key, "ぐらびゅ ブックマーク")?;
     set_key_value(
@@ -198,12 +175,10 @@ pub fn register() -> Result<()> {
         &format!("\"{exe}\",2"),
     )?;
 
-    // 汎用アーカイブの既存関連付けをクリーンアップ (再登録時に古い関連付けが残らないように)
     for ext in crate::archive::generic_extensions() {
         remove_open_with_progid(ext, ARCHIVE_PROGID);
     }
 
-    // 各拡張子にOpenWithProgidsを登録
     for ext in StandardDecoder::extensions() {
         add_open_with_progid(ext, IMAGE_PROGID)?;
     }
@@ -211,16 +186,13 @@ pub fn register() -> Result<()> {
         add_open_with_progid(ext, ARCHIVE_PROGID)?;
     }
     add_open_with_progid(BOOKMARK_EXTENSION, BOOKMARK_PROGID)?;
-    // 旧ブックマーク拡張子も新ProgIDに関連付け (既存ファイルを開けるように)
     add_open_with_progid(OLD_BOOKMARK_EXTENSION, BOOKMARK_PROGID)?;
     add_open_with_progid(LEGACY_BOOKMARK_EXTENSION, BOOKMARK_PROGID)?;
 
     Ok(())
 }
 
-/// 旧ProgID (gv3.*) を削除する
 fn cleanup_old_progids() -> Result<()> {
-    // 旧ProgIDキーを削除
     delete_key_tree(
         HKEY_CURRENT_USER,
         &format!(r"Software\Classes\{OLD_IMAGE_PROGID}"),
@@ -234,7 +206,6 @@ fn cleanup_old_progids() -> Result<()> {
         &format!(r"Software\Classes\{OLD_BOOKMARK_PROGID}"),
     )?;
 
-    // 各拡張子のOpenWithProgidsから旧ProgIDを削除
     for ext in StandardDecoder::extensions() {
         remove_open_with_progid(ext, OLD_IMAGE_PROGID);
     }
@@ -248,12 +219,9 @@ fn cleanup_old_progids() -> Result<()> {
     Ok(())
 }
 
-/// ファイル関連付けを解除する
 pub fn unregister() -> Result<()> {
-    // 旧ProgIDのクリーンアップ
     let _ = cleanup_old_progids();
 
-    // ProgIDキーを削除
     delete_key_tree(
         HKEY_CURRENT_USER,
         &format!(r"Software\Classes\{IMAGE_PROGID}"),
@@ -267,7 +235,6 @@ pub fn unregister() -> Result<()> {
         &format!(r"Software\Classes\{BOOKMARK_PROGID}"),
     )?;
 
-    // 各拡張子のOpenWithProgidsからProgIDを削除
     for ext in StandardDecoder::extensions() {
         remove_open_with_progid(ext, IMAGE_PROGID);
     }
@@ -284,7 +251,6 @@ pub fn unregister() -> Result<()> {
     Ok(())
 }
 
-/// シェルに関連付け変更を通知する
 pub fn notify_shell() {
     unsafe {
         SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, None, None);
@@ -295,9 +261,6 @@ pub fn notify_shell() {
 mod tests {
     use super::*;
 
-    /// 旧ProgID定数が gv3.* となっていることを確認する。
-    /// gv3 → gv リネーム時に gv.* と新ProgIDと同値になる退行が発生したため
-    /// 同種の退行を検出するためのガードテスト。
     #[test]
     fn old_progid_constants_use_gv3_prefix() {
         assert_eq!(OLD_IMAGE_PROGID, "gv3.ImageFile");
@@ -305,8 +268,6 @@ mod tests {
         assert_eq!(OLD_BOOKMARK_PROGID, "gv3.Bookmark");
     }
 
-    /// 新ProgIDと旧ProgIDが異なることを確認する。
-    /// 同値だと cleanup_old_progids() が新ProgIDキーを削除してしまう。
     #[test]
     fn new_and_old_progids_differ() {
         assert_ne!(IMAGE_PROGID, OLD_IMAGE_PROGID);
@@ -314,12 +275,8 @@ mod tests {
         assert_ne!(BOOKMARK_PROGID, OLD_BOOKMARK_PROGID);
     }
 
-    /// レジストリ未登録環境でも cleanup_old_progids() が成功することを確認する。
-    /// delete_key_tree は ERROR_FILE_NOT_FOUND を許容するため、初回起動環境を想定したテスト。
     #[test]
     fn cleanup_old_progids_succeeds_when_keys_absent() {
-        // テスト並列実行時にレジストリ状態を汚染しないよう、削除のみの操作で完結する。
-        // Windows以外では HKEY_CURRENT_USER 操作が動かないので #[cfg(windows)] を維持する。
         assert!(cleanup_old_progids().is_ok());
     }
 }

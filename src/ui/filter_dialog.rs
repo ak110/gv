@@ -1,4 +1,3 @@
-//! フィルターパラメーター入力
 pub use super::form_dialog::FieldDef;
 use anyhow::Result;
 use windows::Win32::Foundation::HWND;

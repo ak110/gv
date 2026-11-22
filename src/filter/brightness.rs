@@ -1,9 +1,6 @@
-//! 明るさ・コントラスト・レベル・ガンマ補正フィルタ
-
 use crate::image::DecodedImage;
 use crate::selection::PixelRect;
 
-/// レベル補正: low〜highの範囲を0〜255に伸張する
 pub fn levels(image: &DecodedImage, region: Option<&PixelRect>, low: u8, high: u8) -> DecodedImage {
     let low = low as f32;
     let high = high.max(1) as f32;
@@ -16,11 +13,9 @@ pub fn levels(image: &DecodedImage, region: Option<&PixelRect>, low: u8, high: u
     })
 }
 
-/// ガンマ補正
 pub fn gamma(image: &DecodedImage, region: Option<&PixelRect>, gamma_value: f64) -> DecodedImage {
     let inv_gamma = 1.0 / gamma_value.max(0.01);
 
-    // ルックアップテーブルを事前計算
     let mut lut = [0u8; 256];
     for (i, entry) in lut.iter_mut().enumerate() {
         *entry = ((i as f64 / 255.0).powf(inv_gamma) * 255.0).round() as u8;
@@ -31,24 +26,18 @@ pub fn gamma(image: &DecodedImage, region: Option<&PixelRect>, gamma_value: f64)
     })
 }
 
-/// 明るさとコントラスト調整
-/// brightness: -128〜+128, contrast: -128〜+128
 pub fn brightness_contrast(
     image: &DecodedImage,
     region: Option<&PixelRect>,
     brightness: i32,
     contrast: i32,
 ) -> DecodedImage {
-    // コントラスト係数: c ∈ [-128, 128] → factor
     let factor = if contrast > 0 {
-        // 正のコントラスト: 128/(128-c)
         128.0 / (128.0 - contrast as f32)
     } else {
-        // 負のコントラスト: (128+c)/128
         (128.0 + contrast as f32) / 128.0
     };
 
-    // ルックアップテーブル
     let mut lut = [0u8; 256];
     for (i, entry) in lut.iter_mut().enumerate() {
         let v = i as f32 + brightness as f32;
@@ -72,7 +61,6 @@ mod tests {
             width: 1,
             height: 1,
         };
-        // 0-255の範囲はそのまま
         let result = levels(&img, None, 0, 255);
         assert_eq!(result.data[0], 128);
     }
@@ -84,7 +72,6 @@ mod tests {
             width: 1,
             height: 1,
         };
-        // 100-200の範囲を伸張: (128-100)/(200-100)*255 ≈ 71
         let result = levels(&img, None, 100, 200);
         assert!((result.data[0] as i32 - 71).abs() <= 1);
     }
@@ -121,6 +108,6 @@ mod tests {
             height: 1,
         };
         let result = brightness_contrast(&img, None, 100, 0);
-        assert_eq!(result.data[0], 255); // clamped
+        assert_eq!(result.data[0], 255);
     }
 }

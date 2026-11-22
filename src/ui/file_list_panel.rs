@@ -1,13 +1,3 @@
-//! ファイルリストパネル (左側 ListView 仮想モード)
-//!
-//! メインウィンドウ左側にファイル一覧を表示する。
-//! `SysListView32` の仮想モード (`LVS_OWNERDATA`) を使うことで、ファイル数が
-//! 数十万件になっても項目セット (`LVM_SETITEMCOUNTEX`) を O(1) で行える。
-//! 表示行のテキストは親ウィンドウが `LVN_GETDISPINFO` で要求されたタイミングで
-//! 提供する (file_list_panel 自体は内容を保持しない)。
-//! キー入力はサブクラス化して親ウィンドウへ転送し、ListView 標準のキー処理は
-//! 抑止する (二重発火防止)。
-
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::InvalidateRect;
 use windows::Win32::UI::Controls::*;
@@ -16,30 +6,22 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::file_info::FileInfo;
 
-/// ファイルリストパネルのコントロールID
 pub const FILE_LIST_CONTROL_ID: u16 = 0x100;
 
-/// デフォルトのパネル幅 (px)
 const DEFAULT_WIDTH: i32 = 250;
 
-/// ListView のサブクラスID(SetWindowSubclass用)
 const SUBCLASS_ID: usize = 1;
 
-/// ファイルリストパネル
 #[derive(Clone)]
 pub struct FileListPanel {
     listview: HWND,
-    /// F4で選ぶ表示希望。フルスクリーン中も保持する。
     requested_visible: bool,
-    /// ListViewへ適用した実表示。
     visible: bool,
     width: i32,
 }
 
 impl FileListPanel {
-    /// ListView を子ウィンドウとして作成する
     pub fn create(parent: HWND) -> Self {
-        // Common Controls の ListView クラスを初期化
         let icc = INITCOMMONCONTROLSEX {
             dwSize: u32::try_from(std::mem::size_of::<INITCOMMONCONTROLSEX>()).unwrap_or(0),
             dwICC: ICC_LISTVIEW_CLASSES,
@@ -53,9 +35,6 @@ impl FileListPanel {
                 WINDOW_EX_STYLE::default(),
                 windows::core::w!("SysListView32"),
                 None,
-                // WS_CHILD | WS_VSCROLL | WS_BORDER
-                // | LVS_REPORT | LVS_OWNERDATA | LVS_SINGLESEL
-                // | LVS_NOCOLUMNHEADER | LVS_SHOWSELALWAYS
                 WINDOW_STYLE(
                     WS_CHILD.0
                         | WS_VSCROLL.0
@@ -69,7 +48,7 @@ impl FileListPanel {
                 0,
                 0,
                 DEFAULT_WIDTH,
-                600, // 初期高さ (WM_SIZEで上書きされる)
+                600,
                 Some(parent),
                 Some(HMENU(FILE_LIST_CONTROL_ID as *mut _)),
                 None,
@@ -78,7 +57,6 @@ impl FileListPanel {
             .unwrap_or_default()
         };
 
-        // 拡張スタイル: ダブルバッファ + 行全体選択
         let ex_style: u32 = LVS_EX_DOUBLEBUFFER | LVS_EX_FULLROWSELECT;
         unsafe {
             SendMessageW(
@@ -89,11 +67,10 @@ impl FileListPanel {
             );
         }
 
-        // 1カラムを追加 (ヘッダ非表示なので幅だけ設定)
         let mut col = LVCOLUMNW {
             mask: LVCOLUMNW_MASK(LVCF_WIDTH.0 | LVCF_FMT.0),
             fmt: LVCOLUMNW_FORMAT(LVCFMT_LEFT.0),
-            cx: DEFAULT_WIDTH - 24, // スクロールバー幅+α分を引く
+            cx: DEFAULT_WIDTH - 24,
             ..Default::default()
         };
         unsafe {
@@ -105,7 +82,6 @@ impl FileListPanel {
             );
         }
 
-        // ListView をサブクラス化してキー入力を親に転送
         unsafe {
             let _ = SetWindowSubclass(
                 listview,
@@ -123,18 +99,15 @@ impl FileListPanel {
         }
     }
 
-    /// 表示/非表示をトグル
     pub fn toggle(&mut self, fullscreen: bool) {
         self.requested_visible = !self.requested_visible;
         self.sync_visibility(fullscreen);
     }
 
-    /// 表示希望とフルスクリーン状態を実表示へ反映する。
     pub fn sync_visibility(&mut self, fullscreen: bool) {
         self.visible = self.requested_visible && !fullscreen;
     }
 
-    /// 確定済みの表示状態をWin32へ適用する。アプリの借用外で呼び出す。
     pub fn apply_visibility(&self) {
         let cmd = if self.visible { SW_SHOW } else { SW_HIDE };
         unsafe {
@@ -142,12 +115,10 @@ impl FileListPanel {
         }
     }
 
-    /// visible なら panel_width、非表示なら 0
     pub fn panel_width(&self) -> i32 {
         if self.visible { self.width } else { 0 }
     }
 
-    /// 親ウィンドウのリサイズに追従
     pub fn resize(&self, parent_height: i32) {
         if self.visible {
             unsafe {
@@ -156,9 +127,6 @@ impl FileListPanel {
         }
     }
 
-    /// ファイルリストの項目数で ListView を更新する
-    /// 仮想モードのため `LVM_SETITEMCOUNTEX` で項目数だけセットする (O(1))。
-    /// 実際の表示テキストは親ウィンドウの `LVN_GETDISPINFO` ハンドラから返す。
     pub fn update(&self, count: usize) {
         unsafe {
             // LVSICF_NOINVALIDATEALL: 可視範囲外は再描画しない
@@ -175,9 +143,6 @@ impl FileListPanel {
         }
     }
 
-    /// 単一項目を再描画要求する (マーク・キャッシュ状態の変更用)
-    /// 仮想モードでは項目データを LV が保持しないので、行のみ無効化すれば
-    /// 次回描画時に親ウィンドウへ再度 LVN_GETDISPINFO で問い合わせが送られる。
     pub fn update_item(&self, index: usize) {
         let i = i32::try_from(index).unwrap_or(i32::MAX);
         unsafe {
@@ -190,27 +155,16 @@ impl FileListPanel {
         }
     }
 
-    /// ListView項目のラベル文字列を生成 (LVN_GETDISPINFO ハンドラから呼ばれる)
     pub fn format_label(info: &FileInfo, is_cached: bool) -> String {
-        let mark = if info.marked { "\u{2605}" } else { "\u{3000}" }; // ★ or 全角スペース
-        let cache = if is_cached { "\u{25CF}" } else { "\u{25CB}" }; // ● or ○
+        let mark = if info.marked { "\u{2605}" } else { "\u{3000}" };
+        let cache = if is_cached { "\u{25CF}" } else { "\u{25CB}" };
         format!("{mark}{cache} {}", info.file_name)
     }
 
-    /// 現在位置をハイライトしてスクロールする
-    ///
-    /// 選択項目が画面の 2/5〜3/5 付近に収まるよう、表示可能項目数の 2/5 を上下マージンとして
-    /// 確保する scrolloff 付きスクロールを行う。ナビゲーション先のプレビューを広く確保する狙い。
-    ///
-    /// 冒頭で ListView の現選択が target と一致する場合は早期リターンする。
-    /// これは `LVN_ITEMCHANGED`（クリック・ホイール等）由来で `navigate_to` →
-    /// `process_document_events` 経由で再呼び出しされたケースを想定したもので、
-    /// クリックで選んだ行に scrolloff が追加で当たって勝手にスクロールしないようにする。
     pub fn set_selection(&self, index: usize) {
         let i = i32::try_from(index).unwrap_or(i32::MAX);
         let sel_focus = LIST_VIEW_ITEM_STATE_FLAGS(LVIS_SELECTED.0 | LVIS_FOCUSED.0);
         unsafe {
-            // ListView 上の現選択 index を取得（無選択なら -1）
             let current = SendMessageW(
                 self.listview,
                 LVM_GETNEXTITEM,
@@ -219,13 +173,9 @@ impl FileListPanel {
             )
             .0;
             if current == i as isize {
-                // クリック由来などで既に target が選択済みのケース。
-                // ここで scrolloff を適用するとクリックが勝手にスクロールを引き起こすため、
-                // 何もせずリターンする。
                 return;
             }
 
-            // 既存の選択を解除 (state=0 で SELECTED|FOCUSED ビットをクリア)
             let mut clear = LVITEMW {
                 stateMask: sel_focus,
                 state: LIST_VIEW_ITEM_STATE_FLAGS(0),
@@ -234,11 +184,10 @@ impl FileListPanel {
             SendMessageW(
                 self.listview,
                 LVM_SETITEMSTATE,
-                Some(WPARAM(usize::MAX)), // 全項目対象 (-1)
+                Some(WPARAM(usize::MAX)),
                 Some(LPARAM(std::ptr::from_mut(&mut clear) as isize)),
             );
 
-            // 新しい選択をセット
             let mut item = LVITEMW {
                 stateMask: sel_focus,
                 state: sel_focus,
@@ -251,10 +200,6 @@ impl FileListPanel {
                 Some(LPARAM(std::ptr::from_mut(&mut item) as isize)),
             );
 
-            // scrolloff 付きでスクロールする
-            // 表示可能項目数の 2/5 を上下マージンとして確保し、target の上下両方に
-            // マージン分の可視領域を確保する。片方向ナビ時は片方しか実スクロールを
-            // 起こさないためちらつきは発生しない。
             let visible_count = SendMessageW(self.listview, LVM_GETCOUNTPERPAGE, None, None).0;
             let total = SendMessageW(self.listview, LVM_GETITEMCOUNT, None, None).0;
             if total <= 0 {
@@ -279,24 +224,19 @@ impl FileListPanel {
         }
     }
 
-    /// ListView の HWND を返す (WM_NOTIFY 判定用)
     pub fn listview_hwnd(&self) -> HWND {
         self.listview
     }
 
-    /// 表示中かどうか
     pub fn is_visible(&self) -> bool {
         self.visible
     }
 
-    /// F4で選んだ表示希望を返す。
     pub fn requested_visible(&self) -> bool {
         self.requested_visible
     }
 }
 
-/// ListView サブクラスプロシージャ: キー入力を親ウィンドウへ転送し、
-/// ListView 標準のキー処理 (矢印キーでの選択移動など) を抑止する。
 unsafe extern "system" fn listview_subclass_proc(
     hwnd: HWND,
     msg: u32,
@@ -309,14 +249,12 @@ unsafe extern "system" fn listview_subclass_proc(
 
     match msg {
         WM_KEYDOWN | WM_SYSKEYDOWN => {
-            // キー入力は親ウィンドウへ転送し、ListView の標準処理は止める
             unsafe {
                 let _ = PostMessageW(Some(parent), msg, wparam, lparam);
             }
             return LRESULT(0);
         }
         WM_CHAR => {
-            // ListView のデフォルト文字検索を無効化
             return LRESULT(0);
         }
         _ => {}

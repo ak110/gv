@@ -1,11 +1,5 @@
-//! 矩形選択の状態管理
-//!
-//! 画像ピクセル座標ベースの状態機械。マウスドラッグで矩形選択し、
-//! リサイズハンドルやドラッグ移動で選択範囲を編集できる。
-
 use crate::render::layout::DrawRect;
 
-/// 画像ピクセル座標の矩形 (正規化済み: width/height >= 0)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PixelRect {
     pub x: i32,
@@ -15,7 +9,6 @@ pub struct PixelRect {
 }
 
 impl PixelRect {
-    /// 2点から正規化された矩形を生成 (左上・右下に正規化)
     pub fn from_two_points(x1: i32, y1: i32, x2: i32, y2: i32) -> Self {
         let (lx, rx) = if x1 <= x2 { (x1, x2) } else { (x2, x1) };
         let (ty, by) = if y1 <= y2 { (y1, y2) } else { (y2, y1) };
@@ -27,7 +20,6 @@ impl PixelRect {
         }
     }
 
-    /// 画像範囲にクランプする
     pub fn clamped(&self, img_width: u32, img_height: u32) -> Self {
         let iw = img_width as i32;
         let ih = img_height as i32;
@@ -51,13 +43,11 @@ impl PixelRect {
         self.y + self.height
     }
 
-    /// 矩形が有効 (面積 > 0) か
     pub fn is_valid(&self) -> bool {
         self.width > 0 && self.height > 0
     }
 }
 
-/// 8方向リサイズハンドル
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HandleKind {
     TopLeft,
@@ -70,45 +60,36 @@ pub enum HandleKind {
     BottomRight,
 }
 
-/// 選択の状態遷移
 #[derive(Debug, Clone)]
 pub enum SelectionState {
-    /// 選択なし
     None,
-    /// ドラッグ中 (新規選択)
     Drawing {
         start_px: i32,
         start_py: i32,
         current_px: i32,
         current_py: i32,
     },
-    /// 選択確定
-    Selected { rect: PixelRect },
-    /// リサイズ中
+    Selected {
+        rect: PixelRect,
+    },
     Resizing {
         rect: PixelRect,
         handle: HandleKind,
-        /// ドラッグ開始時の画像ピクセル座標
         start_px: i32,
         start_py: i32,
     },
-    /// 移動中
     Moving {
         rect: PixelRect,
-        /// ドラッグ開始時の画像ピクセル座標
         start_px: i32,
         start_py: i32,
     },
 }
 
-/// 矩形選択マネージャ
 pub struct Selection {
     state: SelectionState,
 }
 
-/// ハンドルのヒット判定半径 (スクリーンピクセル)
 const HANDLE_HIT_RADIUS: f32 = 6.0;
-/// ハンドル描画サイズ (スクリーンピクセル)
 pub const HANDLE_DRAW_SIZE: f32 = 5.0;
 
 impl Selection {
@@ -118,7 +99,6 @@ impl Selection {
         }
     }
 
-    /// 確定済み選択矩形を返す (Drawing中は未確定の矩形を返す)
     pub fn current_rect(&self) -> Option<PixelRect> {
         match &self.state {
             SelectionState::None => None,
@@ -138,12 +118,10 @@ impl Selection {
         }
     }
 
-    /// 選択が確定状態 (Selected) か
     pub fn is_selected(&self) -> bool {
         matches!(self.state, SelectionState::Selected { .. })
     }
 
-    /// ドラッグ操作中 (Drawing/Resizing/Moving) か
     pub fn is_dragging(&self) -> bool {
         matches!(
             self.state,
@@ -153,14 +131,10 @@ impl Selection {
         )
     }
 
-    /// 選択を解除する
     pub fn deselect(&mut self) {
         self.state = SelectionState::None;
     }
 
-    /// マウス押下: 状態遷移を行う
-    /// `px`, `py` は画像ピクセル座標。`sx`, `sy` はスクリーン座標。
-    /// draw_rect と image_size は座標変換用。
     pub fn on_mouse_down(
         &mut self,
         sx: f32,
@@ -171,14 +145,12 @@ impl Selection {
     ) {
         let (px, py) = screen_to_image(sx, sy, draw_rect, img_width, img_height);
 
-        // 画像の外ならば何もしない
         if px < 0 || py < 0 || px >= img_width as i32 || py >= img_height as i32 {
             return;
         }
 
         match &self.state {
             SelectionState::Selected { rect } => {
-                // ハンドル上→リサイズ開始
                 if let Some(handle) =
                     hit_test_handle(sx, sy, rect, draw_rect, img_width, img_height)
                 {
@@ -190,7 +162,6 @@ impl Selection {
                     };
                     return;
                 }
-                // 選択内部→移動開始
                 if rect.x <= px && px < rect.right() && rect.y <= py && py < rect.bottom() {
                     self.state = SelectionState::Moving {
                         rect: *rect,
@@ -199,7 +170,6 @@ impl Selection {
                     };
                     return;
                 }
-                // 選択外部→新規選択
                 self.state = SelectionState::Drawing {
                     start_px: px,
                     start_py: py,
@@ -208,7 +178,6 @@ impl Selection {
                 };
             }
             _ => {
-                // None / Drawing → 新規選択開始
                 self.state = SelectionState::Drawing {
                     start_px: px,
                     start_py: py,
@@ -219,7 +188,6 @@ impl Selection {
         }
     }
 
-    /// マウス移動: ドラッグ中の矩形更新
     pub fn on_mouse_move(
         &mut self,
         sx: f32,
@@ -229,7 +197,6 @@ impl Selection {
         img_height: u32,
     ) {
         let (px, py) = screen_to_image(sx, sy, draw_rect, img_width, img_height);
-        // 画像範囲にクランプ
         let px = px.clamp(0, img_width as i32);
         let py = py.clamp(0, img_height as i32);
 
@@ -270,7 +237,6 @@ impl Selection {
         }
     }
 
-    /// マウスリリース: ドラッグ終了
     pub fn on_mouse_up(&mut self, img_width: u32, img_height: u32) {
         match &self.state {
             SelectionState::Drawing {
@@ -300,7 +266,6 @@ impl Selection {
         }
     }
 
-    /// 指定スクリーン座標がハンドル上にあるかを返す (カーソル形状の決定用)
     pub fn hit_test_at(
         &self,
         sx: f32,
@@ -326,7 +291,6 @@ impl Selection {
     }
 }
 
-/// ヒットテスト結果
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HitTestResult {
     Outside,
@@ -334,9 +298,6 @@ pub enum HitTestResult {
     Handle(HandleKind),
 }
 
-// --- 座標変換ユーティリティ ---
-
-/// スクリーン座標 → 画像ピクセル座標
 pub fn screen_to_image(
     sx: f32,
     sy: f32,
@@ -352,7 +313,6 @@ pub fn screen_to_image(
     (px, py)
 }
 
-/// 画像ピクセル座標 → スクリーン座標
 pub fn image_to_screen(
     px: i32,
     py: i32,
@@ -365,7 +325,6 @@ pub fn image_to_screen(
     (sx, sy)
 }
 
-/// ハンドルのヒットテスト
 fn hit_test_handle(
     sx: f32,
     sy: f32,
@@ -386,7 +345,6 @@ fn hit_test_handle(
     None
 }
 
-/// 8箇所のハンドル位置を画像ピクセル座標で返す
 pub fn handle_positions(rect: &PixelRect) -> [(HandleKind, i32, i32); 8] {
     let mx = rect.x + rect.width / 2;
     let my = rect.y + rect.height / 2;
@@ -404,7 +362,6 @@ pub fn handle_positions(rect: &PixelRect) -> [(HandleKind, i32, i32); 8] {
     ]
 }
 
-/// リサイズ適用
 fn apply_resize(rect: PixelRect, handle: HandleKind, dx: i32, dy: i32) -> PixelRect {
     let mut x = rect.x;
     let mut y = rect.y;
@@ -448,7 +405,6 @@ fn apply_resize(rect: PixelRect, handle: HandleKind, dx: i32, dy: i32) -> PixelR
         }
     }
 
-    // 反転防止: 最小サイズ1
     if w < 1 {
         w = 1;
     }
@@ -472,7 +428,6 @@ mod tests {
     #[test]
     fn screen_to_image_basic() {
         let dr = test_draw_rect();
-        // 画面 (110, 110) = 画像の中心 (50, 50)
         let (px, py) = screen_to_image(110.0, 110.0, &dr, 100, 100);
         assert_eq!(px, 50);
         assert_eq!(py, 50);
@@ -515,15 +470,12 @@ mod tests {
         let dr = test_draw_rect();
         let mut sel = Selection::new();
 
-        // マウスダウンで描画開始
         sel.on_mouse_down(30.0, 30.0, &dr, 100, 100);
         assert!(sel.is_dragging());
 
-        // ドラッグ
         sel.on_mouse_move(130.0, 130.0, &dr, 100, 100);
         assert!(sel.current_rect().is_some());
 
-        // リリースで確定
         sel.on_mouse_up(100, 100);
         assert!(sel.is_selected());
         let rect = sel.current_rect().unwrap();
@@ -587,8 +539,6 @@ mod tests {
         assert_eq!(resized.height, 45);
     }
 
-    // --- apply_resize: 全8方向ハンドルのテスト ---
-
     #[test]
     fn apply_resize_top() {
         let rect = PixelRect {
@@ -598,7 +548,6 @@ mod tests {
             height: 50,
         };
         let resized = apply_resize(rect, HandleKind::Top, 0, -5);
-        // Topハンドル: yが上に5移動、高さが5増加、x/widthは不変
         assert_eq!(resized.x, 10);
         assert_eq!(resized.y, 5);
         assert_eq!(resized.width, 50);
@@ -614,7 +563,6 @@ mod tests {
             height: 50,
         };
         let resized = apply_resize(rect, HandleKind::TopRight, 10, -5);
-        // TopRight: 幅が10増加、yが5上に移動し高さ5増加
         assert_eq!(resized.x, 10);
         assert_eq!(resized.y, 5);
         assert_eq!(resized.width, 60);
@@ -630,7 +578,6 @@ mod tests {
             height: 50,
         };
         let resized = apply_resize(rect, HandleKind::Left, -5, 0);
-        // Left: xが5左に移動、幅が5増加、y/heightは不変
         assert_eq!(resized.x, 5);
         assert_eq!(resized.y, 10);
         assert_eq!(resized.width, 55);
@@ -646,7 +593,6 @@ mod tests {
             height: 50,
         };
         let resized = apply_resize(rect, HandleKind::Right, 15, 0);
-        // Right: 幅が15増加、x/y/heightは不変
         assert_eq!(resized.x, 10);
         assert_eq!(resized.y, 10);
         assert_eq!(resized.width, 65);
@@ -662,7 +608,6 @@ mod tests {
             height: 50,
         };
         let resized = apply_resize(rect, HandleKind::BottomLeft, -5, 10);
-        // BottomLeft: xが5左に移動、幅が5増加、高さが10増加
         assert_eq!(resized.x, 5);
         assert_eq!(resized.y, 10);
         assert_eq!(resized.width, 55);
@@ -678,14 +623,11 @@ mod tests {
             height: 50,
         };
         let resized = apply_resize(rect, HandleKind::Bottom, 0, 10);
-        // Bottom: 高さが10増加、x/y/widthは不変
         assert_eq!(resized.x, 10);
         assert_eq!(resized.y, 10);
         assert_eq!(resized.width, 50);
         assert_eq!(resized.height, 60);
     }
-
-    // --- 反転防止 (最小サイズ1) のテスト ---
 
     #[test]
     fn apply_resize_clamps_to_minimum_size() {
@@ -695,14 +637,13 @@ mod tests {
             width: 5,
             height: 5,
         };
-        // 幅・高さがマイナスになるほど大きなdxで縮小を試みる
         let resized = apply_resize(rect, HandleKind::Right, -100, 0);
-        assert_eq!(resized.width, 1); // 最小1にクランプ
+        assert_eq!(resized.width, 1);
         assert_eq!(resized.height, 5);
 
         let resized = apply_resize(rect, HandleKind::Bottom, 0, -100);
         assert_eq!(resized.width, 5);
-        assert_eq!(resized.height, 1); // 最小1にクランプ
+        assert_eq!(resized.height, 1);
     }
 
     #[test]
@@ -713,26 +654,21 @@ mod tests {
             width: 5,
             height: 5,
         };
-        // TopLeftで幅・高さ両方が反転するほどのdx, dy
         let resized = apply_resize(rect, HandleKind::TopLeft, 100, 100);
         assert_eq!(resized.width, 1);
         assert_eq!(resized.height, 1);
     }
 
-    // --- ゼロサイズ矩形の正規化テスト ---
-
     #[test]
     fn zero_size_rect_from_same_point() {
-        // 同一点からの矩形は幅・高さ0
         let rect = PixelRect::from_two_points(50, 50, 50, 50);
         assert_eq!(rect.width, 0);
         assert_eq!(rect.height, 0);
-        assert!(!rect.is_valid()); // 面積0は無効
+        assert!(!rect.is_valid());
     }
 
     #[test]
     fn zero_width_rect_is_invalid() {
-        // 幅だけ0の矩形
         let rect = PixelRect::from_two_points(50, 10, 50, 60);
         assert_eq!(rect.width, 0);
         assert_eq!(rect.height, 50);
@@ -741,7 +677,6 @@ mod tests {
 
     #[test]
     fn zero_height_rect_is_invalid() {
-        // 高さだけ0の矩形
         let rect = PixelRect::from_two_points(10, 50, 60, 50);
         assert_eq!(rect.width, 50);
         assert_eq!(rect.height, 0);
@@ -750,13 +685,10 @@ mod tests {
 
     #[test]
     fn zero_size_drawing_releases_to_none() {
-        // ゼロサイズのドラッグ操作はmouse_upでNoneに戻る
         let dr = test_draw_rect();
         let mut sel = Selection::new();
 
-        // 同一点でドラッグ
         sel.on_mouse_down(110.0, 110.0, &dr, 100, 100);
-        // 移動しない (same point)
         sel.on_mouse_up(100, 100);
 
         assert!(!sel.is_selected());
@@ -765,7 +697,6 @@ mod tests {
 
     #[test]
     fn screen_to_image_zero_size_draw_rect() {
-        // draw_rectのwidth/heightが0の場合は (0,0) を返す
         let dr = DrawRect {
             x: 10.0,
             y: 10.0,
@@ -782,16 +713,13 @@ mod tests {
         let dr = test_draw_rect();
         let mut sel = Selection::new();
 
-        // 選択範囲を作成: 画像の (20,20)-(80,80)
         sel.on_mouse_down(50.0, 50.0, &dr, 100, 100);
         sel.on_mouse_move(170.0, 170.0, &dr, 100, 100);
         sel.on_mouse_up(100, 100);
 
-        // 選択内部
         let result = sel.hit_test_at(110.0, 110.0, &dr, 100, 100);
         assert_eq!(result, HitTestResult::Inside);
 
-        // 選択外部
         let result = sel.hit_test_at(15.0, 15.0, &dr, 100, 100);
         assert_eq!(result, HitTestResult::Outside);
     }

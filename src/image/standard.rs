@@ -4,10 +4,8 @@ use anyhow::Context as _;
 
 use super::{DecodedImage, ImageDecoder, ImageMetadata};
 
-/// image crateによる標準デコーダ (JPEG/PNG/GIF/BMP/WebP)
 pub struct StandardDecoder;
 
-/// 標準デコーダで有効にしている形式と、その拡張子。
 const STANDARD_FORMATS: &[(&str, &[&str])] = &[
     ("JPEG", &[".jpg", ".jpeg"]),
     ("PNG", &[".png"]),
@@ -37,11 +35,6 @@ impl ImageDecoder for StandardDecoder {
         image::guess_format(data).is_ok()
     }
 
-    /// デコードし、EXIFの向き情報 (回転・鏡像) を画素へ適用する
-    ///
-    /// 向きの補正はこのデコーダだけで1回行う。先読み・キャッシュ・描画は補正済みの画素を
-    /// そのまま扱うため、他の経路で重ねて適用すると回転が累積する。
-    /// 向き情報の欠落・不正値・読取失敗は無補正として閲覧を続ける。
     fn decode(&self, data: &[u8], _filename_hint: &str) -> anyhow::Result<DecodedImage> {
         let mut decoder = image::ImageReader::new(Cursor::new(data))
             .with_guessed_format()
@@ -52,7 +45,7 @@ impl ImageDecoder for StandardDecoder {
             .unwrap_or(image::metadata::Orientation::NoTransforms);
         let mut img = image::DynamicImage::from_decoder(decoder).context("画像のデコードに失敗")?;
         img.apply_orientation(orientation);
-        let rgba = img.into_rgba8(); // moveセマンティクス (PNGのRGBA画像でコピー削減)
+        let rgba = img.into_rgba8();
         let (width, height) = rgba.dimensions();
 
         Ok(DecodedImage {
@@ -66,14 +59,12 @@ impl ImageDecoder for StandardDecoder {
         let format =
             image::guess_format(data).map_or_else(|_| "Unknown".to_string(), |f| format!("{f:?}"));
 
-        // PNGのテキストチャンク (tEXt/zTXt/iTXt) を取得
         let comments = if matches!(image::guess_format(data), Ok(image::ImageFormat::Png)) {
             Self::read_png_text_chunks(data)
         } else {
             Vec::new()
         };
 
-        // EXIFメタデータ (JPEG/TIFF/WebP等、フォーマット問わず試行)
         let exif = super::read_exif_fields(data);
 
         Ok(ImageMetadata {
@@ -85,7 +76,6 @@ impl ImageDecoder for StandardDecoder {
 }
 
 impl StandardDecoder {
-    /// PNGのテキストチャンク (tEXt/zTXt/iTXt) を読み取る
     fn read_png_text_chunks(data: &[u8]) -> Vec<String> {
         let decoder = png::Decoder::new(Cursor::new(data));
         let Ok(reader) = decoder.read_info() else {
@@ -94,17 +84,14 @@ impl StandardDecoder {
         let info = reader.info();
         let mut texts = Vec::new();
 
-        // tEXt(非圧縮Latin-1テキスト)
         for chunk in &info.uncompressed_latin1_text {
             texts.push(format!("{}: {}", chunk.keyword, chunk.text));
         }
-        // zTXt(圧縮Latin-1テキスト)
         for chunk in &info.compressed_latin1_text {
             if let Ok(text) = chunk.get_text() {
                 texts.push(format!("{}: {}", chunk.keyword, text));
             }
         }
-        // iTXt(国際化テキスト、UTF-8)
         for chunk in &info.utf8_text {
             if let Ok(text) = chunk.get_text() {
                 texts.push(format!("{}: {}", chunk.keyword, text));
@@ -155,7 +142,6 @@ mod tests {
 
     #[test]
     fn decode_minimal_png() {
-        // 1x1 白ピクセルのPNG
         let png_data = create_1x1_white_png();
         let decoder = StandardDecoder::new();
         assert!(decoder.can_decode(&png_data, "test.png"));
@@ -163,7 +149,7 @@ mod tests {
         let img = decoder.decode(&png_data, "test.png").unwrap();
         assert_eq!(img.width, 1);
         assert_eq!(img.height, 1);
-        assert_eq!(img.data.len(), 4); // 1 pixel × RGBA
+        assert_eq!(img.data.len(), 4);
         assert_eq!(&img.data, &[255, 255, 255, 255]);
     }
 
@@ -177,7 +163,6 @@ mod tests {
 
     #[test]
     fn metadata_png_with_text_chunks() {
-        // tEXtチャンク付きPNGを生成
         let png_data = create_1x1_png_with_text();
         let decoder = StandardDecoder::new();
         let meta = decoder.metadata(&png_data, "test.png").unwrap();
@@ -193,7 +178,6 @@ mod tests {
         );
     }
 
-    /// PNGのOrientation 1〜8 (鏡像を含む) を仕様どおりの幅・高さ・画素配置で返す
     #[test]
     fn applies_all_exif_orientations() {
         use crate::test_helpers::{
@@ -218,11 +202,9 @@ mod tests {
         }
     }
 
-    /// JPEGのOrientationも適用する (非可逆圧縮のため領域の明暗で判定する)
     #[test]
     fn applies_orientation_to_jpeg() {
         use crate::test_helpers::{encode_with_exif, exif_with_orientation};
-        // 左半分が黒、右半分が白の32x16
         let src = image::RgbaImage::from_fn(32, 16, |x, _| {
             let v = if x < 16 { 0 } else { 255 };
             image::Rgba([v, v, v, 255])
@@ -235,14 +217,12 @@ mod tests {
         let img = StandardDecoder::new()
             .decode(&data, "oriented.jpg")
             .unwrap();
-        // 時計回り90度: 16x32になり、元の左半分 (黒) が上半分へ移る
         assert_eq!((img.width, img.height), (16, 32));
         let luma = |x: u32, y: u32| img.data[((y * img.width + x) * 4) as usize];
         assert!(luma(8, 8) < 40, "top should be black: {}", luma(8, 8));
         assert!(luma(8, 24) > 215, "bottom should be white: {}", luma(8, 24));
     }
 
-    /// 向き情報が無い画像と不正値の画像は、画素を変えずに表示できる
     #[test]
     fn invalid_or_missing_orientation_keeps_pixels() {
         use crate::test_helpers::{asymmetric_rgba, encode_with_exif, exif_with_orientation};

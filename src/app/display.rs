@@ -1,28 +1,22 @@
-//! 表示モード・拡大縮小・ウィンドウ表示の操作
-
 use super::AppWindow;
 use crate::render::layout::DisplayMode;
 use crate::ui::window;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 impl AppWindow {
-    /// 現在の画像サイズを返す (zoom操作用)
     pub(super) fn current_image_size(&self) -> Option<(u32, u32)> {
         self.document
             .current_image()
             .map(|img| (img.width, img.height))
     }
 
-    /// クライアント領域のサイズを返す
     pub(super) fn client_size(&self) -> (f32, f32) {
         let (w, h) = window::get_client_size(self.hwnd);
         (w as f32, h as f32)
     }
 
-    /// 常に手前に表示をトグル
     pub(super) fn toggle_always_on_top(&mut self) {
         self.always_on_top = !self.always_on_top;
-        // フルスクリーン中は復帰時に反映されるので今は何もしない
         if !self.fullscreen.is_fullscreen() {
             let z_order = if self.always_on_top {
                 HWND_TOPMOST
@@ -36,7 +30,6 @@ impl AppWindow {
         }
     }
 
-    /// フルスクリーンをトグル
     pub(super) fn toggle_fullscreen(&mut self) {
         let entering = !self.fullscreen.is_fullscreen();
 
@@ -49,12 +42,10 @@ impl AppWindow {
 
         let hwnd = self.hwnd;
         if entering {
-            // フルスクリーン開始: メニュー・パネルを非表示 (フラグは保持)
             self.defer_ui(move || unsafe {
                 let _ = SetMenu(hwnd, None);
             });
         } else {
-            // フルスクリーン解除: カーソル復帰、メニュー・パネルを復元
             self.cursor_hider.force_show(self.hwnd);
             if self.menu_visible {
                 let menu = self.menu;
@@ -68,14 +59,12 @@ impl AppWindow {
         let panel = self.file_list_panel.clone();
         self.defer_ui(move || panel.apply_visibility());
         self.sync_file_list_panel();
-        // SetWindowPosが送るWM_SIZEの後に、確定した実表示で画像領域を再配置する。
         self.defer_call(
             move || window::get_client_size(hwnd),
             |app, (width, height)| app.on_size(width, height),
         );
     }
 
-    /// 最大化トグル (左ダブルクリック)
     pub(super) fn toggle_maximize(&self) {
         let hwnd = self.hwnd;
         self.defer_ui(move || unsafe {
@@ -93,8 +82,6 @@ impl AppWindow {
     }
 
     pub(super) fn action_toggle_menu_bar(&mut self) {
-        // フルスクリーン中はメニューを常に非表示にしているため、
-        // 表示状態だけが切り替わらないよう無視する
         if !self.fullscreen.is_fullscreen() {
             self.menu_visible = !self.menu_visible;
             let hwnd = self.hwnd;

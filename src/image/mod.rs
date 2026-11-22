@@ -5,7 +5,6 @@ pub mod susie;
 pub use exif_reader::read_exif_fields;
 pub use standard::StandardDecoder;
 
-/// デコード済み画像データ (RGBAピクセル)
 #[derive(Clone)]
 pub struct DecodedImage {
     pub data: Vec<u8>,
@@ -14,34 +13,25 @@ pub struct DecodedImage {
 }
 
 impl DecodedImage {
-    /// メモリ使用量 (バイト)
     pub fn memory_size(&self) -> usize {
         self.data.len()
     }
 }
 
-/// 画像メタデータ (形式名・コメント・EXIF)
 pub struct ImageMetadata {
     pub format: String,
     pub comments: Vec<String>,
-    /// EXIFメタデータ (キー, フォーマット済み値)
     pub exif: Vec<(String, String)>,
 }
 
-/// 画像デコーダの共通インターフェース (DecoderChain経由でdyn dispatch)
 pub trait ImageDecoder: Send + Sync {
-    /// バイト列からデコード可能か判定
-    /// `filename_hint`はSusieプラグインの`IsSupported`で使用
     fn can_decode(&self, data: &[u8], filename_hint: &str) -> bool;
 
-    /// デコード実行
     fn decode(&self, data: &[u8], filename_hint: &str) -> anyhow::Result<DecodedImage>;
 
-    /// メタデータ取得
     fn metadata(&self, data: &[u8], filename_hint: &str) -> anyhow::Result<ImageMetadata>;
 }
 
-/// 複数デコーダを順に試行するチェーン
 pub struct DecoderChain {
     decoders: Vec<Box<dyn ImageDecoder>>,
 }
@@ -51,7 +41,6 @@ impl DecoderChain {
         Self { decoders }
     }
 
-    /// メタデータを取得する (各デコーダを順に試行)
     pub fn metadata(&self, data: &[u8], filename_hint: &str) -> anyhow::Result<ImageMetadata> {
         let mut last_error = None;
         for decoder in &self.decoders {
@@ -66,7 +55,6 @@ impl DecoderChain {
             .unwrap_or_else(|| anyhow::anyhow!("対応するデコーダが存在しない: {filename_hint}")))
     }
 
-    /// 各デコーダを順に試行し、最初の成功を返す
     pub fn decode(&self, data: &[u8], filename_hint: &str) -> anyhow::Result<DecodedImage> {
         let mut last_error = None;
         for decoder in &self.decoders {
@@ -82,7 +70,6 @@ impl DecoderChain {
     }
 }
 
-/// ソースをデコードする。同期PDFはSTAの待機を避けるMTA経路を使う。
 pub fn decode_source(
     source: &crate::file_info::FileSource,
     decoder: &DecoderChain,
@@ -110,7 +97,6 @@ pub fn decode_source(
     }
 }
 
-/// デコード済み画像をPNGの内容へ変換する。
 pub fn encode_png(image: &DecodedImage) -> anyhow::Result<Vec<u8>> {
     use anyhow::Context as _;
     let buffer = image::RgbaImage::from_raw(image.width, image.height, image.data.clone())

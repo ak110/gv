@@ -1,5 +1,3 @@
-//! 数値フォームと読み取り専用情報表示のウィンドウ基盤
-
 use std::sync::OnceLock;
 
 use anyhow::{Context as _, Result};

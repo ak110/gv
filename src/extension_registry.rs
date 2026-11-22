@@ -3,18 +3,12 @@ use std::path::Path;
 
 pub const PDF_EXTENSION: &str = ".pdf";
 
-/// 画像・アーカイブ拡張子のレジストリ。
-///
-/// 起動時にデフォルト拡張子で初期化され、`Susie` プラグインがロードされた際に
-/// `register_image_extensions` / `register_archive_extensions` を通じて追加登録される。
-/// `is_image_extension` / `is_archive_extension` でファイル名が画像/アーカイブかを判定する。
 pub struct ExtensionRegistry {
     image_extensions: HashSet<String>,
     archive_extensions: HashSet<String>,
 }
 
 impl ExtensionRegistry {
-    /// デフォルト拡張子で初期化
     pub fn new() -> Self {
         let image_extensions = crate::image::StandardDecoder::extensions()
             .map(ToString::to_string)
@@ -50,13 +44,11 @@ impl ExtensionRegistry {
         extensions
     }
 
-    /// ファイル名が画像拡張子を持つか判定する
     pub fn is_image_extension(&self, filename: &str) -> bool {
         let lower = filename.to_lowercase();
         self.image_extensions.iter().any(|ext| lower.ends_with(ext))
     }
 
-    /// ファイル名がアーカイブ拡張子を持つか判定する
     pub fn is_archive_extension(&self, filename: &str) -> bool {
         let lower = filename.to_lowercase();
         self.archive_extensions
@@ -64,14 +56,12 @@ impl ExtensionRegistry {
             .any(|ext| lower.ends_with(ext))
     }
 
-    /// 画像拡張子を追加登録する (ドット付き小文字、例: ".psd")
     pub fn register_image_extensions(&mut self, exts: &[String]) {
         for ext in exts {
             self.image_extensions.insert(ext.clone());
         }
     }
 
-    /// アーカイブ拡張子を追加登録する
     pub fn register_archive_extensions(&mut self, exts: &[String]) {
         for ext in exts {
             self.archive_extensions.insert(ext.clone());
@@ -96,7 +86,6 @@ mod tests {
     fn default_archive_extensions() {
         let reg = ExtensionRegistry::new();
         assert!(reg.is_archive_extension("test.zip"));
-        // RARはビルド構成で対応可否が変わる（`gv_no_rar`では非対応形式として扱う）
         assert_eq!(reg.is_archive_extension("test.RAR"), cfg!(not(gv_no_rar)));
         assert!(reg.is_archive_extension("test.7z"));
         assert!(!reg.is_archive_extension("test.jpg"));

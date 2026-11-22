@@ -1,4 +1,3 @@
-/// Susieプラグイン DLLラッパー
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -11,12 +10,9 @@ use super::util::{
 };
 use crate::image::DecodedImage;
 
-/// プラグインの種別
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SusiePluginType {
-    /// 画像展開プラグイン ('I'/'i' in type string)
     Image,
-    /// アーカイブ展開プラグイン ('A'/'a' in type string)
     Archive,
 }
 
@@ -24,14 +20,12 @@ pub enum SusiePluginType {
 /// `Library`をDrop順で最後に解放するためフィールド順序に注意
 pub struct SusiePlugin {
     pub plugin_type: SusiePluginType,
-    /// プラグインDLLのパス (画像情報表示等で使用)
     pub path: std::path::PathBuf,
     get_plugin_info: GetPluginInfoFn,
     is_supported: IsSupportedFn,
     get_picture: Option<GetPictureFn>,
     get_archive_info: Option<GetArchiveInfoFn>,
     get_file: Option<GetFileFn>,
-    /// DLLハンドル (最後にDropされる)
     _lib: Library,
 }
 
@@ -42,7 +36,6 @@ pub struct SusiePlugin {
 unsafe impl Send for SusiePlugin {}
 
 impl SusiePlugin {
-    /// DLLをロードしてプラグインを初期化する
     pub fn try_load(path: &Path) -> Result<Self> {
         // SAFETY: Library::new はネイティブコード (Susie プラグイン DLL) を読み込む。
         // ロード自体は OS のローダ任せで、副作用 (DllMain 実行) があるが、Susie 規約に
@@ -66,7 +59,6 @@ impl SusiePlugin {
                 .with_context(|| "IsSupportedが見つからない")?
         };
 
-        // プラグイン種別を判定 (GetPluginInfo(0) → type string)
         let type_str = Self::call_get_plugin_info_static(get_plugin_info, 0);
         let plugin_type = if type_str.starts_with("00IN") || type_str.starts_with("00in") {
             SusiePluginType::Image
@@ -76,7 +68,6 @@ impl SusiePlugin {
             bail!("未知のプラグイン種別: {type_str} ({})", path.display());
         };
 
-        // オプションシンボルの解決
         let get_picture: Option<GetPictureFn> = if plugin_type == SusiePluginType::Image {
             // SAFETY: 上記と同じ前提 (Susie 仕様準拠のシグネチャ)。
             Some(unsafe {
@@ -120,7 +111,6 @@ impl SusiePlugin {
         })
     }
 
-    /// GetPluginInfoを呼び出す (staticバージョン、初期化時用)
     fn call_get_plugin_info_static(func: GetPluginInfoFn, info_no: i32) -> String {
         let mut buf = vec![0u8; 256];
         let len = unsafe { func(info_no, buf.as_mut_ptr(), buf.len() as i32) };
@@ -131,23 +121,18 @@ impl SusiePlugin {
         }
     }
 
-    /// GetPluginInfoを呼び出す
     fn get_plugin_info_str(&self, info_no: i32) -> String {
         Self::call_get_plugin_info_static(self.get_plugin_info, info_no)
     }
 
-    /// プラグインが対応する拡張子のリストを取得する
-    /// GetPluginInfo(2n+2) → フィルタ文字列 (例: "*.jpg;*.jpeg") から拡張子を抽出
     pub fn supported_extensions(&self) -> Vec<String> {
         let mut exts = Vec::new();
-        // info_no=2,4,6,...でフィルタを列挙 (空文字が返されたら終了)
         let mut info_no = 2;
         loop {
             let filter = self.get_plugin_info_str(info_no);
             if filter.is_empty() {
                 break;
             }
-            // "*.jpg;*.jpeg" → [".jpg", ".jpeg"]
             for part in filter.split(';') {
                 let part = part.trim();
                 if let Some(dot_pos) = part.rfind('.') {
@@ -162,14 +147,12 @@ impl SusiePlugin {
         exts
     }
 
-    /// IsSupportedを呼び出す
     pub fn is_supported(&self, filename: &str, data_header: &[u8]) -> bool {
         let ansi_filename = to_ansi(filename);
         let result = unsafe { (self.is_supported)(ansi_filename.as_ptr(), data_header.as_ptr()) };
         result != 0
     }
 
-    /// GetPictureを呼び出して画像をデコードする (メモリイメージモード)
     pub fn get_picture(&self, data: &[u8], filename: &str) -> Result<DecodedImage> {
         let get_picture = self
             .get_picture
@@ -184,7 +167,7 @@ impl SusiePlugin {
             get_picture(
                 data.as_ptr(),
                 data.len() as isize,
-                1, // メモリイメージモード
+                1,
                 std::ptr::from_mut(&mut h_bm_info),
                 std::ptr::from_mut(&mut h_bm),
                 0,
@@ -201,7 +184,6 @@ impl SusiePlugin {
         let _guard_info = HLocalGuard(h_info);
         let _guard_bits = HLocalGuard(h_bits);
 
-        // LocalLock → DIB変換 → LocalUnlock
         let image = with_local_lock(h_info, |bmi_ptr| {
             with_local_lock(h_bits, |bits_ptr| {
                 dib_to_rgba(bmi_ptr as *const u8, bits_ptr as *const u8)
@@ -212,7 +194,6 @@ impl SusiePlugin {
         Ok(image)
     }
 
-    /// GetArchiveInfoを呼び出してアーカイブ内のファイル一覧を取得する
     pub fn get_archive_info(&self, archive_path: &str) -> Result<Vec<ArchiveFileInfo>> {
         let get_archive_info = self
             .get_archive_info
@@ -221,15 +202,8 @@ impl SusiePlugin {
         let ansi_path = to_ansi(archive_path);
         let mut h_inf: isize = 0;
 
-        // flag=0: ファイル名モード
-        let result = unsafe {
-            get_archive_info(
-                ansi_path.as_ptr(),
-                0, // 未使用
-                0, // flag=0: ファイル名
-                std::ptr::from_mut(&mut h_inf),
-            )
-        };
+        let result =
+            unsafe { get_archive_info(ansi_path.as_ptr(), 0, 0, std::ptr::from_mut(&mut h_inf)) };
 
         if result != SUSIE_SUCCESS {
             bail!("GetArchiveInfo失敗 (code={result}): {archive_path}");
@@ -238,7 +212,6 @@ impl SusiePlugin {
         let handle = hlocal_from_isize(h_inf);
         let _guard = HLocalGuard(handle);
 
-        // LocalLock → エントリ配列をパース → LocalUnlock
         let entries = with_local_lock(handle, |ptr| {
             if ptr.is_null() {
                 return Vec::new();
@@ -259,7 +232,6 @@ impl SusiePlugin {
                 entries.push(entry.clone());
                 offset += entry_size;
 
-                // 安全策: 最大10000エントリ
                 if entries.len() >= 10000 {
                     break;
                 }
@@ -270,24 +242,20 @@ impl SusiePlugin {
         Ok(entries)
     }
 
-    /// GetFileを呼び出してアーカイブ内のファイルをメモリに展開する
     pub fn get_file_to_memory(&self, archive_path: &str, position: u64) -> Result<Vec<u8>> {
         let get_file = self
             .get_file
             .context("このプラグインはGetFileをサポートしない")?;
 
         let ansi_path = to_ansi(archive_path);
-        // dest: メモリ出力モードではHLOCAL*として扱われる
         let mut h_dest: isize = 0;
 
-        // flag=0x0100(メモリ出力)
-        // src=ファイル名, len=position
         let result = unsafe {
             get_file(
                 ansi_path.as_ptr(),
                 position as isize,
                 std::ptr::from_mut(&mut h_dest).cast::<u8>(),
-                0x0100, // メモリ出力
+                0x0100,
                 0,
                 0,
             )
@@ -324,5 +292,4 @@ impl SusiePlugin {
     }
 }
 
-/// スレッド安全なプラグインラッパー
 pub type SharedPlugin = Arc<Mutex<SusiePlugin>>;
