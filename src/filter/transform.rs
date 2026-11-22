@@ -177,9 +177,11 @@ pub fn rotate_arbitrary(image: &DecodedImage, degrees: f64) -> DecodedImage {
             let ix = sx_floor as i32;
             let iy = sy_floor as i32;
 
-            if ix < 0 || iy < 0 || ix + 1 >= image.width as i32 || iy + 1 >= image.height as i32 {
+            if ix < 0 || iy < 0 || ix >= image.width as i32 || iy >= image.height as i32 {
                 continue;
             }
+            let next_x = (ix + 1).min(image.width as i32 - 1);
+            let next_y = (iy + 1).min(image.height as i32 - 1);
 
             let dst = ((dy * new_w + dx) * 4) as usize;
             for ch in 0..4 {
@@ -187,9 +189,9 @@ pub fn rotate_arbitrary(image: &DecodedImage, degrees: f64) -> DecodedImage {
                     image.data[(y as usize * src_w + x as usize) * 4 + ch] as f64
                 };
                 let v00 = get(ix, iy);
-                let v10 = get(ix + 1, iy);
-                let v01 = get(ix, iy + 1);
-                let v11 = get(ix + 1, iy + 1);
+                let v10 = get(next_x, iy);
+                let v01 = get(ix, next_y);
+                let v11 = get(next_x, next_y);
                 let v = v00 * (1.0 - fx) * (1.0 - fy)
                     + v10 * fx * (1.0 - fy)
                     + v01 * (1.0 - fx) * fy
