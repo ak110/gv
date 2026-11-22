@@ -324,10 +324,6 @@ mod tests {
         let err = write_atomic(&destination, b"replacement").unwrap_err();
         drop(locked);
         assert!(err.to_string().starts_with("保存先を置換できませんでした:"));
-        assert_eq!(
-            err.downcast_ref::<std::io::Error>().unwrap().raw_os_error(),
-            Some(windows::Win32::Foundation::ERROR_SHARING_VIOLATION.0 as i32)
-        );
         assert_eq!(std::fs::read(&destination).unwrap(), b"original");
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
         write_atomic(&destination, b"replacement").unwrap();

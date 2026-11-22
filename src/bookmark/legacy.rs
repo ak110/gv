@@ -426,11 +426,11 @@ mod tests {
         assert_eq!(data.entries.len(), 2);
         assert!(matches!(
             &data.entries[0],
-            FileSource::PendingContainer { container_path } if container_path == Path::new(r"E:ol1.zip")
+            FileSource::PendingContainer { container_path } if container_path == Path::new(r"E:\vol1.zip")
         ));
         assert!(matches!(
             &data.entries[1],
-            FileSource::PendingContainer { container_path } if container_path == Path::new(r"E:ol2.zip")
+            FileSource::PendingContainer { container_path } if container_path == Path::new(r"E:\vol2.zip")
         ));
     }
 }
