@@ -20,21 +20,7 @@ impl RarHandler {
 
 impl ArchiveHandler for RarHandler {
     fn supported_extensions(&self) -> Vec<String> {
-        let registry = Arc::new(ExtensionRegistry::new());
-        let manager = super::super::ArchiveManager::new(registry);
-        let dir = crate::test_helpers::TempDir::new("rar_dispatch");
-        for name in ["absent.rar", "absent.cbr", "absent.cbrr"] {
-            let result = manager.extract_images(&dir.join(name), &dir);
-            let Err(error) = result else {
-                panic!("不在ファイルを展開できるべきではない: {name}");
-            };
-            let expected = if name == "absent.cbrr" {
-                "未対応のアーカイブ形式:"
-            } else {
-                "RARアーカイブを開けない:"
-            };
-            assert!(error.to_string().starts_with(expected), "{name}: {error}");
-        }
+        EXTENSIONS.iter().map(ToString::to_string).collect()
     }
 
     fn extract_images(
@@ -102,12 +88,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn supported_extensions() {
-        let reg = Arc::new(ExtensionRegistry::new());
-        let handler = RarHandler::new(reg);
-        let exts = handler.supported_extensions();
-        assert!(exts.contains(&".rar".to_string()));
-        assert!(exts.contains(&".cbr".to_string()));
+    fn archive_manager_dispatches_rar_extensions_to_rar_handler() {
+        let registry = Arc::new(ExtensionRegistry::new());
+        let manager = crate::archive::ArchiveManager::new(registry);
+        let dir = crate::test_helpers::TempDir::new("rar_dispatch");
+        for name in ["absent.rar", "absent.cbr", "absent.cbrr"] {
+            let result = manager.extract_images(&dir.join(name), &dir);
+            let Err(error) = result else {
+                panic!("不在ファイルを展開できるべきではない: {name}");
+            };
+            let expected = if name == "absent.cbrr" {
+                "未対応のアーカイブ形式:"
+            } else {
+                "RARアーカイブを開けない:"
+            };
+            assert!(error.to_string().starts_with(expected), "{name}: {error}");
+        }
     }
 
     #[test]
