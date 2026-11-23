@@ -28,7 +28,9 @@ def scope(repository: pathlib.Path, base: str) -> str:
             file=sys.stderr,
         )
         return "full"
-    diff = run_git(repository, "diff", "--name-only", "-z", base, "HEAD")
+    diff = run_git(
+        repository, "diff", "--name-only", "--no-renames", "-z", base, "HEAD"
+    )
     if diff.returncode != 0:
         print(
             f"差分を取得できないため全体を検査する: {diff.stderr.strip()}",

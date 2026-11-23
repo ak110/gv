@@ -72,3 +72,12 @@ def test_scope_falls_back_to_full_without_usable_base(repository: pathlib.Path) 
     assert ci_scope.scope(repository, "0" * 40) == "full"
     assert ci_scope.scope(repository, rewritten_away) == "full"
     assert ci_scope.scope(repository, head) == "docs"
+
+
+def test_scope_treats_moving_rust_source_into_docs_as_full(
+    repository: pathlib.Path,
+) -> None:
+    base = _git(repository, "rev-parse", "HEAD")
+    _git(repository, "mv", "src/main.rs", "docs/guide/example.md")
+    _commit(repository, {"docs/guide/viewer.md": "# 表示の変更\n"})
+    assert ci_scope.scope(repository, base) == "full"
