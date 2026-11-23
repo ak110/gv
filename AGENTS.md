@@ -53,7 +53,7 @@ SAFETYコメントの粒度判定基準は[.claude/agents/unsafe-reviewer.md](.c
   - LinuxビルドはRAR展開を除外する（`--cfg gv_no_rar`）。RAR関連のコードはLinuxのclippyとテストのコンパイルの対象外になる
   - Linuxの`cargo test`はテストのコンパイルまでとし、テストの実行はWindows CIが担う
   - 成果物は`target/x86_64-pc-windows-msvc/`配下へ出力される
-- Makefileではなく`mise.toml`のタスクを使用する。pre-commitフレームワークは`uvx prek`で呼び出す
+- Makefileではなく`mise.toml`のタスクを使用する。pre-commitフレームワークは`mise exec -- prek`で呼び出す
 - Windowsの通常テストには、表示しない実Win32ウィンドウとDirect2D資源を作成・破棄するテストが含まれる。
   `src/app/test_support.rs`の`TestApp`を使うapp層のテストと、`src/test_helpers.rs`の`HiddenWindow`を使う`src/render/d2d_renderer.rs`のテストが該当する。
   対話中の端末でWindowsのテスト一式を背景で約130回反復した際、ユーザーの画面でウィンドウが開閉し、作業を妨げた。
