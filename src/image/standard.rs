@@ -166,6 +166,7 @@ mod tests {
         let png_data = create_1x1_png_with_text();
         let decoder = StandardDecoder::new();
         let meta = decoder.metadata(&png_data, "test.png").unwrap();
+        assert!(meta.format.contains("Png"), "{}", meta.format);
         assert_eq!(meta.comments, ["Author: TestAuthor"]);
     }
 

@@ -147,38 +147,13 @@ def test_prepare_rejects_unrelated_existing_tag() -> None:
 
 
 def test_prepare_preserves_minor_and_major_updates() -> None:
-    def fake_run(args: tuple[str, ...], **_kwargs: typing.Any) -> types.SimpleNamespace:
-        match args:
-            case ("git", "rev-parse", *rest):
-                assert rest in [
-                    ["HEAD"],
-                    ["--verify", "--end-of-options", "source^{commit}"],
-                ]
-                stdout = "source"
-            case ("git", "show", "source:Cargo.toml"):
-                stdout = '[package]\nname = "gv"\nversion = "1.2.3"\n'
-            case ("git", "tag", "--list") | ("cargo", "update", "--workspace"):
-                stdout = ""
-            case _:
-                raise AssertionError(args)
-        return types.SimpleNamespace(stdout=stdout)
-
     for bump, version in [("MINOR", "1.3.0"), ("MAJOR", "2.0.0")]:
-        with (
-            tempfile.TemporaryDirectory(prefix="gv_release_bump_") as work,
-            contextlib.chdir(work),
-            unittest.mock.patch.object(subprocess, "run", fake_run),
-        ):
-            pathlib.Path("Cargo.toml").write_text(
-                'version = "1.2.3"\n', encoding="utf-8"
-            )
-            pathlib.Path("Cargo.lock").write_text("package = []\n", encoding="utf-8")
-            result = release.prepare("source", bump)
-            assert result == {
-                "version": version,
-                "tag": f"v{version}",
-                "rerun": "false",
-            }
+        with tempfile.TemporaryDirectory(prefix="gv_release_bump_") as work:
+            repository = _repository(pathlib.Path(work))
+            source = _git(repository, "rev-parse", "HEAD")
+            result = _prepare_cli(repository, source, bump)
+            assert result["version"] == version
+            assert result["tag"] == f"v{version}"
 
 
 def test_publish_completes_missing_asset_without_overwriting() -> None:
