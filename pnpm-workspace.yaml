@@ -18,6 +18,8 @@ overrides:
   esbuild: ^0.25.0
   prh: ^6.0.6
   js-yaml: ^4.2.0
+  # textlint の設定読込側は js-yaml 5 の CORE_SCHEMA.withTags を使う。
+  "rc-config-loader@4.2.0>js-yaml": ^5.5.0
   "micromark-extension-math@3.1.0>katex": 0.18.2
   # markdownlint の固定依存による GHSA-gg6h-894w-4m9c を解消する。
   # markdownlint が修正版の re2js を要求するようになったら撤去する。

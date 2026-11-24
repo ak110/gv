@@ -31,7 +31,7 @@ jobs:
         with:
           # 変更範囲の判定でpush前のcommitとの差分を取る。
           fetch-depth: 0
-      - uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
+      - uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
       # Rustのソースが読み込まない文書だけの変更では、Rustのビルドと試験を省く。
       # 基点が無い・祖先でない・判別できない差分は全体を検査する（scripts/ci_scope.py）。
       - name: 変更範囲の判定
