@@ -4,7 +4,7 @@ description: 生成された自己更新用バッチの実行ファイルの退�
 verifies:
   - src/updater.rs
   - src/updater/exhaustive.rs
-verified-digest: a022a64934c895edaa7e246e0631d09fed3e5f1051b9e48c1d29194674535190
+verified-digest: 37340776a617ef9cb44991bb76f4ce86ead1a6acf90f377a6f676edcef1e8285
 ---
 
 # 自己更新の復旧可能性

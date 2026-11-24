@@ -89,7 +89,6 @@ fn parse<'a>(batch: &'a str, extras: &[PathBuf]) -> (Vec<Op<'a>>, HashMap<&'a st
                 | "echo." => Op::Next,
                 line if line.starts_with("echo ") => Op::Next,
                 r#"tasklist /fi "PID eq 42" 2>nul | find "42" >nul"# => {
-                    // 探索は、旧プロセスが終了した後のファイル操作を対象とする。
                     Op::IfFailed(false, "wait_done")
                 }
                 _ => panic!("未対応のバッチ命令: {line}"),
@@ -114,7 +113,6 @@ fn explore(extra_count: usize, allow_restart: bool) -> (usize, Vec<(State, &'sta
         42,
     )
     .unwrap();
-    // モデルのパスは区切り文字を正規化する。入力パスのWin32としての解釈は別試験の責任。
     let batch = std::str::from_utf8(&raw[3..]).unwrap().replace('\\', "/");
     let (code, labels) = parse(&batch, &extras);
     let mut pending = [File::Absent, File::Original]
@@ -166,7 +164,6 @@ fn explore(extra_count: usize, allow_restart: bool) -> (usize, Vec<(State, &'sta
                     continue;
                 }
                 if matches!(code[state.pc], Op::Launch) && state.target == File::New {
-                    // 起動した新版で cleanup_old_exe が成功するか、退避を残す。
                     pending.push_back(State {
                         backup: File::Absent,
                         ..next
@@ -193,7 +190,6 @@ fn explore(extra_count: usize, allow_restart: bool) -> (usize, Vec<(State, &'sta
                         next.target = File::Absent;
                     }
                     Op::Install if state.staged => {
-                        // 別ボリュームでは失敗時にコピー途中の配置先が残りうる。
                         pending.push_back(State {
                             target: File::Partial,
                             failed: true,
@@ -372,13 +368,11 @@ fn batch_restart_preserves_recoverable_executable_in_cmd() {
     let backup = target.with_extension("exe.old");
     let staged = work.join("update.exe");
     let batch = work.join("update.bat");
-    // 最初の実行が、現行版の退避を終え、新版の配置前に中断した状態。
     std::fs::write(&backup, b"original").unwrap();
     std::fs::write(&staged, b"new").unwrap();
     let bytes = build_update_batch_bytes(&batch, &staged, &target, &[], u32::MAX).unwrap();
     let script = String::from_utf8(bytes)
         .unwrap()
-        // 更新に失敗した後の対話と無期限の再試行だけを止める。
         .replace("pause >nul\r\ngoto rename\r\n", "exit /b 17\r\n")
         .replace("start \"\" ", "rem start \"\" ");
     std::fs::write(&batch, script).unwrap();

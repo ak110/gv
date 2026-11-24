@@ -244,8 +244,6 @@ fn arbitrary_rotation_small_right_angles() {
 #[test]
 #[ignore = "反例候補: 横長画像の回転で出力のバイト数が u32 の範囲を超える"]
 fn rotation_size_has_room_for_decoder_boundary() {
-    // 標準デコーダの非厳格な既定の確保上限を RGBA8 に換算する。
-    // Susie や PDF の読み込みを含む、全デコーダ共通の上限ではない。
     let max_rgba_pixels = ::image::Limits::default().max_alloc.unwrap() / 4;
     let width = max_rgba_pixels as u32;
     let height = 1_u32;

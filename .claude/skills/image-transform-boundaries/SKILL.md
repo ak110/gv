@@ -6,7 +6,7 @@ verifies:
   - src/filter/transform/exhaustive.rs
   - src/selection.rs
   - src/image/standard.rs
-verified-digest: 480c12d26ab188d11ddca57bcb1746abf448102b50db3cc03a0b7af5c0165a66
+verified-digest: bbb8c06b6ca4db1d3685841f1f02bd156057e02468042f79e12c5a9ef2e1e180
 ---
 
 # 画像の幾何変換の境界
