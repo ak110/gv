@@ -4,6 +4,9 @@
 [advisories]
 # 脆弱性アドバイザリチェック (v2形式)
 version = 2
+# 保守終了クレートは間接依存も報告する。
+# cargo-deny 0.22.0で既定値が"all"から"workspace"へ変わったため明示する。
+unmaintained = "all"
 
 [licenses]
 version = 2
