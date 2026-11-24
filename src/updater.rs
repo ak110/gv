@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result};
 
@@ -70,8 +70,18 @@ fn prepare_update(
     exe_path: &std::path::Path,
     temp_dir: &std::path::Path,
 ) -> Result<bool> {
+    prepare_update_with(info, exe_path, temp_dir, download_file, launch_batch)
+}
+
+fn prepare_update_with(
+    info: &UpdateInfo,
+    exe_path: &Path,
+    temp_dir: &Path,
+    download: impl FnOnce(&str, &Path) -> Result<()>,
+    launch: impl FnOnce(&Path) -> Result<()>,
+) -> Result<bool> {
     let download_path = temp_dir.join("download");
-    download_file(&info.download_url, &download_path)?;
+    download(&info.download_url, &download_path)?;
 
     let extracted = if std::path::Path::new(&info.download_url)
         .extension()
@@ -95,7 +105,7 @@ fn prepare_update(
         &extracted.extra_files,
         std::process::id(),
     )?;
-    launch_batch(&batch_path)?;
+    launch(&batch_path)?;
 
     Ok(true)
 }
@@ -349,10 +359,14 @@ fn parse_version(s: &str) -> Option<(u32, u32, u32)> {
 
 pub fn cleanup_old_exe() {
     if let Ok(exe) = crate::paths::exe_path() {
-        let old = exe.with_extension("exe.old");
-        if old.exists() {
-            let _ = std::fs::remove_file(&old);
-        }
+        cleanup_old_exe_at(&exe);
+    }
+}
+
+fn cleanup_old_exe_at(exe: &Path) {
+    let old = exe.with_extension("exe.old");
+    if old.exists() {
+        let _ = std::fs::remove_file(&old);
     }
 }
 
@@ -746,3 +760,6 @@ mod tests {
         assert!(work.exists(), "復元失敗時は作業フォルダを回収しない");
     }
 }
+
+#[cfg(test)]
+mod exhaustive;

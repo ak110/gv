@@ -5,6 +5,10 @@ use anyhow::{Context as _, Result};
 use crate::image::DecodedImage;
 use crate::selection::PixelRect;
 
+fn crop_byte_offset(width: usize, x: usize, y: usize) -> usize {
+    (y * width + x) * 4
+}
+
 pub fn crop(image: &DecodedImage, rect: &PixelRect) -> DecodedImage {
     let rect = rect.clamped(image.width, image.height);
     if !rect.is_valid() {
@@ -18,11 +22,11 @@ pub fn crop(image: &DecodedImage, rect: &PixelRect) -> DecodedImage {
     let src_w = image.width as usize;
     let dst_w = rect.width as usize;
     let dst_h = rect.height as usize;
-    let mut data = Vec::with_capacity(dst_w * dst_h * 4);
+    let mut data = Vec::with_capacity(crop_byte_offset(dst_w, 0, dst_h));
 
     for row in 0..dst_h {
         let src_y = rect.y as usize + row;
-        let src_offset = (src_y * src_w + rect.x as usize) * 4;
+        let src_offset = crop_byte_offset(src_w, rect.x as usize, src_y);
         let src_end = src_offset + dst_w * 4;
         data.extend_from_slice(&image.data[src_offset..src_end]);
     }
@@ -129,6 +133,10 @@ pub fn rotate_270(image: &DecodedImage) -> DecodedImage {
     }
 }
 
+fn rotation_byte_offset(width: u32, x: u32, y: u32) -> usize {
+    ((y * width + x) * 4) as usize
+}
+
 pub fn rotate_arbitrary(image: &DecodedImage, degrees: f64) -> DecodedImage {
     let rad = degrees.to_radians();
     let cos = rad.cos();
@@ -159,7 +167,7 @@ pub fn rotate_arbitrary(image: &DecodedImage, degrees: f64) -> DecodedImage {
     }
 
     let src_w = image.width as usize;
-    let mut data = vec![0u8; (new_w * new_h * 4) as usize];
+    let mut data = vec![0u8; rotation_byte_offset(new_w, 0, new_h)];
 
     let cos_inv = cos;
     let sin_inv = -sin;
@@ -183,7 +191,7 @@ pub fn rotate_arbitrary(image: &DecodedImage, degrees: f64) -> DecodedImage {
             let next_x = (ix + 1).min(image.width as i32 - 1);
             let next_y = (iy + 1).min(image.height as i32 - 1);
 
-            let dst = ((dy * new_w + dx) * 4) as usize;
+            let dst = rotation_byte_offset(new_w, dx, dy);
             for ch in 0..4 {
                 let get = |x: i32, y: i32| -> f64 {
                     image.data[(y as usize * src_w + x as usize) * 4 + ch] as f64
@@ -481,3 +489,6 @@ mod tests {
         assert_eq!(cropped.data, [180, 180, 0, 255]);
     }
 }
+
+#[cfg(test)]
+mod exhaustive;
