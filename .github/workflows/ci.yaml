@@ -1,6 +1,9 @@
 name: CI
 
 on:
+  # ReleaseがGITHUB_TOKENでpushした版数更新commitにはpush CIが起動しない。
+  # タグからReleaseを再開する前に、同じタグでCIを実行できるようにする。
+  workflow_dispatch:
   push:
     tags-ignore:
       - "*"

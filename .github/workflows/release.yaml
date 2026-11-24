@@ -13,10 +13,6 @@ on:
           - MAJOR
         default: PATCH
 
-permissions:
-  contents: write
-  actions: write
-
 concurrency:
   group: release
   cancel-in-progress: false
@@ -24,6 +20,12 @@ concurrency:
 jobs:
   release:
     runs-on: windows-latest
+    permissions:
+      contents: write
+      actions: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     env:
       # mise等がGitHub APIを呼び出す際のレート制限（403）回避。
       GITHUB_TOKEN: ${{ github.token }}
@@ -31,6 +33,7 @@ jobs:
       - name: Verify CI passed
         env:
           GH_TOKEN: ${{ github.token }}
+          REF_TYPE: ${{ github.ref_type }}
         shell: pwsh
         run: |
           $maxAttempts = 45
@@ -44,7 +47,14 @@ jobs:
               exit 0
             }
             if ($conclusion -and $conclusion -ne "null") {
-              # 完了しているが success ではない
+              if ($env:REF_TYPE -eq "tag") {
+                Write-Error ("このタグのCIが成功していない (status: $conclusion)。" +
+                  "同じタグのCIログを確認し、一時的な原因ならCIを再実行する。" +
+                  "CIが成功した後、このRelease workflowを再実行する。" +
+                  "タグのcommit自体の修正が必要なら、同じタグのZIPは補完できない。" +
+                  "修正後のcommitでCIを成功させ、新しい版をリリースする。")
+                exit 1
+              }
               Write-Error ("このcommitのCIが成功していない (status: $conclusion)。" +
                 "gh run list --workflow=ci.yaml --commit=${{ github.sha }} で失敗したジョブを確認して修正し、" +
                 "修正をpushしてCIが成功した後に、releaserでリリースし直す。")
@@ -54,7 +64,8 @@ jobs:
             Start-Sleep -Seconds $intervalSec
           }
           Write-Error ("CIの完了待ちが時間切れになった (待機 $($maxAttempts * $intervalSec)秒)。" +
-            "gh run list --workflow=ci.yaml --commit=${{ github.sha }} でCIの完了を確認してから、このworkflowを再実行する。")
+            "タグから起動した場合にCI実行がなければ gh workflow run ci.yaml --ref <タグ> で起動する。" +
+            "CIの成功を確認してから、このworkflowを再実行する。")
           exit 1
 
       - name: Checkout
@@ -101,6 +112,11 @@ jobs:
             "README.md",
             "LICENSE"
           ) -DestinationPath $zipName
+
+      - name: Attest release archive
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: gv-v${{ steps.release.outputs.version }}.zip
 
       - name: Update version.json for GitHub Pages
         if: steps.release.outputs.rerun != 'true'

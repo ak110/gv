@@ -5,6 +5,26 @@
 [Releases](https://github.com/ak110/gv/releases)からZIPをダウンロードし、任意のフォルダに展開する。
 展開したフォルダの`ぐらびゅ.exe`を起動する。
 
+### ZIPのビルド来歴を検証する
+
+Release本文に来歴検証の案内がある版は、展開前にZIPを検証できる。
+GitHub CLIを `gh auth login` または `GH_TOKEN` で認証し、`<版>` をダウンロードしたZIPの版数に置き換えて実行する。
+
+```text
+gh attestation verify gv-v<版>.zip --repo ak110/gv --signer-workflow ak110/gv/.github/workflows/release.yaml
+```
+
+次に、リリースタグのcommitとその第1親（版数更新前のcommit）のSHAを取得する。出力はこの順に並ぶ。
+
+```text
+gh api repos/ak110/gv/commits/tags/v<版> --jq ".sha, .parents[0].sha"
+```
+
+最初の検証コマンドの末尾に `--source-digest <SHA>` を追加し、タグのSHAに置き換えて実行する。
+一致しない場合は第1親のSHAで試す。どちらかで検証が成功すれば、ZIPの署名元とソースcommitの両方を確認できたことになる。
+どちらでも成功しない場合は、版数・ZIP・認証を確認し、検証が成功するまで展開しない。
+[証明の一覧](https://github.com/ak110/gv/attestations)でも確認できる。
+
 ## 基本的な使い方
 
 「ファイル」メニューの「ファイルを開く」「フォルダを開く」か、ウィンドウへのドラッグ&ドロップで画像ファイル・フォルダを開ける。

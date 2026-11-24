@@ -160,4 +160,23 @@ dotfilesのコマンドが既にPATH上にあれば、同じ処理を`releaser p
 `releaser`はCI完了を待ち、リリースworkflowを起動・監視してローカルを同期する。
 `scripts/release.py`はworkflow内部の補助処理であり、開発者は`releaser`から起動する。
 
+タグの作成後にReleaseへZIPを載せる処理が失敗した場合は、元のRelease workflowを再実行する。
+タグを指定して起動し直す場合は、先に同じタグでCIを成功させる（以下の`v1.2.3`は対象のタグに置き換える）。
+自動リリースが作成したタグのcommitではpushによるCIが起動しないため、CIの実行がなければ手動で起動する。
+
+```cmd
+gh workflow run ci.yaml --ref v1.2.3
+```
+
+そのタグのCIが失敗している場合は、ログを確認し、一時的な原因なら同じタグのCIを再実行する。
+タグのcommit自体の修正が必要なら同じタグのZIPは補完できない。修正後のcommitでCIを成功させ、新しい版をリリースする。
+
+そのタグのCIが成功したことを[Actions](https://github.com/ak110/gv/actions)で確認してから、タグのcommitでReleaseを起動する。
+
+```cmd
+gh workflow run release.yaml --ref v1.2.3 -f bump=PATCH
+```
+
+既存タグからの起動では`bump`による版数の変更は行わない。
+
 結果の確認: <https://github.com/ak110/gv/actions>
