@@ -185,3 +185,5 @@ gh workflow run release.yaml --ref v1.2.3 -f bump=PATCH
 既存タグからの起動では`bump`による版数の変更は行わない。
 
 結果の確認: <https://github.com/ak110/gv/actions>
+
+この行は依存差分がない場合の検証専用であり、マージしない。
