@@ -112,10 +112,7 @@ impl AppWindow {
             return;
         };
         if persistent {
-            self.document
-                .persistent_filter_mut()
-                .add_operation(operation);
-            self.document.on_persistent_filter_changed();
+            self.document.add_persistent_filter(operation);
         } else if let Some(image) = self.document.current_image() {
             let selection = self.selection.current_rect();
             let result =
@@ -141,9 +138,7 @@ impl AppWindow {
         &mut self,
         kind: crate::filter_spec::FilterKind,
     ) -> bool {
-        let pf = self.document.persistent_filter_mut();
-        if pf.remove_operation_type(kind) {
-            self.document.on_persistent_filter_changed();
+        if self.document.remove_persistent_filter(kind) {
             self.process_document_events();
             true
         } else {
@@ -152,8 +147,7 @@ impl AppWindow {
     }
 
     pub(super) fn action_p_filter_toggle(&mut self) {
-        self.document.persistent_filter_mut().toggle_enabled();
-        self.document.on_persistent_filter_changed();
+        self.document.toggle_persistent_filter();
         self.process_document_events();
     }
 

@@ -1,5 +1,5 @@
 use super::AppWindow;
-use crate::render::layout::DisplayMode;
+use crate::render::layout::Layout;
 use crate::ui::window;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -114,39 +114,38 @@ impl AppWindow {
         self.invalidate();
     }
 
-    pub(super) fn action_toggle_margin(&mut self) {
-        self.renderer.layout_mut().toggle_margin();
+    fn update_layout(&mut self, update: impl FnOnce(&mut Layout)) {
+        self.renderer.update_layout(update);
         self.invalidate();
     }
 
+    pub(super) fn action_toggle_margin(&mut self) {
+        self.update_layout(Layout::toggle_margin);
+    }
+
     pub(super) fn action_zoom_reset(&mut self) {
-        self.renderer.layout_mut().zoom_reset();
-        self.invalidate();
+        self.update_layout(Layout::zoom_reset);
     }
 
     pub(super) fn action_zoom_out(&mut self) {
         if let Some((iw, ih)) = self.current_image_size() {
             let (ww, wh) = self.client_size();
-            self.renderer.layout_mut().zoom_out(iw, ih, ww, wh);
-            self.invalidate();
+            self.update_layout(|layout| layout.zoom_out(iw, ih, ww, wh));
         }
     }
 
     pub(super) fn action_zoom_in(&mut self) {
         if let Some((iw, ih)) = self.current_image_size() {
             let (ww, wh) = self.client_size();
-            self.renderer.layout_mut().zoom_in(iw, ih, ww, wh);
-            self.invalidate();
+            self.update_layout(|layout| layout.zoom_in(iw, ih, ww, wh));
         }
     }
 
     pub(super) fn action_display_auto_fit(&mut self) {
-        self.renderer.layout_mut().mode = DisplayMode::AutoFit;
-        self.invalidate();
+        self.update_layout(Layout::auto_fit);
     }
 
     pub(super) fn action_display_auto_shrink(&mut self) {
-        self.renderer.layout_mut().mode = DisplayMode::AutoShrink;
-        self.invalidate();
+        self.update_layout(Layout::auto_shrink);
     }
 }

@@ -209,8 +209,8 @@ impl D2DRenderer {
         &self.layout
     }
 
-    pub fn layout_mut(&mut self) -> &mut Layout {
-        &mut self.layout
+    pub fn update_layout(&mut self, update: impl FnOnce(&mut Layout)) {
+        update(&mut self.layout);
     }
 
     pub fn cycle_alpha_background(&mut self) {

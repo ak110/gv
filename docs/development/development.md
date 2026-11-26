@@ -67,6 +67,28 @@ Git管理外の`.mise.local.toml`へ保存し、`mise run setup`の手順も実�
 | `mise run bench-memory`                           | 巨大画像の表示時間とプロセスメモリーの測定                  |
 | `mise run bench-compare -- <基準JSON> <比較JSON>` | 表示時間の測定結果2件の比較                                 |
 
+### 任意の設計点検
+
+Linuxのクロスビルド環境を用意した後、リポジトリのルートで
+[deslop-please](https://github.com/deterministic-machines/deslop-please/tree/64d43a31e194f191b7b0b80861d12c5fa1a0dbf6)を導入して実行する。
+ツール本体はLinux向けにビルドし、点検対象はRARを除いたWindows向けのコードとする。
+
+```bash
+mise exec -- rustup component add rust-analyzer rust-src
+mise exec -- cargo install --target x86_64-unknown-linux-gnu --locked \
+  --git https://github.com/deterministic-machines/deslop-please \
+  --rev 64d43a31e194f191b7b0b80861d12c5fa1a0dbf6 deslop-please
+RUSTFLAGS='--cfg gv_no_rar' mise exec -- deslop-please --target x86_64-pc-windows-msvc --json
+```
+
+設計の見直しでは、`field-leak`（フィールドへの外部依存）、`module-cycle`（モジュール間の循環）、
+`tangle`（親子モジュール間の責務の混在）、`shallow-module`（モジュール内部の過剰な公開）を確認する。
+診断は調査の起点であり、全件を修正する必要はない。
+読み取り専用の参照や、同じ型の実装を分割したモジュール間の依存は修正対象から外す。
+別のモジュールが所有する状態を利用側で書き換え、再適用や通知まで利用側が担っている場合は、
+状態の変更と後処理を所有側の1つの操作にまとめる。
+診断がある場合は終了コード1となる。この点検はCIや`mise run test`の合否条件には含めない。
+
 ## サプライチェーン攻撃対策
 
 lockfileの尊重、公開待機、ピン留め、脆弱性監査の4点を基本方針とする。

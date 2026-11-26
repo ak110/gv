@@ -1,32 +1,23 @@
+use std::rc::Rc;
 use std::sync::OnceLock;
 
 use anyhow::{Context as _, Result};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
-use windows::Win32::Graphics::Gdi::{COLOR_BTNFACE, HBRUSH, HFONT, UpdateWindow};
+use windows::Win32::Graphics::Gdi::{COLOR_BTNFACE, HBRUSH, UpdateWindow};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Input::KeyboardAndMouse::{EnableWindow, SetFocus};
 use windows::Win32::UI::WindowsAndMessaging::*;
-use windows::core::{PCWSTR, w};
+use windows::core::PCWSTR;
 
-use super::form_dialog::FieldDef;
 use crate::util::to_wide;
 
 const CLASS_NAME: &str = "gv_form_dialog";
 pub(crate) const ID_EDIT_BASE: i32 = 0x600;
-const ID_ERROR: i32 = 0x700;
 const EM_SETSEL: u32 = 0x00B1;
-const MARGIN: i32 = 12;
-const FIELD_HEIGHT: i32 = 48;
 static REGISTERED: OnceLock<std::result::Result<(), String>> = OnceLock::new();
 
-pub(super) enum DialogContent {
-    Form(Vec<FieldDef>),
-    Info { text: String, font: HFONT },
-}
-
 struct DialogData {
-    fields: Vec<FieldDef>,
-    results: Option<Vec<String>>,
+    on_confirm: Rc<dyn Fn(HWND) -> bool>,
     closed: bool,
 }
 
@@ -56,29 +47,16 @@ impl Drop for DialogWindow {
 pub(super) fn show_dialog(
     parent: HWND,
     title: &str,
-    content: DialogContent,
-) -> Result<Option<Vec<String>>> {
+    (width, height): (i32, i32),
+    create_content: impl FnOnce(HWND) -> Result<()>,
+    on_confirm: impl Fn(HWND) -> bool + 'static,
+) -> Result<()> {
     REGISTERED
         .get_or_init(|| register_class().map_err(|e| format!("{e:#}")))
         .as_ref()
         .map_err(|e| anyhow::anyhow!("{e}"))?;
-    let fields = match &content {
-        DialogContent::Form(fields) => fields.clone(),
-        DialogContent::Info { .. } => Vec::new(),
-    };
-    let (width, height) = match &content {
-        DialogContent::Form(fields) => (
-            360,
-            MARGIN * 4
-                + fields.len() as i32 * FIELD_HEIGHT
-                + 64
-                + unsafe { GetSystemMetrics(SM_CYCAPTION) + GetSystemMetrics(SM_CYSIZEFRAME) },
-        ),
-        DialogContent::Info { .. } => (640, 480),
-    };
     let mut data = Box::new(DialogData {
-        fields,
-        results: None,
+        on_confirm: Rc::new(on_confirm),
         closed: false,
     });
     let (x, y) = super::center_on_parent(parent, width, height);
@@ -104,7 +82,7 @@ pub(super) fn show_dialog(
     }
     .context("ダイアログの作成に失敗しました")?;
     let window = DialogWindow(hwnd);
-    create_content(hwnd, &content)?;
+    create_content(hwnd)?;
     unsafe {
         let _ = ShowWindow(hwnd, SW_SHOW);
         let _ = UpdateWindow(hwnd);
@@ -125,7 +103,7 @@ pub(super) fn show_dialog(
         run_modal_loop(parent, hwnd, &raw const data.closed);
     }
     drop(window);
-    Ok(data.results.take())
+    Ok(())
 }
 
 fn register_class() -> Result<()> {
@@ -147,24 +125,23 @@ fn register_class() -> Result<()> {
     Ok(())
 }
 
-fn create_control(
+pub(super) fn create_control(
     hwnd: HWND,
-    class: PCWSTR,
+    class: &str,
     text: &str,
     style: WINDOW_STYLE,
+    ex_style: WINDOW_EX_STYLE,
     id: i32,
     rect: (i32, i32, i32, i32),
 ) -> Result<HWND> {
+    let class = to_wide(class);
     let text = to_wide(text);
     let (x, y, width, height) = rect;
+    // SAFETY: NUL終端のクラス名とテキストは同期呼出が戻るまで生存する。
     Ok(unsafe {
         CreateWindowExW(
-            if style.contains(WS_TABSTOP) && (ID_EDIT_BASE..ID_ERROR).contains(&id) {
-                WS_EX_CLIENTEDGE
-            } else {
-                WINDOW_EX_STYLE::default()
-            },
-            class,
+            ex_style,
+            PCWSTR(class.as_ptr()),
             PCWSTR(text.as_ptr()),
             style,
             x,
@@ -179,101 +156,18 @@ fn create_control(
     }?)
 }
 
-fn create_content(hwnd: HWND, content: &DialogContent) -> Result<()> {
+pub(super) fn client_size(hwnd: HWND) -> Result<(i32, i32)> {
     let mut rect = RECT::default();
     unsafe {
         GetClientRect(hwnd, std::ptr::from_mut(&mut rect))?;
     }
-    let width = rect.right - rect.left;
-    match content {
-        DialogContent::Form(fields) => {
-            for (i, field) in fields.iter().enumerate() {
-                let y = MARGIN + i as i32 * FIELD_HEIGHT;
-                create_control(
-                    hwnd,
-                    w!("STATIC"),
-                    &field.display_label(),
-                    WS_CHILD | WS_VISIBLE,
-                    0,
-                    (MARGIN, y, width - MARGIN * 2, 20),
-                )?;
-                create_control(
-                    hwnd,
-                    w!("EDIT"),
-                    &field.default,
-                    WS_CHILD | WS_VISIBLE | WS_TABSTOP | WINDOW_STYLE(ES_AUTOHSCROLL as u32),
-                    ID_EDIT_BASE + i as i32,
-                    (MARGIN, y + 20, width - MARGIN * 2, 24),
-                )?;
-            }
-            let y = MARGIN + fields.len() as i32 * FIELD_HEIGHT;
-            create_control(
-                hwnd,
-                w!("STATIC"),
-                "",
-                WS_CHILD | WS_VISIBLE,
-                ID_ERROR,
-                (MARGIN, y, width - MARGIN * 2, 40),
-            )?;
-            let x = (width - 168) / 2;
-            create_control(
-                hwnd,
-                w!("BUTTON"),
-                "OK",
-                WS_CHILD | WS_VISIBLE | WS_TABSTOP | WINDOW_STYLE(BS_DEFPUSHBUTTON as u32),
-                1,
-                (x, y + 44, 80, 28),
-            )?;
-            create_control(
-                hwnd,
-                w!("BUTTON"),
-                "キャンセル",
-                WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                2,
-                (x + 88, y + 44, 80, 28),
-            )?;
-        }
-        DialogContent::Info { text, font } => {
-            let edit = create_control(
-                hwnd,
-                w!("EDIT"),
-                &text.replace('\n', "\r\n"),
-                WS_CHILD
-                    | WS_VISIBLE
-                    | WS_TABSTOP
-                    | WS_VSCROLL
-                    | WINDOW_STYLE((ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL) as u32),
-                ID_EDIT_BASE,
-                (0, 0, width, rect.bottom - rect.top),
-            )?;
-            if !font.is_invalid() {
-                unsafe {
-                    SendMessageW(
-                        edit,
-                        WM_SETFONT,
-                        Some(WPARAM(font.0 as usize)),
-                        Some(LPARAM(1)),
-                    );
-                }
-            }
-        }
-    }
-    Ok(())
+    Ok((rect.right - rect.left, rect.bottom - rect.top))
 }
 
-unsafe fn select_edit(edit: HWND) {
+pub(super) fn select_edit(edit: HWND) {
     unsafe {
         let _ = SetFocus(Some(edit));
         SendMessageW(edit, EM_SETSEL, Some(WPARAM(0)), Some(LPARAM(-1)));
-    }
-}
-
-fn read_edit_text(edit: HWND) -> String {
-    unsafe {
-        let len = GetWindowTextLengthW(edit).max(0) as usize;
-        let mut text = vec![0u16; len + 1];
-        let copied = GetWindowTextW(edit, &mut text).max(0) as usize;
-        String::from_utf16_lossy(&text[..copied]).trim().to_owned()
     }
 }
 
@@ -300,43 +194,16 @@ unsafe extern "system" fn dialog_wnd_proc(
         else {
             return LRESULT(0);
         };
-        if msg == WM_CLOSE || wparam.0 & 0xFFFF == 2 || data.fields.is_empty() {
+        if msg == WM_CLOSE || wparam.0 & 0xFFFF == 2 {
             data.closed = true;
             return LRESULT(0);
         }
-        let fields = data.fields.clone();
-        let values: Vec<String> = fields
-            .iter()
-            .enumerate()
-            .map(|(i, _)| {
-                let edit =
-                    unsafe { GetDlgItem(Some(hwnd), ID_EDIT_BASE + i as i32) }.unwrap_or_default();
-                read_edit_text(edit)
-            })
-            .collect();
-        if let Some((index, field)) = fields
-            .iter()
-            .enumerate()
-            .find(|(i, field)| !field.rule.accepts(&values[*i]))
-        {
-            let message = to_wide(&format!(
-                "{}に従って入力し直してください。",
-                field.display_label()
-            ));
-            unsafe {
-                if let Ok(error) = GetDlgItem(Some(hwnd), ID_ERROR) {
-                    let _ = SetWindowTextW(error, PCWSTR(message.as_ptr()));
-                }
-                if let Ok(edit) = GetDlgItem(Some(hwnd), ID_EDIT_BASE + index as i32) {
-                    select_edit(edit);
-                }
-            }
-        } else {
-            // SAFETY: 上と同じ型・生存期間。Win32呼出の完了後に改めて短期間だけ取得する。
+        let on_confirm = Rc::clone(&data.on_confirm);
+        if on_confirm(hwnd) {
+            // SAFETY: 非nullのUSERDATAは生存するDialogDataを指し、再入の終了後にだけ排他的に参照する。
             if let Some(data) =
                 unsafe { get_window_data::<DialogData>(hwnd).map(|mut ptr| ptr.as_mut()) }
             {
-                data.results = Some(values);
                 data.closed = true;
             }
         }
@@ -407,7 +274,6 @@ pub(crate) fn assert_dialog_unconfirmed(hwnd: HWND) {
     let data = unsafe { get_window_data::<DialogData>(hwnd).map(|ptr| ptr.as_ref()) }
         .expect("dialog data");
     assert!(!data.closed);
-    assert!(data.results.is_none());
     assert!(unsafe { IsWindow(Some(hwnd)) }.as_bool());
 }
 

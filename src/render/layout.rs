@@ -39,6 +39,14 @@ impl Layout {
         }
     }
 
+    pub fn auto_fit(&mut self) {
+        self.mode = DisplayMode::AutoFit;
+    }
+
+    pub fn auto_shrink(&mut self) {
+        self.mode = DisplayMode::AutoShrink;
+    }
+
     pub fn calculate(
         &self,
         image_width: u32,

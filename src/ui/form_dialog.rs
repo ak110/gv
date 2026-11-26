@@ -1,5 +1,17 @@
+use std::cell::Cell;
+use std::rc::Rc;
+
 use anyhow::Result;
 use windows::Win32::Foundation::HWND;
+use windows::Win32::UI::WindowsAndMessaging::*;
+use windows::core::PCWSTR;
+
+use super::dialog::{ID_EDIT_BASE, client_size, create_control, select_edit, show_dialog};
+use crate::util::to_wide;
+
+const ID_ERROR: i32 = 0x700;
+const MARGIN: i32 = 12;
+const FIELD_HEIGHT: i32 = 48;
 
 #[derive(Clone, Copy, Debug)]
 pub enum NumberRule {
@@ -66,11 +78,128 @@ pub fn show_form_dialog(
     if fields.is_empty() {
         return Ok(None);
     }
-    super::dialog::show_dialog(
+    let height = MARGIN * 4
+        + fields.len() as i32 * FIELD_HEIGHT
+        + 64
+        + unsafe { GetSystemMetrics(SM_CYCAPTION) + GetSystemMetrics(SM_CYSIZEFRAME) };
+    let values = Rc::new(Cell::new(None));
+    show_dialog(
         parent,
         title,
-        super::dialog::DialogContent::Form(fields.to_vec()),
-    )
+        (360, height),
+        |hwnd| create_form(hwnd, fields),
+        {
+            let values = Rc::clone(&values);
+            let fields = fields.to_vec();
+            move |hwnd| {
+                let Some(input) = confirm_form(hwnd, &fields) else {
+                    return false;
+                };
+                values.set(Some(input));
+                true
+            }
+        },
+    )?;
+    Ok(values.take())
+}
+
+fn create_form(hwnd: HWND, fields: &[FieldDef]) -> Result<()> {
+    let (width, _) = client_size(hwnd)?;
+    for (i, field) in fields.iter().enumerate() {
+        let y = MARGIN + i as i32 * FIELD_HEIGHT;
+        let id = ID_EDIT_BASE + i as i32;
+        create_control(
+            hwnd,
+            "STATIC",
+            &field.display_label(),
+            WS_CHILD | WS_VISIBLE,
+            WINDOW_EX_STYLE::default(),
+            0,
+            (MARGIN, y, width - MARGIN * 2, 20),
+        )?;
+        create_control(
+            hwnd,
+            "EDIT",
+            &field.default,
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | WINDOW_STYLE(ES_AUTOHSCROLL as u32),
+            if (ID_EDIT_BASE..ID_ERROR).contains(&id) {
+                WS_EX_CLIENTEDGE
+            } else {
+                WINDOW_EX_STYLE::default()
+            },
+            id,
+            (MARGIN, y + 20, width - MARGIN * 2, 24),
+        )?;
+    }
+    let y = MARGIN + fields.len() as i32 * FIELD_HEIGHT;
+    create_control(
+        hwnd,
+        "STATIC",
+        "",
+        WS_CHILD | WS_VISIBLE,
+        WINDOW_EX_STYLE::default(),
+        ID_ERROR,
+        (MARGIN, y, width - MARGIN * 2, 40),
+    )?;
+    let x = (width - 168) / 2;
+    create_control(
+        hwnd,
+        "BUTTON",
+        "OK",
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | WINDOW_STYLE(BS_DEFPUSHBUTTON as u32),
+        WINDOW_EX_STYLE::default(),
+        1,
+        (x, y + 44, 80, 28),
+    )?;
+    create_control(
+        hwnd,
+        "BUTTON",
+        "キャンセル",
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+        WINDOW_EX_STYLE::default(),
+        2,
+        (x + 88, y + 44, 80, 28),
+    )?;
+    Ok(())
+}
+
+fn confirm_form(hwnd: HWND, fields: &[FieldDef]) -> Option<Vec<String>> {
+    let values: Vec<String> = (0..fields.len())
+        .map(|i| {
+            let edit =
+                unsafe { GetDlgItem(Some(hwnd), ID_EDIT_BASE + i as i32) }.unwrap_or_default();
+            read_edit_text(edit)
+        })
+        .collect();
+    if let Some((index, field)) = fields
+        .iter()
+        .enumerate()
+        .find(|(i, field)| !field.rule.accepts(&values[*i]))
+    {
+        let message = to_wide(&format!(
+            "{}に従って入力し直してください。",
+            field.display_label()
+        ));
+        unsafe {
+            if let Ok(error) = GetDlgItem(Some(hwnd), ID_ERROR) {
+                let _ = SetWindowTextW(error, PCWSTR(message.as_ptr()));
+            }
+            if let Ok(edit) = GetDlgItem(Some(hwnd), ID_EDIT_BASE + index as i32) {
+                select_edit(edit);
+            }
+        }
+        return None;
+    }
+    Some(values)
+}
+
+fn read_edit_text(edit: HWND) -> String {
+    unsafe {
+        let len = GetWindowTextLengthW(edit).max(0) as usize;
+        let mut text = vec![0u16; len + 1];
+        let copied = GetWindowTextW(edit, &mut text).max(0) as usize;
+        String::from_utf16_lossy(&text[..copied]).trim().to_owned()
+    }
 }
 
 #[cfg(test)]

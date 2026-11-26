@@ -21,13 +21,20 @@ use crate::archive::ArchiveManager;
 use crate::extension_registry::ExtensionRegistry;
 use crate::file_info::FileSource;
 use crate::file_list::{FileList, NavigationDirection, SortOrder};
+use crate::filter_spec::FilterKind;
 use crate::image::{DecodedImage, DecoderChain};
-use crate::persistent_filter::PersistentFilter;
+use crate::persistent_filter::{FilterOperation, PersistentFilter};
 use crate::prefetch::{PrefetchCoordinator, PrefetchEngine, PrefetchEvent};
 
 use self::container::process_single_container;
 use self::types::{ContainerExpandEvent, ContainerResult, ContainerState};
 use self::utils::{build_expansion_pool, collect_folder_files_recursive, sort_paths_natural};
+
+pub(crate) struct BookmarkSnapshot {
+    pub entries: Vec<FileSource>,
+    pub index: Option<usize>,
+    pub expanded_pending: bool,
+}
 
 struct ActiveExpansion {
     rx: Receiver<ContainerExpandEvent>,
@@ -826,6 +833,23 @@ impl Document {
         let _ = self.event_sender.send(DocumentEvent::FileListChanged);
     }
 
+    pub(crate) fn bookmark_snapshot(&mut self) -> BookmarkSnapshot {
+        let expanded_pending = self.file_list.has_pending();
+        if expanded_pending {
+            self.expand_all_pending_sync();
+        }
+        BookmarkSnapshot {
+            entries: self
+                .file_list
+                .files()
+                .iter()
+                .map(|file| file.source.clone())
+                .collect(),
+            index: self.file_list.current_index(),
+            expanded_pending,
+        }
+    }
+
     fn is_pdf(path: &Path) -> bool {
         ExtensionRegistry::is_pdf_path(path)
     }
@@ -1243,11 +1267,25 @@ impl Document {
         &self.persistent_filter
     }
 
-    pub fn persistent_filter_mut(&mut self) -> &mut PersistentFilter {
-        &mut self.persistent_filter
+    pub fn add_persistent_filter(&mut self, operation: FilterOperation) {
+        self.persistent_filter.add_operation(operation);
+        self.on_persistent_filter_changed();
     }
 
-    pub fn on_persistent_filter_changed(&mut self) {
+    pub fn remove_persistent_filter(&mut self, kind: FilterKind) -> bool {
+        if !self.persistent_filter.remove_operation_type(kind) {
+            return false;
+        }
+        self.on_persistent_filter_changed();
+        true
+    }
+
+    pub fn toggle_persistent_filter(&mut self) {
+        self.persistent_filter.toggle_enabled();
+        self.on_persistent_filter_changed();
+    }
+
+    fn on_persistent_filter_changed(&mut self) {
         self.invalidate_cache();
         self.load_current();
     }
@@ -1828,16 +1866,15 @@ mod tests {
             4,
         )
         .unwrap();
-        doc.persistent_filter_mut().toggle_enabled();
-        doc.persistent_filter_mut()
+        doc.persistent_filter.toggle_enabled();
+        doc.persistent_filter
             .add_operation(FilterOperation::InvertColors);
         doc.open_folder(&dir).unwrap();
         assert_eq!(doc.current_image().unwrap().data, vec![245, 235, 225, 255]);
         assert_eq!(started_rx.recv_timeout(Duration::from_secs(5)).unwrap(), 0);
         let old_generation = doc.prefetch_coord.generation().unwrap();
 
-        doc.persistent_filter_mut().toggle_enabled();
-        doc.on_persistent_filter_changed();
+        doc.toggle_persistent_filter();
         assert!(doc.prefetch_coord.generation().unwrap() > old_generation);
         assert_eq!(doc.current_image().unwrap().data, vec![10, 20, 30, 255]);
 

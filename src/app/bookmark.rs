@@ -47,36 +47,28 @@ impl AppWindow {
     }
 
     pub(super) fn action_bookmark_save(&mut self) {
-        if self.document.file_list().has_pending() {
-            self.document.expand_all_pending_sync();
+        let snapshot = self.document.bookmark_snapshot();
+        if snapshot.expanded_pending {
             self.process_document_events();
         }
-        let idx = self.document.file_list().current_index();
-        let first_source = self
-            .document
-            .file_list()
-            .files()
-            .first()
-            .map(|f| f.source.clone());
-        let current_key = first_source
-            .as_ref()
-            .and_then(crate::file_info::FileSource::bookmark_container_key);
+        let first_source = snapshot.entries.first();
+        let current_key =
+            first_source.and_then(crate::file_info::FileSource::bookmark_container_key);
         let previous_name = self
             .last_bookmark
             .as_ref()
             .and_then(|(key, name)| (current_key.as_ref() == Some(key)).then_some(name.as_str()));
-        let initial_name =
-            crate::bookmark::build_initial_save_name(previous_name, first_source.as_ref());
-        let entries: Vec<_> = self
-            .document
-            .file_list()
-            .files()
-            .iter()
-            .map(|file| file.source.clone())
-            .collect();
+        let initial_name = crate::bookmark::build_initial_save_name(previous_name, first_source);
         let hwnd = self.hwnd;
         self.defer_modal(
-            move || crate::bookmark::save_bookmark(hwnd, &entries, idx, &initial_name),
+            move || {
+                crate::bookmark::save_bookmark(
+                    hwnd,
+                    &snapshot.entries,
+                    snapshot.index,
+                    &initial_name,
+                )
+            },
             move |app, result| {
                 if let Some(saved_path) =
                     app.take_success("ブックマークの保存", next_action::BOOKMARK_SAVE, result)
