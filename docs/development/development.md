@@ -76,6 +76,9 @@ Rustは`Cargo.lock`、ドキュメント用のpnpm依存は`pnpm-lock.yaml`、mi
 
 `cargo-deny`（`deny.toml`設定）でライセンスチェックと脆弱性アドバイザリチェックを実施する。
 `mise run test`に組み込まれているため、コミット前に自動実行される。
+`master` 宛てのPRでは、追加・更新される依存の既知の脆弱性をGitHub ActionsのDependency Reviewで確認する。
+このチェックはマージ条件には加えない。導入後に公表される脆弱性は既存の定期監査で確認する。
+
 `Dependency Audit`ワークフローは、毎週月曜日の02:23 UTCにWindowsで実行する。
 手動実行にも対応し、依存を更新しない期間（lockfileが変わらない期間）に公開された脆弱性を検出する。
 Rustは`cargo-deny --locked check advisories`、pnpmは開発依存を含む`pnpm audit`で監査する。
@@ -112,7 +115,9 @@ GPUとウィンドウを使って測るため`#[ignore]`とし、通常の`cargo
 入力は測定ごとに一時フォルダへ再生成するため、利用者の画像フォルダへは書き込まない。
 
 値は表示を要求する直前から、対象画像の描画が成功した（`EndDraw`が成功した）時点までの経過時間であり、デコードだけの時間ではない。
-結果は`target/gv-bench/`へJSONで保存し、`mise run bench-compare -- <基準JSON> <比較JSON>`で比較する。
+表示時間とメモリーの結果はリポジトリ直下の `bench-results/` にJSONで保存する。`mise run clean` では削除されない。
+表示時間の結果は `mise run bench-compare -- <基準JSON> <比較JSON>` で比較する。
+`mise run clean` を実行する前に古い結果を `target/gv-bench/` から `bench-results/` へ移す。
 OSのファイルキャッシュは排除していないため、異なる環境で比較する場合はJSONの環境・条件も確認する。
 
 `mise run bench-memory`は巨大画像の連続表示と、UIが先読み応答を回収しない状態のプロセス全体のメモリーをWindows実機で測る。

@@ -417,6 +417,10 @@ mod tests {
 
     const LARGE_IMAGE_MATERIAL: (u32, u32, usize) = (8192, 4096, 8);
 
+    fn results_dir() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("bench-results")
+    }
+
     #[test]
     fn summary_excludes_failed_trials() {
         let trials = vec![
@@ -513,7 +517,7 @@ mod tests {
             trials,
         };
 
-        let out_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/gv-bench");
+        let out_dir = results_dir();
         std::fs::create_dir_all(&out_dir).unwrap();
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -685,7 +689,7 @@ mod tests {
                 "キャッシュ予算はデコード中のバッファ、表示画像、未処理応答、描画資源の総量を制限しない",
             ],
         };
-        let out_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/gv-bench");
+        let out_dir = results_dir();
         std::fs::create_dir_all(&out_dir).unwrap();
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
