@@ -8,6 +8,7 @@
     "docs:preview": "vitepress preview docs"
   },
   "devDependencies": {
+    "@types/estree": "1.0.11",
     "markdownlint-cli2": "^0.24.2",
     "prettier": "^3.10.1",
     "textlint": "^16.1.3",
