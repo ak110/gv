@@ -15,66 +15,34 @@ public sealed class BookmarkProbe
 {
     private const uint WmClose = 0x0010;
     private const uint WmSetText = 0x000C;
-    private const uint WmKeyDown = 0x0100;
     private const uint WmCommand = 0x0111;
     private const int FileNameComboId = 1148;
     private const int FileNameEditId = 1152;
     private const int OkId = 1;
-    private const int DesktopUnavailable = 20;
-
-    private readonly IntPtr desktop;
-    private readonly bool isolated;
     private ProcessInformation child;
     private IntPtr main;
 
-    public static int Run(string exe, string caseDir, bool isolated)
+    public static int Run(string exe, string caseDir)
     {
         var result = 1;
-        var desktopName = isolated ? "gv-bookmark-probe-" + Guid.NewGuid().ToString("N") : null;
         var thread = new Thread(() =>
         {
-            var desktop = isolated
-                ? CreateDesktopW(desktopName, IntPtr.Zero, IntPtr.Zero, 0, 0x01FF, IntPtr.Zero)
-                : GetThreadDesktop(GetCurrentThreadId());
-            if (desktop == IntPtr.Zero)
-            {
-                Console.WriteLine("デスクトップへの接続失敗: Win32=" + Marshal.GetLastWin32Error());
-                result = isolated ? DesktopUnavailable : 1;
-                return;
-            }
-
             try
             {
-                if (isolated && !SetThreadDesktop(desktop))
-                {
-                    Console.WriteLine("隔離デスクトップへの切り替え失敗: Win32=" + Marshal.GetLastWin32Error());
-                    result = DesktopUnavailable;
-                    return;
-                }
-
-                var probe = new BookmarkProbe(desktop, isolated);
-                result = probe.Observe(exe, caseDir, desktopName);
+                result = new BookmarkProbe().Observe(exe, caseDir);
             }
             catch (Exception e)
             {
-                var detail = e is Win32Exception ? " Win32=" + ((Win32Exception)e).NativeErrorCode : "";
-                Console.WriteLine("観測中断: " + e.GetType().Name + detail);
+                Console.WriteLine("観測中断: " + e.GetType().Name + ": " + e.Message);
             }
         });
         thread.SetApartmentState(ApartmentState.MTA);
         thread.Start();
         thread.Join();
-        // 隔離デスクトップのハンドルは、所属したスレッドが終わった後にワーカープロセスの終了で閉じる。
         return result;
     }
 
-    private BookmarkProbe(IntPtr desktop, bool isolated)
-    {
-        this.desktop = desktop;
-        this.isolated = isolated;
-    }
-
-    private int Observe(string exe, string caseDir, string desktopName)
+    private int Observe(string exe, string caseDir)
     {
         var bookmarkDir = Path.Combine(Path.GetDirectoryName(exe), "bookmarks");
         Directory.CreateDirectory(bookmarkDir);
@@ -98,7 +66,7 @@ public sealed class BookmarkProbe
             throw new InvalidOperationException("出力先に既存のしおりがある。");
 
         var args = new StringBuilder(string.Join(" ", new[] { exe }.Concat(images).Select(p => "\"" + p + "\"")));
-        var startup = new StartupInfo { Size = Marshal.SizeOf(typeof(StartupInfo)), Desktop = desktopName };
+        var startup = new StartupInfo { Size = Marshal.SizeOf(typeof(StartupInfo)) };
         if (!CreateProcessW(exe, args, IntPtr.Zero, IntPtr.Zero, false, 0, IntPtr.Zero,
             Path.GetDirectoryName(exe), ref startup, out child))
             throw new Win32Exception();
@@ -112,8 +80,7 @@ public sealed class BookmarkProbe
             ExpectImage(images[2], "[3/3]");
             Console.WriteLine("保存前: 3.png [3/3]");
 
-            if (!SelectBookmark("Save As", "Save", 0x78, bookmark))
-                return isolated ? DesktopUnavailable : 1;
+            SelectBookmark("ブックマーク保存", "Save", bookmark);
 
             WaitFor(() => File.Exists(bookmark) && IsWindowEnabled(main));
             var lines = File.ReadAllLines(bookmark, new UTF8Encoding(false, true));
@@ -130,8 +97,7 @@ public sealed class BookmarkProbe
             ExpectImage(images[0], "[1/3]");
             Console.WriteLine("読み込み前: 1.png [1/3]");
 
-            if (!SelectBookmark("Open", "Open", 0x7B, bookmark))
-                return isolated ? DesktopUnavailable : 1;
+            SelectBookmark("ブックマーク読み込み", "Open", bookmark);
 
             ExpectImage(images[2], "[3/3]");
             Console.WriteLine("読み込み確認: 3.png [3/3]");
@@ -151,6 +117,7 @@ public sealed class BookmarkProbe
                         throw new TimeoutException("gvの終了を確認できない。");
                     Console.WriteLine("gv を強制終了して回収");
                 }
+                Console.WriteLine("gv の終了を確認");
             }
             finally
             {
@@ -160,31 +127,26 @@ public sealed class BookmarkProbe
         }
     }
 
-    private bool SelectBookmark(string title, string buttonName, int key, string bookmark)
+    private void SelectBookmark(string menu, string buttonName, string bookmark)
     {
-        Console.WriteLine("標準ダイアログを待機: " + title);
-        Post(main, WmKeyDown, key, (IntPtr)1);
+        Console.WriteLine("標準ダイアログを待機: " + menu);
+        SelectMenu(menu);
 
         IntPtr dialog = IntPtr.Zero;
         if (!Poll(() => (dialog = OwnWindows().FirstOrDefault(
             h => GetWindow(h, 4) == main && IsWindowVisible(h) &&
-                 WindowClass(h) == "#32770" && WindowText(h) == title)) != IntPtr.Zero))
+                 WindowClass(h) == "#32770" && !IsWindowEnabled(main))) != IntPtr.Zero))
+            throw new TimeoutException("標準ダイアログを確認できない: " + menu);
+
+        Console.WriteLine("標準ダイアログ確認: #32770 / " + WindowText(dialog));
+        if (!Poll(() => TrySubmit(dialog, buttonName, bookmark)))
         {
-            Console.WriteLine("標準ダイアログを確認できなかった: " + title +
-                " gvの表示ウィンドウ数=" + OwnWindows().Count(IsWindowVisible));
-            return false;
+            DumpControls(dialog);
+            throw new InvalidOperationException("ファイル名と確定ボタンを識別できない。");
         }
 
-        Console.WriteLine("標準ダイアログ確認: #32770 / " + title);
-        if (Poll(() => TrySubmit(dialog, buttonName, bookmark)))
-        {
-            WaitFor(() => !IsWindowVisible(dialog));
-            Console.WriteLine("ダイアログ確定: " + title);
-            return true;
-        }
-
-        DumpControls(dialog);
-        throw new InvalidOperationException("ファイル名と確定ボタンを識別できない。");
+        WaitFor(() => !IsWindowVisible(dialog));
+        Console.WriteLine("ダイアログ確定: " + menu);
     }
 
     private static bool TrySubmit(IntPtr dialog, string buttonName, string bookmark)
@@ -249,7 +211,6 @@ public sealed class BookmarkProbe
             applied == IntPtr.Zero)
             throw new Win32Exception();
 
-        // 非入力デスクトップでは BM_CLICK が失敗し得る。対象ボタンの BN_CLICKED 通知を親にだけ届ける。
         Post(dialog, WmCommand, OkId, button);
         Console.WriteLine("確定操作: Win32 File name / IDOK");
         return true;
@@ -302,7 +263,7 @@ public sealed class BookmarkProbe
     private List<IntPtr> OwnWindows()
     {
         var windows = new List<IntPtr>();
-        if (!EnumDesktopWindows(desktop, (h, _) =>
+        if (!EnumWindows((h, _) =>
         {
             uint pid;
             GetWindowThreadProcessId(h, out pid);
@@ -310,7 +271,11 @@ public sealed class BookmarkProbe
                 windows.Add(h);
             return true;
         }, IntPtr.Zero))
-            throw new Win32Exception();
+        {
+            var error = Marshal.GetLastWin32Error();
+            if (error != 0)
+                throw new Win32Exception(error, "EnumWindows: " + error);
+        }
         return windows;
     }
 
@@ -387,16 +352,11 @@ public sealed class BookmarkProbe
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
     private static extern bool CreateProcessW(string app, StringBuilder args, IntPtr processAttrs, IntPtr threadAttrs,
         bool inheritHandles, uint flags, IntPtr environment, string cwd, ref StartupInfo startup, out ProcessInformation result);
-    [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
     [DllImport("kernel32.dll")] private static extern bool CloseHandle(IntPtr handle);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool TerminateProcess(IntPtr process, uint exitCode);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern uint WaitForSingleObject(IntPtr handle, uint millis);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
-    private static extern IntPtr CreateDesktopW(string name, IntPtr device, IntPtr devmode, uint flags, uint access, IntPtr attrs);
-    [DllImport("user32.dll", SetLastError = true)] private static extern IntPtr GetThreadDesktop(uint thread);
-    [DllImport("user32.dll", SetLastError = true)] private static extern bool SetThreadDesktop(IntPtr desktop);
     [DllImport("user32.dll", SetLastError = true)]
-    private static extern bool EnumDesktopWindows(IntPtr desktop, EnumWindowCallback callback, IntPtr data);
+    private static extern bool EnumWindows(EnumWindowCallback callback, IntPtr data);
     [DllImport("user32.dll")] private static extern bool EnumChildWindows(IntPtr window, EnumWindowCallback callback, IntPtr data);
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
     [DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr window, uint command);
