@@ -1,5 +1,5 @@
 use super::AppWindow;
-use crate::render::layout::Layout;
+use crate::render::layout::LayoutChange;
 use crate::ui::window;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -114,38 +114,38 @@ impl AppWindow {
         self.invalidate();
     }
 
-    fn update_layout(&mut self, update: impl FnOnce(&mut Layout)) {
-        self.renderer.update_layout(update);
+    fn update_layout(&mut self, change: LayoutChange) {
+        self.renderer.update_layout(change);
         self.invalidate();
     }
 
     pub(super) fn action_toggle_margin(&mut self) {
-        self.update_layout(Layout::toggle_margin);
+        self.update_layout(LayoutChange::ToggleMargin);
     }
 
     pub(super) fn action_zoom_reset(&mut self) {
-        self.update_layout(Layout::zoom_reset);
+        self.update_layout(LayoutChange::ZoomReset);
     }
 
     pub(super) fn action_zoom_out(&mut self) {
-        if let Some((iw, ih)) = self.current_image_size() {
-            let (ww, wh) = self.client_size();
-            self.update_layout(|layout| layout.zoom_out(iw, ih, ww, wh));
+        if let Some(image) = self.current_image_size() {
+            let window = self.client_size();
+            self.update_layout(LayoutChange::ZoomOut { image, window });
         }
     }
 
     pub(super) fn action_zoom_in(&mut self) {
-        if let Some((iw, ih)) = self.current_image_size() {
-            let (ww, wh) = self.client_size();
-            self.update_layout(|layout| layout.zoom_in(iw, ih, ww, wh));
+        if let Some(image) = self.current_image_size() {
+            let window = self.client_size();
+            self.update_layout(LayoutChange::ZoomIn { image, window });
         }
     }
 
     pub(super) fn action_display_auto_fit(&mut self) {
-        self.update_layout(Layout::auto_fit);
+        self.update_layout(LayoutChange::AutoFit);
     }
 
     pub(super) fn action_display_auto_shrink(&mut self) {
-        self.update_layout(Layout::auto_shrink);
+        self.update_layout(LayoutChange::AutoShrink);
     }
 }

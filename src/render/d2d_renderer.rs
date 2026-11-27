@@ -15,7 +15,7 @@ use windows::Win32::Graphics::Direct2D::{D2D1_BITMAP_BRUSH_PROPERTIES, D2D1_EXTE
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
 
-use super::layout::{DrawRect, Layout};
+use super::layout::{DrawRect, Layout, LayoutChange};
 use crate::config::DisplayConfig;
 use crate::image::DecodedImage;
 use crate::selection::{self, HANDLE_DRAW_SIZE, PixelRect};
@@ -209,8 +209,8 @@ impl D2DRenderer {
         &self.layout
     }
 
-    pub fn update_layout(&mut self, update: impl FnOnce(&mut Layout)) {
-        update(&mut self.layout);
+    pub(crate) fn update_layout(&mut self, change: LayoutChange) {
+        self.layout.apply_change(change);
     }
 
     pub fn cycle_alpha_background(&mut self) {

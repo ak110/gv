@@ -7,6 +7,21 @@ pub enum DisplayMode {
     Fixed(f32),
 }
 
+pub(crate) enum LayoutChange {
+    ToggleMargin,
+    ZoomReset,
+    ZoomOut {
+        image: (u32, u32),
+        window: (f32, f32),
+    },
+    ZoomIn {
+        image: (u32, u32),
+        window: (f32, f32),
+    },
+    AutoFit,
+    AutoShrink,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct DrawRect {
     pub x: f32,
@@ -39,12 +54,25 @@ impl Layout {
         }
     }
 
-    pub fn auto_fit(&mut self) {
-        self.mode = DisplayMode::AutoFit;
-    }
-
-    pub fn auto_shrink(&mut self) {
-        self.mode = DisplayMode::AutoShrink;
+    pub(crate) fn apply_change(&mut self, change: LayoutChange) {
+        match change {
+            LayoutChange::ToggleMargin => self.toggle_margin(),
+            LayoutChange::ZoomReset => self.zoom_reset(),
+            LayoutChange::ZoomOut {
+                image: (iw, ih),
+                window: (ww, wh),
+            } => {
+                self.zoom_out(iw, ih, ww, wh);
+            }
+            LayoutChange::ZoomIn {
+                image: (iw, ih),
+                window: (ww, wh),
+            } => {
+                self.zoom_in(iw, ih, ww, wh);
+            }
+            LayoutChange::AutoFit => self.mode = DisplayMode::AutoFit,
+            LayoutChange::AutoShrink => self.mode = DisplayMode::AutoShrink,
+        }
     }
 
     pub fn calculate(
