@@ -15,6 +15,9 @@ public sealed class BookmarkProbe
 {
     private const uint WmClose = 0x0010;
     private const uint WmSetText = 0x000C;
+    private const uint WmKeyDown = 0x0100;
+    private const int F9 = 0x78;
+    private const int F12 = 0x7B;
     private const uint WmCommand = 0x0111;
     private const int FileNameComboId = 1148;
     private const int FileNameEditId = 1152;
@@ -80,7 +83,7 @@ public sealed class BookmarkProbe
             ExpectImage(images[2], "[3/3]");
             Console.WriteLine("保存前: 3.png [3/3]");
 
-            SelectBookmark("ブックマーク保存", "Save", bookmark);
+            SelectBookmark("F9", F9, "Save", bookmark);
 
             WaitFor(() => File.Exists(bookmark) && IsWindowEnabled(main));
             var lines = File.ReadAllLines(bookmark, new UTF8Encoding(false, true));
@@ -97,7 +100,7 @@ public sealed class BookmarkProbe
             ExpectImage(images[0], "[1/3]");
             Console.WriteLine("読み込み前: 1.png [1/3]");
 
-            SelectBookmark("ブックマーク読み込み", "Open", bookmark);
+            SelectBookmark("F12", F12, "Open", bookmark);
 
             ExpectImage(images[2], "[3/3]");
             Console.WriteLine("読み込み確認: 3.png [3/3]");
@@ -127,16 +130,16 @@ public sealed class BookmarkProbe
         }
     }
 
-    private void SelectBookmark(string menu, string buttonName, string bookmark)
+    private void SelectBookmark(string keyName, int key, string buttonName, string bookmark)
     {
-        Console.WriteLine("標準ダイアログを待機: " + menu);
-        SelectMenu(menu);
+        Console.WriteLine("標準ダイアログを待機: " + keyName);
+        Post(main, WmKeyDown, key, (IntPtr)1);
 
         IntPtr dialog = IntPtr.Zero;
         if (!Poll(() => (dialog = OwnWindows().FirstOrDefault(
             h => GetWindow(h, 4) == main && IsWindowVisible(h) &&
                  WindowClass(h) == "#32770" && !IsWindowEnabled(main))) != IntPtr.Zero))
-            throw new TimeoutException("標準ダイアログを確認できない: " + menu);
+            throw new TimeoutException("標準ダイアログを確認できない: " + keyName);
 
         Console.WriteLine("標準ダイアログ確認: #32770 / " + WindowText(dialog));
         if (!Poll(() => TrySubmit(dialog, buttonName, bookmark)))
@@ -146,7 +149,7 @@ public sealed class BookmarkProbe
         }
 
         WaitFor(() => !IsWindowVisible(dialog));
-        Console.WriteLine("ダイアログ確定: " + menu);
+        Console.WriteLine("ダイアログ確定: " + keyName);
     }
 
     private static bool TrySubmit(IntPtr dialog, string buttonName, string bookmark)
