@@ -365,7 +365,7 @@ dependencies = [
 
 [[package]]
 name = "gv"
-version = "1.6.13"
+version = "1.6.14"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
