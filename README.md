@@ -29,7 +29,7 @@ Windows用画像ビューアー。
 ## ドキュメント
 
 - <https://ak110.github.io/gv/> — 概要・使い方
-- [docs/development/development.md](docs/development/development.md) — 開発者向け情報
+- [docs/development/development.md](https://github.com/ak110/gv/blob/master/docs/development/development.md) — 開発者向け情報
 - [アクセシビリティ](https://github.com/ak110/gv/blob/master/ACCESSIBILITY.md)
 - [貢献するには](https://github.com/ak110/.github/blob/master/CONTRIBUTING.md)
 - [脆弱性の報告](https://github.com/ak110/.github/blob/master/SECURITY.md)
